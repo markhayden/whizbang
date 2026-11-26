@@ -44,7 +44,9 @@
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{self, ArtifactId, ArtifactType};
 use whizbang_core::capability::PHRASE_LIMIT;
-use whizbang_core::contract::record::{ATTEMPT_TEXT_LIMIT, Attempt, Changed, Crop, Decision};
+use whizbang_core::contract::record::{
+    ATTEMPT_TEXT_LIMIT, Attempt, AttemptsEnded, Changed, Crop, Decision,
+};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Event, Failure,
     Findings, Finished, InputPort, Kind, Outcome, OutputPort, PLAN_WHY_LIMIT, Plan, Planning,
@@ -82,6 +84,11 @@ const SELECT: &str = "select";
 const GROW: &str = "grow";
 const FEATHER: &str = "feather";
 const FILL: &str = "fill";
+
+/// Why a retry has no verdict when its shaped mask is the one before it: the sentence
+/// its attempt notes, which the loop's evidence counts located retries that added
+/// nothing by (`scripts/loop-evidence.py`, plan mE, task L1, item 2).
+pub const SAME_MASK: &str = "its shaped mask is the one before it, and nothing was filled";
 
 /// The setting a run notes: the digest of [`JOB_TEMPLATE`].
 pub const JOB_SETTING: &str = "job.template";
@@ -1124,7 +1131,9 @@ impl<'a> Looping<'a> {
         let mut next: Option<Retry> = None;
         let mut widened = false;
         let mut size: Option<(u32, u32)> = None;
-        let mut ended = String::new();
+        // Why the attempts ended, as a word of a closed set and in a sentence: none
+        // while they go on.
+        let mut ended: Option<(AttemptsEnded, String)> = None;
         let mut begun = 0;
 
         for number in 1..=self.allowed {
@@ -1188,15 +1197,20 @@ impl<'a> Looping<'a> {
                 }
                 let said = line(&format!("{what}: {}", stopped.said()), ATTEMPT_TEXT_LIMIT);
                 note(Attempt::unchecked(number, &said), runs);
-                Ok(match stopped {
-                    Stopped::Budget(_) => {
-                        format!("the budget ran out after attempt {}", number - 1)
-                    }
-                    Stopped::Deadline => {
-                        format!("the deadline passed after attempt {}", number - 1)
-                    }
-                    _ => format!("the retry {what}, and the attempts before it stand"),
-                })
+                Ok(Some(match stopped {
+                    Stopped::Budget(_) => (
+                        AttemptsEnded::BudgetRanOut,
+                        format!("the budget ran out after attempt {}", number - 1),
+                    ),
+                    Stopped::Deadline => (
+                        AttemptsEnded::DeadlinePassed,
+                        format!("the deadline passed after attempt {}", number - 1),
+                    ),
+                    _ => (
+                        AttemptsEnded::RetryCouldNotBeMade,
+                        format!("the retry {what}, and the attempts before it stand"),
+                    ),
+                }))
             };
 
             // Find, in the first attempt alone; a located retry makes its own found
@@ -1216,7 +1230,10 @@ impl<'a> Looping<'a> {
                         Ok(None) if widened => {
                             let said = "nothing was found in the places named, and none may join as itself";
                             note(Attempt::unchecked(number, said), &runs);
-                            ended = "a wider mask was already used once".to_owned();
+                            ended = Some((
+                                AttemptsEnded::WiderMaskAlreadyUsed,
+                                "a wider mask was already used once".to_owned(),
+                            ));
                             break;
                         }
                         Ok(None) => {
@@ -1279,8 +1296,7 @@ impl<'a> Looping<'a> {
             // the pixels a fill reads.
             let painted = self.painted(shaped);
             if shaped_before == Some(painted) {
-                let said = "its shaped mask is the one before it, and nothing was filled";
-                note(Attempt::unchecked(number, said), &runs);
+                note(Attempt::unchecked(number, SAME_MASK), &runs);
                 // A located retry that added no pixel leaves the one widening to
                 // try, on the same found mask, while the plan has an attempt left.
                 let located = matches!(&retry, Some(Retry::Located(_))) && wider.is_none();
@@ -1289,9 +1305,12 @@ impl<'a> Looping<'a> {
                     next = Some(Retry::Wider(self.action.grow_px * 2.0));
                     continue;
                 }
-                ended = format!(
-                    "the mask of attempt {number} is the one before it, and an attempt is not made twice"
-                );
+                ended = Some((
+                    AttemptsEnded::MaskIsTheOneBefore,
+                    format!(
+                        "the mask of attempt {number} is the one before it, and an attempt is not made twice"
+                    ),
+                ));
                 break;
             }
             shaped_before = Some(painted);
@@ -1333,7 +1352,10 @@ impl<'a> Looping<'a> {
                 note(Attempt::unchecked(number, &said), &runs);
                 attempt.unchecked = Some(said);
                 filled.push(attempt);
-                ended = line(&format!("one unchecked pass: {why}"), ATTEMPT_TEXT_LIMIT);
+                ended = Some((
+                    AttemptsEnded::OneUncheckedPass,
+                    line(&format!("one unchecked pass: {why}"), ATTEMPT_TEXT_LIMIT),
+                ));
                 break;
             }
 
@@ -1368,11 +1390,20 @@ impl<'a> Looping<'a> {
                     note(Attempt::unchecked(number, &said), &runs);
                     attempt.unchecked = Some(said);
                     filled.push(attempt);
-                    ended = match stopped {
-                        Stopped::Budget(_) => format!("the budget ran out after attempt {number}"),
-                        Stopped::Deadline => format!("the deadline passed after attempt {number}"),
-                        _ => format!("the check of attempt {number} could not run"),
-                    };
+                    ended = Some(match stopped {
+                        Stopped::Budget(_) => (
+                            AttemptsEnded::BudgetRanOut,
+                            format!("the budget ran out after attempt {number}"),
+                        ),
+                        Stopped::Deadline => (
+                            AttemptsEnded::DeadlinePassed,
+                            format!("the deadline passed after attempt {number}"),
+                        ),
+                        _ => (
+                            AttemptsEnded::CheckCouldNotRun,
+                            format!("the check of attempt {number} could not run"),
+                        ),
+                    });
                     break;
                 }
             };
@@ -1386,7 +1417,10 @@ impl<'a> Looping<'a> {
                 note(Attempt::unchecked(number, said), &runs);
                 attempt.unchecked = Some(said.to_owned());
                 filled.push(attempt);
-                ended = format!("the check of attempt {number} could not run");
+                ended = Some((
+                    AttemptsEnded::CheckCouldNotRun,
+                    format!("the check of attempt {number} could not run"),
+                ));
                 break;
             };
             note(Attempt::judged(number, decision), &runs);
@@ -1395,7 +1429,7 @@ impl<'a> Looping<'a> {
             attempt.findings = findings.clone();
             filled.push(attempt);
             if decision == Decision::Pass {
-                ended = format!("attempt {number} passed");
+                ended = Some((AttemptsEnded::Passed, format!("attempt {number} passed")));
                 break;
             }
             let reading = match &findings {
@@ -1403,18 +1437,28 @@ impl<'a> Looping<'a> {
                 None => table::Reading::CutShort,
             };
             ended = match reading {
-                table::Reading::CutShort => format!(
-                    "the findings of attempt {number} were cut short, and findings cut short never enlarge a mask"
-                ),
-                table::Reading::Damaged => format!(
-                    "attempt {number} changed something that must be preserved, which painting more cannot mend"
-                ),
-                table::Reading::Nothing => format!(
-                    "no finding of attempt {number} says with confidence that the named thing is still there"
-                ),
-                table::Reading::Remains(_) if number == self.allowed => {
-                    "the last attempt the plan allows".to_owned()
-                }
+                table::Reading::CutShort => Some((
+                    AttemptsEnded::FindingsCutShort,
+                    format!(
+                        "the findings of attempt {number} were cut short, and findings cut short never enlarge a mask"
+                    ),
+                )),
+                table::Reading::Damaged => Some((
+                    AttemptsEnded::DamagedSomethingPreserved,
+                    format!(
+                        "attempt {number} changed something that must be preserved, which painting more cannot mend"
+                    ),
+                )),
+                table::Reading::Nothing => Some((
+                    AttemptsEnded::NothingSaysItRemains,
+                    format!(
+                        "no finding of attempt {number} says with confidence that the named thing is still there"
+                    ),
+                )),
+                table::Reading::Remains(_) if number == self.allowed => Some((
+                    AttemptsEnded::LastAttemptOfThePlan,
+                    "the last attempt the plan allows".to_owned(),
+                )),
                 // The places of the findings that allow the retry, and of no other:
                 // on this attempt's picture, which is the size of the loop's own.
                 table::Reading::Remains(places) => {
@@ -1430,23 +1474,27 @@ impl<'a> Looping<'a> {
                     };
                     if !usable.is_empty() {
                         next = Some(Retry::Located(usable));
-                        String::new()
+                        None
                     } else if widened {
-                        "a wider mask was already used once".to_owned()
+                        Some((
+                            AttemptsEnded::WiderMaskAlreadyUsed,
+                            "a wider mask was already used once".to_owned(),
+                        ))
                     } else {
                         widened = true;
                         next = Some(Retry::Wider(self.action.grow_px * 2.0));
-                        String::new()
+                        None
                     }
                 }
             };
-            if !ended.is_empty() {
+            if ended.is_some() {
                 break;
             }
         }
-        if ended.is_empty() {
-            ended = "the last attempt the plan allows".to_owned();
-        }
+        let (reason, ended) = ended.unwrap_or((
+            AttemptsEnded::LastAttemptOfThePlan,
+            "the last attempt the plan allows".to_owned(),
+        ));
 
         // An attempt the record would not hold is the loop's own fault, and is said:
         // the record would list other attempts than were made.
@@ -1463,9 +1511,11 @@ impl<'a> Looping<'a> {
         // A run cancelled by now commits nothing, and its record then says that no
         // attempt was kept, whatever is said here: the record holds that of every run
         // that does not complete.
-        context
-            .facts()
-            .attempts_ended(Some(best.number), &line(&ended, ATTEMPT_TEXT_LIMIT));
+        context.facts().attempts_ended_as(
+            Some(best.number),
+            &line(&ended, ATTEMPT_TEXT_LIMIT),
+            reason,
+        );
         let limits = DecodeLimits::default();
         let read = |artifact_type: ArtifactType, id: ArtifactId| {
             artifact::get(context.store(), artifact_type, id, &limits)

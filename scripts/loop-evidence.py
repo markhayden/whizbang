@@ -37,6 +37,12 @@ one JSON object a line. It never opens an env file, a config or a store.
 What it reads of a record is the record's own fields (ADR 0005, `run/6`): a loop's plan,
 its attempts and why they ended, each attempt's check by the runs the attempt lists, and
 what the record keeps of a check's findings, which is counts and places and never a text.
+Why the attempts ended is the record's own word where it holds one (`run/8`), and its
+sentence read as one of the same closed set where it does not.
+
+The tally reads nothing but the export, so it can be run again over a store's kept runs,
+which spends nothing (plan mE, task L1, item 3): `tally` as above, with the commit and
+the version the first tally names.
 """
 
 import argparse
@@ -62,7 +68,9 @@ PRESERVED = ("SF1", "SF2", "RQ2")
 NAMED = "RQ1"
 
 # Why a loop's attempts ended, as a closed set: each sentence the loop writes, with every
-# number replaced, is one of these or `other`. A sentence never reaches the file.
+# number replaced, is one of these or `other`; a record of `run/8` holds the word itself
+# (crates/whizbang-core/src/contract/eighth.rs), which is read instead. A sentence never
+# reaches the file.
 REASONS = (
     ("passed", r"^attempt N passed$"),
     ("findings_cut_short", r"^the findings of attempt N were cut short"),
@@ -78,6 +86,13 @@ REASONS = (
     ("retry_could_not_be_made", r"^the retry .*and the attempts before it stand$"),
     ("never_said", r"^the run ended before it said why its attempts did$"),
 )
+# What a located retry's attempt says when its shaped mask added no pixel to the mask
+# before it, and nothing was filled (crates/whizbang-rascal/src/checked.rs, `SAME_MASK`).
+SAME_MASK = "its shaped mask is the one before it, and nothing was filled"
+# The verdict of an attempt, as the tables after a place count it.
+VERDICTS = ("pass", "fail", "unsure", "unchecked")
+# What became of a place a retry looked into (ADR 0039, "The located retry").
+PLACE_KINDS = ("found_something", "joined_as_itself", "left_out_over_a_tenth")
 ROWS = (
     "row_0_cut_short",
     "row_1_damaged",
@@ -360,6 +375,22 @@ def reason_of(sentence):
     return "other"
 
 
+# The words a record of `run/8` may hold: the set above but `never_said`, which only a
+# sentence of an older record reads as (crates/whizbang-core/src/contract/eighth.rs).
+WORDS = tuple(name for name, _ in REASONS if name != "never_said")
+
+
+def reason_in(attempted):
+    """Why a loop's attempts ended: the record's word (`run/8`), which must be one of
+    WORDS, or, where it holds none, its sentence read as one of the set."""
+    if "reason" not in attempted:
+        return reason_of(attempted.get("ended"))
+    word = attempted["reason"]
+    if word not in WORDS:
+        raise Refused("a record says why its attempts ended in a word that is none of the loop's")
+    return word
+
+
 def word(text, pattern=r"^[a-z][a-z0-9_-]{0,31}$"):
     """A short word of a record, or `other`: nothing longer or stranger reaches the file."""
     return text if isinstance(text, str) and re.match(pattern, text) else "other"
@@ -576,6 +607,13 @@ def tally(args):
         ),
         0,
     )
+    # A located retry whose mask added no pixel, and what the one widening after it did.
+    added_nothing = dict.fromkeys(
+        ["retries", "widened_after"] + ["widened_after_%s" % v for v in VERDICTS], 0
+    )
+    # Each place looked into, by what became of it, against the verdict of the attempt
+    # it was looked into for: the check after it.
+    by_verdict = dict.fromkeys(["%s_%s" % (k, v) for k in PLACE_KINDS for v in VERDICTS], 0)
     attempts_made = unsure_rascal = not_complete = 0
     reserved = settled = unresolved = by_attempts = 0
     times, templates, configs, versions, whole = [], set(), set(), set(), []
@@ -609,9 +647,9 @@ def tally(args):
         attempts_made += len(listed)
         if len(listed) in made:
             made[len(listed)] += 1
-        reasons[reason_of(attempted.get("ended")) if listed else "no_attempt"] += 1
+        reasons[reason_in(attempted) if listed else "no_attempt"] += 1
         before = None
-        for attempt in listed:
+        for at, attempt in enumerate(listed):
             by_attempts += int(attempt.get("settled_micros", 0))
             verdicts[attempt.get("verdict") or "unchecked"] += 1
             changed = attempt.get("changed") or {}
@@ -622,6 +660,22 @@ def tally(args):
             places["found_something"] += sum(1 for crop in crops if crop.get("mask") is not None)
             places["found_nothing_joined_as_itself"] += sum(1 for crop in crops if crop.get("mask") is None)
             places["found_nothing_left_out_over_a_tenth"] += max(0, looked - len(crops))
+            verdict = attempt.get("verdict") or "unchecked"
+            verdict = verdict if verdict in VERDICTS else "unchecked"
+            for kind, many in (
+                ("found_something", sum(1 for crop in crops if crop.get("mask") is not None)),
+                ("joined_as_itself", sum(1 for crop in crops if crop.get("mask") is None)),
+                ("left_out_over_a_tenth", max(0, looked - len(crops))),
+            ):
+                by_verdict["%s_%s" % (kind, verdict)] += many
+            if changed.get("change") == "located" and attempt.get("unchecked") == SAME_MASK:
+                added_nothing["retries"] += 1
+                after = listed[at + 1] if at + 1 < len(listed) else {}
+                if (after.get("changed") or {}).get("change") == "wider":
+                    added_nothing["widened_after"] += 1
+                    then = after.get("verdict") or "unchecked"
+                    then = then if then in VERDICTS else "unchecked"
+                    added_nothing["widened_after_%s" % then] += 1
             if changed.get("change") == "wider":
                 retries["wider"] += 1
                 if looked:
@@ -706,6 +760,13 @@ def tally(args):
         "# here says: the places a finding cited that were never looked into (a cut over 1,024",
         "# pixels or of the whole picture, a ninth place, one cited twice), since `cited_by_checks`",
         "# counts the places of every finding and not only of those that allow a retry.",
+        "#",
+        "# `[places_by_verdict]` (plan mE, task L1, item 3): each place looked into, as it found",
+        "# something, joined as itself or was left out over a tenth, against the verdict of the",
+        "# attempt it was looked into for, `unchecked` where that attempt was not checked (a",
+        "# located retry that added nothing is not filled). `[located_added_nothing]` (item 2):",
+        "# the located retries whose mask added no pixel to the one before, how many the one",
+        "# widening followed, and that widening's verdict.",
     ]
     out += toml_lines(
         [
@@ -752,6 +813,8 @@ def tally(args):
     out += table("stopped_by_row", list(rows.items()))
     out += table("stopped_by_reason", list(reasons.items()))
     out += table("places", list(places.items()))
+    out += table("places_by_verdict", list(by_verdict.items()))
+    out += table("located_added_nothing", list(added_nothing.items()))
     for group in sorted(groups):
         out += table("group.%s" % group, list(groups[group].items()))
     for (obligation, disposition, confidence), count in sorted(counts.items()):

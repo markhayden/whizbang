@@ -68,7 +68,8 @@ export interface RunRecordView {
   inputs: Artifact[];
   outputs: Artifact[];
   verdict?: { word: string; why: string; reasons: string[]; places: Place[] } | null;
-  attempts?: { list: Attempt[]; kept: number | null; ended: string } | null;
+  /** `reason`: why the attempts ended as a word of a closed set, where the record holds one (`run/8`). */
+  attempts?: { list: Attempt[]; kept: number | null; ended: string; reason?: string | null } | null;
   cost?: { lines: Array<{ capability: string; backend: string; model: string; requests: number; cost: number; free: boolean }>; total: number; unresolved?: number };
   reserved?: number | null;
   send_to?: OpenDraft[];

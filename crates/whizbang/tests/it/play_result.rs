@@ -382,6 +382,8 @@ fn an_unchecked_run_says_which_variable_its_judge_needs_and_never_the_core_words
         ended.contains("the judge needs PLAYKIT_TEST_KEY in your env file"),
         "{said}"
     );
+    // And why, as a word of a closed set (plan mE, task L1, item 1).
+    assert_eq!(said["attempts"]["reason"], "one_unchecked_pass", "{said}");
 }
 
 #[test]

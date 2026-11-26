@@ -14,8 +14,10 @@
 //! with those four groups after it, each written only where the run has it. One that
 //! names the card a model ran on, or the run it replays, is `run/7` (ADR 0048;
 //! [`super::seventh`]), which is `run/6` with those two after it, written the same way.
+//! One whose loop said why its attempts ended as a word of a closed set is `run/8` (ADR
+//! 0005, "run/8"; [`super::eighth`]), which is `run/7` with that word in its attempts.
 //! Every record is written in the oldest version that holds all of it, so a store
-//! written before `run/7` reads as it did, and nothing in one is migrated.
+//! written before `run/8` reads as it did, and nothing in one is migrated.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -52,9 +54,16 @@ pub const RUN_5: &str = "run/5";
 pub const RUN_6: &str = "run/6";
 
 /// The kind and version of a record that names the card a model ran on, or the run it
-/// replays (ADR 0048): the newest this build writes, and only for a record that holds
-/// one of them.
+/// replays (ADR 0048), and holds no word of why a loop's attempts ended.
 pub const RUN_7: &str = "run/7";
+
+/// The kind and version of a record whose loop said why its attempts ended as a word
+/// of a closed set (ADR 0005, "run/8"): the newest this build writes, and only for a
+/// record that holds it.
+pub const RUN_8: &str = "run/8";
+
+/// The JSON Schema of a `run/8` record, as a document.
+pub const RUN_8_SCHEMA: &str = include_str!("../../schemas/run-8.json");
 
 /// The JSON Schema of a `run/7` record, as a document.
 pub const RUN_7_SCHEMA: &str = include_str!("../../schemas/run-7.json");
@@ -62,6 +71,7 @@ pub const RUN_7_SCHEMA: &str = include_str!("../../schemas/run-7.json");
 /// The JSON Schema of a `run/6` record, as a document.
 pub const RUN_6_SCHEMA: &str = include_str!("../../schemas/run-6.json");
 
+pub use super::eighth::AttemptsEnded;
 use super::seventh::replayed_wire;
 pub use super::seventh::{BUNDLE_STEPS_LIMIT, FromBundle, ReplayMode, Replayed};
 pub use super::sixth::{
@@ -1678,8 +1688,8 @@ impl std::fmt::Display for RecordError {
         match self {
             RecordError::OtherVersion { found } => write!(
                 f,
-                "a record of another version: {}, and this build reads {RUN_7}, {RUN_6}, \
-                 {RUN_5}, {RUN_RECORD}, {RUN_3} and {RUN_2}",
+                "a record of another version: {}, and this build reads {RUN_8}, {RUN_7}, \
+                 {RUN_6}, {RUN_5}, {RUN_RECORD}, {RUN_3} and {RUN_2}",
                 found.escape_debug()
             ),
             // The reason can quote what was read: it is shown escaped and cut.
@@ -1736,9 +1746,10 @@ pub struct Facts {
     went: Vec<Went>,
     /// Where a recipe's run started, when it said so (`run/6`).
     started: Option<Started>,
-    /// A loop's attempts, as it noted them, and how it said they ended (`run/6`).
+    /// A loop's attempts, as it noted them, and how it said they ended (`run/6`), with
+    /// the word of a closed set when it gave one (`run/8`).
     attempts: Vec<Attempt>,
-    ended: Option<(Option<u32>, String)>,
+    ended: Option<(Option<u32>, String, Option<AttemptsEnded>)>,
     /// The run this run replays, when it said so (`run/7`).
     replayed: Option<Replayed>,
 }
@@ -1832,19 +1843,25 @@ impl Facts {
         fresh
     }
 
-    /// Notes which attempt was kept, by its number, and why the attempts ended.
-    /// False, and nothing is noted, when it was said already or a record would not
-    /// hold it.
-    pub fn attempts_ended(&mut self, kept: Option<u32>, why: String) -> bool {
+    /// Notes which attempt was kept, by its number, and why the attempts ended: in a
+    /// sentence, and as a word of a closed set when one is given (`run/8`). False, and
+    /// nothing is noted, when it was said already or a record would not hold it.
+    pub fn attempts_ended(
+        &mut self,
+        kept: Option<u32>,
+        why: String,
+        reason: Option<AttemptsEnded>,
+    ) -> bool {
         let said = Attempted {
             list: std::mem::take(&mut self.attempts),
             kept,
             ended: why,
+            reason,
         };
         let takes = self.ended.is_none() && said.holds();
         self.attempts = said.list;
         if takes {
-            self.ended = Some((said.kept, said.ended));
+            self.ended = Some((said.kept, said.ended, said.reason));
         }
         takes
     }
@@ -2119,7 +2136,8 @@ impl RunRecord {
         let findings = findings.filter(|_| status == Status::Completed);
         let findings = findings.map(Found::of).filter(Found::holds);
         let attempts = (!attempts.is_empty() || ended.is_some()).then(|| {
-            let (kept, ended) = ended.unwrap_or((None, ATTEMPTS_NOT_ENDED.to_owned()));
+            let (kept, ended, reason) =
+                ended.unwrap_or((None, ATTEMPTS_NOT_ENDED.to_owned(), None));
             // A run that did not complete committed nothing: whatever it said before
             // it ended, no attempt of its was kept.
             let kept = kept.filter(|_| status == Status::Completed);
@@ -2127,17 +2145,21 @@ impl RunRecord {
                 list: attempts,
                 kept,
                 ended,
+                reason,
             }
         });
         let sixth = plan.is_some() || started.is_some() || findings.is_some() || attempts.is_some();
         // What only `run/7` holds (ADR 0048). A run replays another run, never itself.
         let replayed = replayed.filter(|replayed| replayed.run != ran.run);
         let seventh = models.iter().any(|model| model.card.is_some()) || replayed.is_some();
-        let version = match (seventh, sixth, fifth) {
-            (true, _, _) => RUN_7,
-            (false, true, _) => RUN_6,
-            (false, false, true) => RUN_5,
-            (false, false, false) => RUN_RECORD,
+        // What only `run/8` holds: why a loop's attempts ended, as a word.
+        let eighth = (attempts.as_ref()).is_some_and(|attempts| attempts.reason.is_some());
+        let version = match (eighth, seventh, sixth, fifth) {
+            (true, _, _, _) => RUN_8,
+            (false, true, _, _) => RUN_7,
+            (false, false, true, _) => RUN_6,
+            (false, false, false, true) => RUN_5,
+            (false, false, false, false) => RUN_RECORD,
         };
         RunRecord {
             record: version.to_owned(),
@@ -2305,7 +2327,8 @@ impl RunRecord {
         }
         let frozen = match serde_json::from_slice::<Version>(bytes) {
             Ok(Version { record })
-                if ![RUN_7, RUN_6, RUN_5, RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) =>
+                if ![RUN_8, RUN_7, RUN_6, RUN_5, RUN_RECORD, RUN_3, RUN_2]
+                    .contains(&record.as_str()) =>
             {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
@@ -2397,7 +2420,7 @@ impl RunRecord {
         // arguments than a recipe's step sets, and each text cut.
         let of_recipes = self.steps.iter().filter_map(|step| step.recipe.as_ref());
         if of_recipes.clone().count() > RECIPE_STEPS_LIMIT
-            || (![RUN_5, RUN_6, RUN_7].contains(&self.record.as_str())
+            || (![RUN_5, RUN_6, RUN_7, RUN_8].contains(&self.record.as_str())
                 && of_recipes.clone().next().is_some())
         {
             return refuse(
@@ -2664,21 +2687,33 @@ impl RunRecord {
         let (plan, started) = (self.plan.as_ref(), self.started.as_ref());
         let (findings, attempts) = (self.findings.as_ref(), self.attempts.as_ref());
         let sixth = plan.is_some() || started.is_some() || findings.is_some() || attempts.is_some();
-        let has_sixth = self.record == RUN_6 || self.record == RUN_7;
+        let has_sixth = [RUN_6, RUN_7, RUN_8].contains(&self.record.as_str());
         if (sixth && !has_sixth) || (self.record == RUN_6 && !sixth) {
             return refuse(
                 "a plan, a start, findings or attempts in a record of a version that has \
                  none, or a record of run/6 that holds none of them",
             );
         }
-        // What `run/7` adds (ADR 0048): in a record of that version alone, which holds
-        // one of the two at least; the run it replays is another run's id.
+        // What `run/7` adds (ADR 0048): in a record of that version or a later one,
+        // and a record of `run/7` holds one of the two at least; the run it replays is
+        // another run's id.
         let replayed = self.replayed.as_ref();
         let carded = self.models.iter().any(|model| model.card.is_some());
-        if (carded || replayed.is_some()) != (self.record == RUN_7) {
+        let seventh = carded || replayed.is_some();
+        let has_seventh = [RUN_7, RUN_8].contains(&self.record.as_str());
+        if (seventh && !has_seventh) || (self.record == RUN_7 && !seventh) {
             return refuse(
                 "a card or the run replayed in a record of a version that has neither, or a \
                  record of run/7 that holds neither",
+            );
+        }
+        // What `run/8` adds (ADR 0005, "run/8"): why a loop's attempts ended as a
+        // word, in a record of that version alone, which holds it.
+        let reasoned = attempts.is_some_and(|attempts| attempts.reason.is_some());
+        if reasoned != (self.record == RUN_8) {
+            return refuse(
+                "why a loop's attempts ended as a word in a record of a version that has \
+                 none, or a record of run/8 that does not hold it",
             );
         }
         if replayed.is_some_and(|replayed| !replayed.holds() || replayed.run == self.identity.run) {

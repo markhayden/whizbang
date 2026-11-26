@@ -231,7 +231,9 @@ why not.
 
 **The record** is `run/6` (ADR 0005): the plan; each attempt with its number, the runs it
 made in order, its verdict or the reason it has none, what its retry changed and what its
-requests settled; which was kept; and why the attempts ended. An attempt that was begun
+requests settled; which was kept; and why the attempts ended, in a sentence and, from plan
+mE's task L1, as one word of a closed set beside it, which makes the record `run/8` (ADR
+0005, "run/8") and which `runs stats` counts by. An attempt that was begun
 is listed, one that made no fill among them: its reason says so, and it is never the one
 kept. What a located retry changed is its crops, at most eight, as `run/6` holds them:
 each crop by its identity, with one mask or none. The mask is the first the crop gave,

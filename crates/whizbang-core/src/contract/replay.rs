@@ -811,7 +811,17 @@ pub fn differences(original: &[Placed], replay: &[Placed]) -> Vec<Difference> {
         let json = |run: &Placed| -> serde_json::Value {
             serde_json::from_slice(&run.record.to_bytes()).unwrap_or_default()
         };
-        let (was_json, now_json) = (json(was), json(now));
+        let (was_json, mut now_json) = (json(was), json(now));
+        // Why a loop's attempts ended, as a word (`run/8`), is compared only where the
+        // original holds one: a run recorded before the word replays without it.
+        let older = was_json
+            .get("attempts")
+            .is_some_and(|a| a.get("reason").is_none());
+        if let Some(attempts) = now_json.get_mut("attempts").and_then(|a| a.as_object_mut())
+            && older
+        {
+            attempts.remove("reason");
+        }
         let field = |json: &serde_json::Value, path: &[&str]| -> String {
             let mut at = json;
             for key in path {

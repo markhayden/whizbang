@@ -3,7 +3,8 @@
 Status: accepted. Builds on ADR 0048 (`run/7`'s `replayed`); changes ADR 0007's admission
 record (an admission of a replayed run names the run it replays). Amended 2026-11-25 after
 plan m7's N1 pass by hand: what a backend reads of its machine is not compared ("What it
-compares")
+compares"). Amended 2026-11-26 with plan mE's task L1: why a loop's attempts ended as a
+word (`run/8`) is compared only where the original holds one ("What it compares")
 Date: 2026-11-25
 Spec: section 3, "The execution contract", "Request identity" and "What every run
 records"; section 6, "Spend" ("After a crash, nothing that was dispatched is replayed
@@ -231,6 +232,14 @@ this. No other diagnostic a shipped action keeps holds such a reading: a fill ke
 picture it was painted, and a check its exchanges, whose provider ids are left out already;
 the journal, where progress is said, is not compared. A diagnostic that comes to hold one is
 named here when it does, never left out silently.
+
+**Nor is a word the original never held** (amended with plan mE's task L1). From
+`run/8` (ADR 0005) a loop's attempts say why they ended as a word beside the sentence; a
+replay is written by this build, so a loop run recorded before `run/8` replays with a word
+its original lacks. The word is compared only where the original holds one, so such a run
+is reproduced when its sentence and everything else are the same; between two records that
+both hold it, another word is a difference
+(`record::a_loop_run_recorded_before_run_8_replays_as_reproduced`).
 
 The report is **reproduced**, **differs** (each difference by place, first first, at most 256
 with a count of the rest), **diverged** or **unanswerable** (from the note).

@@ -186,7 +186,8 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/7, run/6, run/5, run/4"),
+        said.contains("run/9")
+            && said.contains("this build reads run/8, run/7, run/6, run/5, run/4"),
         "{said}"
     );
 }
@@ -2034,14 +2035,14 @@ fn the_new_record_version_reads_a_record_of_the_version_before() {
         RunRecord::from_bytes(long.as_bytes()),
         Err(RecordError::Inconsistent(_))
     ));
-    // The refusal of another version names the six this build reads.
-    let other = fifth.replacen("\"run/5\"", "\"run/8\"", 1);
+    // The refusal of another version names the seven this build reads.
+    let other = fifth.replacen("\"run/5\"", "\"run/9\"", 1);
     assert_eq!(
         RunRecord::from_bytes(other.as_bytes())
             .unwrap_err()
             .to_string(),
-        "a record of another version: run/8, and this build reads run/7, run/6, run/5, run/4, \
-         run/3 and run/2"
+        "a record of another version: run/9, and this build reads run/8, run/7, run/6, run/5, \
+         run/4, run/3 and run/2"
     );
 }
 
@@ -2508,6 +2509,104 @@ fn run_6_holds_each_list_to_its_bound() {
         Err(RecordError::Inconsistent(_))
     ));
     assert!(validate(&schema_6(), &as_json(&negative)).is_err());
+}
+
+// --- run/8: why a loop's attempts ended, as a word (plan mE, task L1, item 1) -------------------
+
+fn schema_8() -> Json {
+    serde_json::from_str(whizbang_core::contract::RUN_8_SCHEMA).unwrap()
+}
+
+/// The fixed vector of `run/6` with the word of why its attempts ended, as `run/8`.
+fn of_run_8() -> String {
+    let ended = r#""ended":"the last attempt the plan allows"}"#;
+    of_run_6().replacen("\"run/6\"", "\"run/8\"", 1).replacen(
+        ended,
+        r#""ended":"the last attempt the plan allows","reason":"last_attempt_of_the_plan"}"#,
+        1,
+    )
+}
+
+#[test]
+fn run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_they_did() {
+    use whizbang_core::contract::RUN_8;
+    use whizbang_core::contract::record::AttemptsEnded;
+    // The words are a closed set, the schema's and the type's alike, each written as the
+    // type says it.
+    let words: Vec<&str> = AttemptsEnded::ALL.iter().map(|word| word.word()).collect();
+    let schema = schema_8();
+    let listed = &schema["$defs"]["attempted"]["properties"]["reason"]["enum"];
+    assert_eq!(listed, &json!(words));
+    for word in AttemptsEnded::ALL {
+        assert_eq!(serde_json::to_value(word).unwrap(), json!(word.word()));
+    }
+    // The vector reads, is written back as it was, and is of its schema and of no
+    // older one; without the word it is `run/6`, as it was.
+    let vector = of_run_8();
+    let read = RunRecord::from_bytes(vector.as_bytes()).unwrap();
+    assert_eq!(read.version(), RUN_8);
+    assert_eq!(read.to_bytes(), vector.as_bytes());
+    validate(&schema, &as_json(&vector)).unwrap();
+    assert!(validate(&schema_6(), &as_json(&vector)).is_err());
+    let attempts = read.attempts().unwrap();
+    assert_eq!(attempts.reason, Some(AttemptsEnded::LastAttemptOfThePlan));
+    assert_eq!(attempts.ended, "the last attempt the plan allows");
+    assert_eq!(
+        RunRecord::from_bytes(of_run_6().as_bytes())
+            .unwrap()
+            .attempts()
+            .unwrap()
+            .reason,
+        None
+    );
+    // What a record may not say of it: the word in an older version, a `run/8` record
+    // without it, a word of no set, and a null.
+    let word = r#","reason":"last_attempt_of_the_plan""#;
+    let refused = [
+        (
+            "the word in run/6",
+            vector.replacen("\"run/8\"", "\"run/6\"", 1),
+        ),
+        (
+            "the word in run/7",
+            vector.replacen("\"run/8\"", "\"run/7\"", 1),
+        ),
+        ("run/8 without it", vector.replacen(word, "", 1)),
+        (
+            "a word of no set",
+            vector.replacen("last_attempt_of_the_plan", "gave_up", 1),
+        ),
+        ("a null", vector.replacen(word, r#","reason":null"#, 1)),
+    ];
+    for (what, bytes) in refused {
+        assert!(RunRecord::from_bytes(bytes.as_bytes()).is_err(), "{what}");
+    }
+    assert!(validate(&schema, &as_json(&vector.replacen(word, "", 1))).is_err());
+
+    // Writing it: a loop that says the word is `run/8`
+    // (`record::a_loops_record_lists_each_attempt…` of the binary's tests); one that
+    // does not is written as before (`run_6_holds_a_plan_a_start_findings_and_a_loops_attempts`).
+}
+
+/// A loop run recorded before the word replays as reproduced: the replay, written by
+/// this build, holds the word, and it is compared only where the original holds one.
+/// Between two records that both hold it, another word is a difference.
+#[test]
+fn a_loop_run_recorded_before_run_8_replays_as_reproduced() {
+    use whizbang_core::contract::replay::{Placed, report};
+    let placed = |text: &str| Placed {
+        place: "0".to_owned(),
+        record: RunRecord::from_bytes(text.as_bytes()).unwrap(),
+        kept: Default::default(),
+    };
+    let (older, newer) = (placed(&of_run_6()), placed(&of_run_8()));
+    let said = |was: &Placed, now: &Placed| {
+        report(std::slice::from_ref(was), std::slice::from_ref(now), None).name()
+    };
+    assert_eq!(said(&older, &newer), "reproduced");
+    assert_eq!(said(&newer, &newer), "reproduced");
+    let other = of_run_8().replacen("last_attempt_of_the_plan", "passed", 1);
+    assert_eq!(said(&newer, &placed(&other)), "differs");
 }
 
 // --- run/7: a model's card and the run replayed (plan m7, task B1, item 6; ADR 0048) -----------
