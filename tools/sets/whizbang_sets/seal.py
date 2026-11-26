@@ -184,3 +184,21 @@ def promote(
     )
     seal(set_dir, attestation, rules_dir)
     return report
+
+
+def pin(set_dir: Path, rev: str) -> None:
+    """Names the revision of the pictures' repository the set's pictures were committed at
+    (`images_rev`), which the seal does not cover; nothing else of the set changes."""
+    set_dir = Path(set_dir)
+    manifest = tomllib.loads(read_text(set_dir / "set.toml"))
+    meta = {k: v for k, v in manifest["set"].items() if k != "images_rev"}
+    fields = list(meta.items())
+    at = [k for k, _ in fields].index("images_repo") + 1
+    fields.insert(at, ("images_rev", rev))
+    before = components(set_dir)
+    write_text(
+        set_dir / "set.toml",
+        build.manifest_text(dict(fields), manifest.get("item", []), "Built by whizbang-sets; labels confirmed by the owner."),
+    )
+    if components(set_dir) != before:
+        raise AssertionError("pinning the revision changed what the seal covers")
