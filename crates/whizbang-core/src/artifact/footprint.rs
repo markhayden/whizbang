@@ -11,13 +11,14 @@
 //! machine. Squint cut a footprint that crossed the seam to the side holding the region's
 //! centre and kept the other side apart; here both sides are parts of the one carry.
 
-use crate::identity::{Binding, Direction, Mapping, Perspective, Point, Space};
+use crate::identity::{Binding, Direction, Mapping, Perspective, Point, Space, panorama_direction};
 
 use super::{Result, Shape};
 
-/// The most points a boundary is sampled at, so that a footprint cut at the seam, which
-/// adds at most two vertices to each part, stays within a polygon's 64.
-const SAMPLES: usize = 60;
+/// The most points a boundary is sampled at: four for each of a polygon's 64 vertices, a
+/// step of a sixtieth of a box's edge. A part made from them is thinned to a polygon's 64
+/// vertices ([`thinned`]), a box's corners among them.
+const SAMPLES: usize = 240;
 
 fn refuse<T>(why: impl Into<String>) -> Result<T> {
     Err(super::ArtifactError::Invalid {
@@ -107,11 +108,57 @@ fn holds(shape: &Shape, space: &Space, p: Point) -> bool {
     }
 }
 
-/// A closed ring of points on a complete panorama, each column from 0 to its width, as the
-/// parts of a location: one polygon; two, cut at the seam, when the ring crosses it; or a
+/// The most vertices a polygon holds (`Location`'s rule).
+const MAX_VERTICES: usize = 64;
+
+/// A part cut from a ring, thinned evenly to at most [`MAX_VERTICES`], its first kept.
+fn thinned(points: Vec<Point>) -> Vec<Point> {
+    if points.len() <= MAX_VERTICES {
+        return points;
+    }
+    let n = points.len();
+    (0..MAX_VERTICES)
+        .map(|i| points[i * n / MAX_VERTICES])
+        .collect()
+}
+
+/// Each point of a ring on a panorama `w` wide taken round so that it is within half the
+/// width of the one before. A step that is still over a quarter of the width is refused:
+/// which way round it went is not known.
+fn unwrapped(ring: &[Point], w: f64) -> Result<Vec<Point>> {
+    let mut out: Vec<Point> = Vec::with_capacity(ring.len());
+    for p in ring {
+        let x = match out.last() {
+            Some(before) => {
+                let x = p.x + ((before.x - p.x) / w).round() * w;
+                if (x - before.x).abs() > w / 4.0 {
+                    return refuse(
+                        "the shape's edge moves too far between two samples to know which way \
+                         round the panorama it goes",
+                    );
+                }
+                x
+            }
+            None => p.x,
+        };
+        out.push(Point::new(x, p.y));
+    }
+    Ok(out)
+}
+
+/// A closed ring of points on a complete panorama, as the parts of a location: the ring
+/// taken round the seam ([`unwrapped`]) and clipped to the panorama once for each whole
+/// turn it reaches into, so a part on either side of the seam, or on both, is kept; or a
 /// band the full width from the top (`north`) or to the bottom (`south`) as far as the
-/// ring reaches, when the shape holds that pole.
-fn on_panorama(ring: &[Point], north: bool, south: bool, into: &Space) -> Result<Vec<Shape>> {
+/// ring reaches, when the shape holds that pole, and the whole panorama when it holds
+/// both. `taken` is the ring already taken round, when the caller did that itself.
+fn on_panorama(
+    ring: &[Point],
+    north: bool,
+    south: bool,
+    into: &Space,
+    taken: Option<Vec<Point>>,
+) -> Result<Vec<Shape>> {
     let (w, h) = (f64::from(into.width()), f64::from(into.height()));
     let band = |top: f64, bottom: f64| Shape::Box {
         left: 0.0,
@@ -119,26 +166,22 @@ fn on_panorama(ring: &[Point], north: bool, south: bool, into: &Space) -> Result
         right: w,
         bottom,
     };
-    if north {
-        let lowest = ring.iter().map(|p| p.y).fold(0.0, f64::max);
-        return Ok(vec![band(0.0, lowest.clamp(1e-6, h))]);
+    match (north, south) {
+        (true, true) => return Ok(vec![band(0.0, h)]),
+        (true, false) => {
+            let lowest = ring.iter().map(|p| p.y).fold(0.0, f64::max);
+            return Ok(vec![band(0.0, lowest.clamp(1e-6, h))]);
+        }
+        (false, true) => {
+            let highest = ring.iter().map(|p| p.y).fold(h, f64::min);
+            return Ok(vec![band(highest.clamp(0.0, h - 1e-6), h)]);
+        }
+        (false, false) => {}
     }
-    if south {
-        let highest = ring.iter().map(|p| p.y).fold(h, f64::min);
-        return Ok(vec![band(highest.clamp(0.0, h - 1e-6), h)]);
-    }
-    // Each point taken round so that it is within half the width of the one before.
-    let mut unwrapped: Vec<Point> = Vec::with_capacity(ring.len());
-    for p in ring {
-        let x = match unwrapped.last() {
-            Some(before) => {
-                let turns = ((before.x - p.x) / w).round();
-                p.x + turns * w
-            }
-            None => p.x,
-        };
-        unwrapped.push(Point::new(x, p.y));
-    }
+    let unwrapped = match taken {
+        Some(taken) => taken,
+        None => unwrapped(ring, w)?,
+    };
     let closing = match (unwrapped.first(), unwrapped.last()) {
         (Some(a), Some(b)) => (a.x - b.x).abs(),
         _ => 0.0,
@@ -151,31 +194,32 @@ fn on_panorama(ring: &[Point], north: bool, south: bool, into: &Space) -> Result
         .iter()
         .map(|p| p.x)
         .fold(f64::NEG_INFINITY, f64::max);
-    let shifted = |by: f64| -> Vec<Point> {
-        unwrapped
-            .iter()
-            .map(|p| Point::new(p.x + by, p.y))
-            .collect()
-    };
-    let rings = if lo >= 0.0 && hi <= w {
-        vec![unwrapped.clone()]
-    } else if lo < 0.0 {
-        vec![shifted(w), unwrapped.clone()]
-    } else {
-        vec![unwrapped.clone(), shifted(-w)]
-    };
     let whole = super::carry::Window {
         lo: 0.0,
         hi: w,
         ylo: 0.0,
         yhi: h,
     };
-    let parts: Vec<Shape> = rings
-        .iter()
-        .map(|ring| super::carry::clip_to(ring, &whole))
-        .filter(|part| part.len() >= 3)
-        .map(|points| Shape::Polygon { points })
-        .collect();
+    // Every whole turn `k` for which the ring, shifted by `k` widths, meets the panorama.
+    let first = (-hi / w).floor() as i64;
+    let last = (-lo / w).ceil() as i64;
+    let mut parts = Vec::new();
+    for k in first..=last {
+        let by = k as f64 * w;
+        if hi + by <= 0.0 || lo + by >= w {
+            continue;
+        }
+        let shifted: Vec<Point> = unwrapped
+            .iter()
+            .map(|p| Point::new(p.x + by, p.y))
+            .collect();
+        let part = super::carry::clip_to(&shifted, &whole);
+        if part.len() >= 3 {
+            parts.push(Shape::Polygon {
+                points: thinned(part),
+            });
+        }
+    }
     if parts.is_empty() {
         return refuse("the shape has no area on the panorama");
     }
@@ -188,7 +232,6 @@ pub(super) fn through_view(
     shape: &Shape,
     binding: &Binding,
     forward: bool,
-    into: &Space,
 ) -> Result<(Vec<Shape>, bool)> {
     let Some(view) = perspective_of(binding.mapping()) else {
         return refuse("the binding is not a perspective view");
@@ -199,7 +242,6 @@ pub(super) fn through_view(
         Direction::SourceToDestination => (binding.source_space(), binding.destination_space()),
         Direction::DestinationToSource => (binding.destination_space(), binding.source_space()),
     };
-    let _ = into;
     let side = f64::from(square.width());
     let (w, h) = (f64::from(panorama.width()), f64::from(panorama.height()));
     match shape {
@@ -228,7 +270,7 @@ pub(super) fn through_view(
                 .from_panorama(side, w, h, 0.0, y)
                 .is_some_and(|(x, y)| holds(shape, &square, Point::new(x, y)))
         };
-        let parts = on_panorama(&mapped, pole(0.0), pole(h), &panorama)?;
+        let parts = on_panorama(&mapped, pole(0.0), pole(h), &panorama, None)?;
         return Ok((parts, false));
     }
     if matches!(shape, Shape::WholeImage) {
@@ -239,60 +281,92 @@ pub(super) fn through_view(
     let Some(points) = ring(shape, &panorama, divide) else {
         return refuse("the shape is not carried through a perspective view");
     };
-    let seen: Vec<Point> = points
+    // The ring's directions, clipped to what lies in front of the view (Sutherland and
+    // Hodgman against the plane of depth `FRONT`), then seen and clipped to the view.
+    const FRONT: f64 = 1e-6;
+    let directions: Vec<[f64; 3]> = points
         .iter()
-        .filter_map(|p| basis.from_panorama(side, w, h, p.x, p.y))
-        .map(|(x, y)| Point::new(x, y))
+        .map(|p| panorama_direction(w, h, p.x, p.y))
         .collect();
-    let inside = |p: &Point| (0.0..=side).contains(&p.x) && (0.0..=side).contains(&p.y);
-    let partial = seen.len() < points.len() || !seen.iter().all(inside);
-    let clamp = |p: &Point| Point::new(p.x.clamp(0.0, side), p.y.clamp(0.0, side));
+    let mut front: Vec<[f64; 3]> = Vec::with_capacity(directions.len() + 2);
+    for (i, a) in directions.iter().enumerate() {
+        let b = directions[(i + 1) % directions.len()];
+        let (da, db) = (basis.depth(*a), basis.depth(b));
+        if da >= FRONT {
+            front.push(*a);
+        }
+        if (da >= FRONT) != (db >= FRONT) {
+            let t = (FRONT - da) / (db - da);
+            front.push([
+                a[0] + t * (b[0] - a[0]),
+                a[1] + t * (b[1] - a[1]),
+                a[2] + t * (b[2] - a[2]),
+            ]);
+        }
+    }
+    if front.len() < 3 {
+        return refuse("the location lies wholly behind the view");
+    }
+    let seen: Vec<Point> = front
+        .iter()
+        .map(|d| {
+            let (x, y) = basis.seen(side, *d);
+            Point::new(x, y)
+        })
+        .collect();
+    let window = super::carry::Window {
+        lo: 0.0,
+        hi: side,
+        ylo: 0.0,
+        yhi: side,
+    };
+    let clipped = super::carry::clip_to(&seen, &window);
+    if clipped.len() < 3 {
+        return refuse("the location lies wholly outside the view");
+    }
+    let partial = front.len() != points.len() || clipped != seen;
     match shape {
         Shape::Box { .. } => {
-            if seen.is_empty() {
-                return refuse("the location lies wholly behind the view");
-            }
             let (mut x0, mut y0, mut x1, mut y1) = (
                 f64::INFINITY,
                 f64::INFINITY,
                 f64::NEG_INFINITY,
                 f64::NEG_INFINITY,
             );
-            for p in &seen {
+            for p in &clipped {
                 x0 = x0.min(p.x);
                 y0 = y0.min(p.y);
                 x1 = x1.max(p.x);
                 y1 = y1.max(p.y);
             }
-            let (left, top) = (x0.clamp(0.0, side), y0.clamp(0.0, side));
-            let (right, bottom) = (x1.clamp(0.0, side), y1.clamp(0.0, side));
-            if right <= left || bottom <= top {
+            if x1 <= x0 || y1 <= y0 {
                 return refuse("the location lies wholly outside the view");
             }
             Ok((
                 vec![Shape::Box {
-                    left,
-                    top,
-                    right,
-                    bottom,
+                    left: x0,
+                    top: y0,
+                    right: x1,
+                    bottom: y1,
                 }],
                 partial,
             ))
         }
-        _ => {
-            let mut points: Vec<Point> = seen.iter().map(clamp).collect();
-            points.dedup();
-            if points.len() < 3 {
-                return refuse("the location lies wholly outside the view");
-            }
-            Ok((vec![Shape::Polygon { points }], partial))
-        }
+        _ => Ok((
+            vec![Shape::Polygon {
+                points: thinned(clipped),
+            }],
+            partial,
+        )),
     }
 }
 
-/// A shape carried onto a complete panorama through a rotation: a polygon vertex by vertex,
-/// a box by its boundary, cut at the seam or made a band at a pole as through a view. The
-/// whole image is the whole image.
+/// A shape carried onto a complete panorama through a rotation, cut at the seam or made a
+/// band at a pole as through a view. A box is sampled along its boundary. A polygon keeps
+/// its vertices, each mapped as before, but which way round the panorama each lies is read
+/// from its edges sampled as a box's are: a polygon wider than half the panorama is then
+/// taken round the right way, and one whose edge leaps too far between two samples is
+/// refused. The whole image is the whole image.
 pub(super) fn through_rotation(
     shape: &Shape,
     from: &Space,
@@ -300,15 +374,32 @@ pub(super) fn through_rotation(
     one: &dyn Fn(Point) -> std::result::Result<Point, crate::identity::IdentityError>,
     back: &dyn Fn(Point) -> std::result::Result<Point, crate::identity::IdentityError>,
 ) -> Result<Vec<Shape>> {
-    let Some(points) = ring(shape, from, matches!(shape, Shape::Box { .. })) else {
+    let (w, h) = (f64::from(into.width()), f64::from(into.height()));
+    let Some(dense) = ring(shape, from, true) else {
         return refuse("the shape is not carried through a rotation");
     };
-    let mapped = points
+    let mapped = dense
         .iter()
         .map(|p| one(*p))
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let h = f64::from(into.height());
     // A pole of the panorama it lands on is held when the point it comes from is in it.
     let pole = |y: f64| back(Point::new(0.0, y)).is_ok_and(|p| holds(shape, from, p));
-    on_panorama(&mapped, pole(0.0), pole(h), into)
+    let (north, south) = (pole(0.0), pole(h));
+    if north || south {
+        return on_panorama(&mapped, north, south, into, None);
+    }
+    let taken = unwrapped(&mapped, w)?;
+    let taken = match shape {
+        // Each vertex is the sample at the start of its edge, mapped as it always was.
+        Shape::Polygon { points } => {
+            let per_edge = dense.len() / points.len();
+            (0..points.len()).map(|i| taken[i * per_edge]).collect()
+        }
+        _ => taken,
+    };
+    let landed: Vec<Point> = taken
+        .iter()
+        .map(|p| Point::new(p.x.rem_euclid(w), p.y))
+        .collect();
+    on_panorama(&landed, north, south, into, Some(taken))
 }

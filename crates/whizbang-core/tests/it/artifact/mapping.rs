@@ -324,6 +324,15 @@ fn spread(points: &[Point]) -> (f64, f64, f64, f64) {
     )
 }
 
+/// The spreads of a carry's two parts, the one on the left of the panorama first.
+fn sides(carried: &Carried) -> ((f64, f64, f64, f64), (f64, f64, f64, f64)) {
+    let [a, b] = &carried.parts[..] else {
+        panic!("{:?}", carried.parts);
+    };
+    let (a, b) = (spread(polygon_of(a.shape())), spread(polygon_of(b.shape())));
+    if a.0 <= b.0 { (a, b) } else { (b, a) }
+}
+
 #[test]
 fn a_box_in_a_view_lands_on_its_panorama_as_the_polygon_around_where_it_looks() {
     // Squint's `a_box_in_a_view_becomes_a_polygon_around_its_direction`, in pixels.
@@ -338,7 +347,7 @@ fn a_box_in_a_view_lands_on_its_panorama_as_the_polygon_around_where_it_looks() 
         Binding::root(picture("panorama"), Space::panorama(3600, 1800).unwrap())
     );
     let points = polygon_of(there.parts[0].shape());
-    assert_eq!(points.len(), 60);
+    assert_eq!(points.len(), 64);
     // Yaw 45 is column 2250. A fifth of the view across, at its middle, spans twice
     // atan(tan(30) / 5), 13.17 degrees: 131.7 pixels at ten a degree.
     let (x0, x1, y0, y1) = spread(points);
@@ -364,10 +373,7 @@ fn a_footprint_over_the_seam_is_two_parts_and_one_that_holds_a_pole_is_a_band() 
     let whole = on(&in_view, Shape::WholeImage);
     let seam = carry(&whole, &looking(-178.0, 0.0, 60.0), Toward::Destination).unwrap();
     assert_eq!(seam.parts.len(), 2);
-    let (a, b) = (
-        spread(polygon_of(seam.parts[0].shape())),
-        spread(polygon_of(seam.parts[1].shape())),
-    );
+    let (b, a) = sides(&seam);
     // One part ends at the panorama's right edge and the other starts at its left.
     assert!(a.1 == 3600.0 && a.0 > 3000.0, "{a:?}");
     assert!(b.0 == 0.0 && b.1 < 600.0, "{b:?}");
@@ -446,17 +452,14 @@ fn a_polygon_or_a_box_rotated_over_the_seam_is_cut_there() {
     );
     let cut = carry(&across, &turn, Toward::Destination).unwrap();
     assert_eq!(cut.parts.len(), 2);
-    let (a, b) = (
-        spread(polygon_of(cut.parts[0].shape())),
-        spread(polygon_of(cut.parts[1].shape())),
-    );
+    let (b, a) = sides(&cut);
     assert!(a.1 == 40.0 && b.0 == 0.0, "{a:?} {b:?}");
     // A box that stays on one side is the polygon of its boundary; one that holds
     // nothing of the seam is one part.
     let a_box = on(&turned, boxed(1.0, 3.0, 4.0, 6.0));
     let moved = carry(&a_box, &turn, Toward::Destination).unwrap();
     assert_eq!(moved.parts.len(), 1);
-    assert_eq!(polygon_of(moved.parts[0].shape()).len(), 60);
+    assert_eq!(polygon_of(moved.parts[0].shape()).len(), 64);
     // The same polygon, not crossing, is carried vertex by vertex as before.
     let inside = on(
         &turned,
@@ -470,4 +473,227 @@ fn a_polygon_or_a_box_rotated_over_the_seam_is_cut_there() {
     );
     let one = carry(&inside, &turn, Toward::Destination).unwrap();
     assert_eq!(polygon_of(one.parts[0].shape()).len(), 3);
+}
+
+/// The area of a polygon, by the shoelace.
+fn area(points: &[Point]) -> f64 {
+    let n = points.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f64>()
+        .abs()
+        / 2.0
+}
+
+fn turned_by(matrix: [f64; 9]) -> Binding {
+    Binding::new(
+        picture("turned"),
+        Space::panorama(40, 10).unwrap(),
+        picture("panorama"),
+        Space::panorama(40, 10).unwrap(),
+        Direction::SourceToDestination,
+        Mapping::Rotation { matrix },
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_polygon_wider_than_half_the_panorama_is_rotated_onto_the_columns_it_covers() {
+    // Columns 2 to 25 of a panorama 40 wide: wider than half of it. Taken round by its
+    // vertices alone it would be the 17 columns outside it; its edges, sampled, say
+    // which way round it goes.
+    let turned = Binding::root(picture("turned"), Space::panorama(40, 10).unwrap());
+    let wide = |right: f64| {
+        on(
+            &turned,
+            Shape::Polygon {
+                points: vec![
+                    Point::new(2.0, 4.0),
+                    Point::new(right, 4.0),
+                    Point::new(right, 6.0),
+                    Point::new(2.0, 6.0),
+                ],
+            },
+        )
+    };
+    let identity = turned_by([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    let same = carry(&wide(25.0), &identity, Toward::Destination).unwrap();
+    let [part] = &same.parts[..] else {
+        panic!("{:?}", same.parts);
+    };
+    let points = polygon_of(part.shape());
+    assert_eq!(points.len(), 4);
+    let (x0, x1, _, _) = spread(points);
+    assert_eq!((x0, x1), (2.0, 25.0));
+    // A quarter turn moves it ten columns, to 12 to 35, still 46 square pixels.
+    let moved = carry(&wide(25.0), &quarter_turn(), Toward::Destination).unwrap();
+    let [part] = &moved.parts[..] else {
+        panic!("{:?}", moved.parts);
+    };
+    let (x0, x1, _, _) = spread(polygon_of(part.shape()));
+    assert!(
+        (x0 - 12.0).abs() < 1e-9 && (x1 - 35.0).abs() < 1e-9,
+        "{x0} {x1}"
+    );
+    assert!((area(polygon_of(part.shape())) - 46.0).abs() < 1e-9);
+    // Columns 2 to 34, turned to 12 to 44, cross the seam: 28 columns and 4, 64 in all.
+    let across = carry(&wide(34.0), &quarter_turn(), Toward::Destination).unwrap();
+    let total: f64 = across
+        .parts
+        .iter()
+        .map(|p| area(polygon_of(p.shape())))
+        .sum();
+    assert_eq!(across.parts.len(), 2);
+    assert!((total - 64.0).abs() < 1e-9, "{total}");
+}
+
+#[test]
+fn a_band_round_the_panorama_rotated_and_tilted_keeps_all_it_covers() {
+    // A band nearly the full width of a panorama 400 by 100, columns 10 to 390 and rows 40
+    // to 60, under a tilt and eight turns about the vertical. Its footprint can reach past both edges of the
+    // panorama once taken round, and every whole turn it reaches into is kept: the parts
+    // cover what the band covers, to within its edges' sampling and thinning to 64
+    // vertices, which moves an edge by a pixel or so. A part left out would be a share of
+    // the band, far more.
+    let (c, s) = (5.0 / 13.0, 12.0 / 13.0);
+    let tilt = [1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c];
+    let space = Space::panorama(400, 100).unwrap();
+    let start = Binding::root(picture("turned"), space);
+    let band = on(&start, boxed(10.0, 40.0, 390.0, 60.0));
+    for step in 0..8 {
+        let angle = f64::from(step) * std::f64::consts::PI / 4.0;
+        let (sn, cs) = angle.sin_cos();
+        let yaw = [cs, -sn, 0.0, sn, cs, 0.0, 0.0, 0.0, 1.0];
+        let mut matrix = [0.0; 9];
+        for row in 0..3 {
+            for column in 0..3 {
+                matrix[3 * row + column] = (0..3)
+                    .map(|k| yaw[3 * row + k] * tilt[3 * k + column])
+                    .sum();
+            }
+        }
+        let turn = Binding::new(
+            picture("turned"),
+            space,
+            picture("panorama"),
+            space,
+            Direction::SourceToDestination,
+            Mapping::Rotation { matrix },
+        )
+        .unwrap();
+        let carried = carry(&band, &turn, Toward::Destination).unwrap();
+        let inside = |p: Point, points: &[Point]| {
+            let mut odd = false;
+            for (i, a) in points.iter().enumerate() {
+                let b = points[(i + 1) % points.len()];
+                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+                {
+                    odd = !odd;
+                }
+            }
+            odd
+        };
+        let (mut truth, mut wrong) = (0u32, 0u32);
+        for i in 0..200 {
+            for j in 0..50 {
+                let p = Point::new(f64::from(i) * 2.0 + 1.0, f64::from(j) * 2.0 + 1.0);
+                let from = turn.to_source(p).unwrap();
+                let is = (40.0..=60.0).contains(&from.y) && (10.0..=390.0).contains(&from.x);
+                let shown = carried
+                    .parts
+                    .iter()
+                    .any(|part| inside(p, polygon_of(part.shape())));
+                truth += u32::from(is);
+                wrong += u32::from(is != shown);
+            }
+        }
+        assert!(
+            f64::from(wrong) < 0.15 * f64::from(truth),
+            "turn {step}: {wrong} of {truth} points wrong, {} parts",
+            carried.parts.len()
+        );
+    }
+}
+
+#[test]
+fn a_box_that_holds_both_poles_is_the_whole_panorama_once_rotated() {
+    let whole = on(
+        &Binding::root(picture("turned"), Space::panorama(40, 10).unwrap()),
+        boxed(0.0, 0.0, 40.0, 10.0),
+    );
+    let carried = carry(&whole, &quarter_turn(), Toward::Destination).unwrap();
+    assert_eq!(
+        carried
+            .parts
+            .iter()
+            .map(|p| p.shape().clone())
+            .collect::<Vec<_>>(),
+        [boxed(0.0, 0.0, 40.0, 10.0)]
+    );
+}
+
+#[test]
+fn a_polygon_on_the_panorama_is_clipped_to_the_view_and_behind_it() {
+    // A triangle on the panorama with one corner far right of a 90 degree view and one
+    // behind it: what the view sees is clipped to its edges, not held to them, and said
+    // to be partial.
+    let look = looking(0.0, 0.0, 90.0);
+    let panorama = Binding::root(picture("panorama"), Space::panorama(3600, 1800).unwrap());
+    let triangle = on(
+        &panorama,
+        Shape::Polygon {
+            points: vec![
+                Point::new(1700.0, 850.0),
+                Point::new(2500.0, 900.0),
+                Point::new(1750.0, 1000.0),
+            ],
+        },
+    );
+    let seen = carry(&triangle, &look, Toward::Source).unwrap();
+    assert!(seen.partial);
+    let points = polygon_of(seen.parts[0].shape());
+    assert!(
+        points
+            .iter()
+            .all(|p| (0.0..=256.0).contains(&p.x) && (0.0..=256.0).contains(&p.y))
+    );
+    // The far corner is cut away by the view's right edge: two vertices lie on it.
+    assert_eq!(
+        points.iter().filter(|p| p.x == 256.0).count(),
+        2,
+        "{points:?}"
+    );
+    // A triangle with a corner behind the view keeps the part in front.
+    let behind = on(
+        &panorama,
+        Shape::Polygon {
+            points: vec![
+                Point::new(1750.0, 850.0),
+                Point::new(100.0, 900.0),
+                Point::new(1850.0, 950.0),
+            ],
+        },
+    );
+    let front = carry(&behind, &look, Toward::Source).unwrap();
+    assert!(front.partial);
+    assert!(polygon_of(front.parts[0].shape()).len() >= 3);
+    // Wholly behind: refused as behind, not as outside.
+    let back = on(
+        &panorama,
+        Shape::Polygon {
+            points: vec![
+                Point::new(10.0, 850.0),
+                Point::new(60.0, 900.0),
+                Point::new(20.0, 950.0),
+            ],
+        },
+    );
+    let ArtifactError::Invalid { why, .. } = carry(&back, &look, Toward::Source).unwrap_err()
+    else {
+        panic!();
+    };
+    assert!(why.contains("behind"), "{why}");
 }

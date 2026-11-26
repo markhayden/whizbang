@@ -109,7 +109,7 @@ pub fn carry(location: &Location, binding: &Binding, toward: Toward) -> Result<C
         Some(regions) => by_regions(location.shape(), &regions, &into)?,
         None if *binding.mapping() == Mapping::Identity => (vec![location.shape().clone()], false),
         None if matches!(binding.mapping(), Mapping::Perspective { .. }) => {
-            footprint::through_view(location.shape(), binding, forward, &into)?
+            footprint::through_view(location.shape(), binding, forward)?
         }
         None => (by_points(location.shape(), binding, toward, &into)?, false),
     };
