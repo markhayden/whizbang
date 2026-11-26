@@ -5,7 +5,6 @@ id = "source-fidelity/dry-run-v1"
 use_case = "source-fidelity"
 split = "dev"
 licence = "CC-BY-4.0"
-images_repo = "github.com/markhayden/wafflery-evalsets"
 rules = { base = "source-fidelity", version = 1 }
 
 [[family]]
@@ -14,7 +13,10 @@ generator = "fake"
 description = "a boathouse on a lake with a blue rowing boat and a wooden jetty"
 brief = "Restyle the scene; keep the structure and every named subject."
 source = { prompt = "A boathouse on a still lake, a blue rowing boat tied to a wooden jetty.", seed = 501, size = 128 }
-protected = ["the blue rowing boat", "the wooden jetty"]
+protected = [
+  { subject = "the blue rowing boat", colour = "blue", count = "one", lettering = "WREN" },
+  "the wooden jetty",
+]
 
 [[family.item]]
 id = "boathouse-grade"

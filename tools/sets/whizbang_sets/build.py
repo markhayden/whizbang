@@ -126,16 +126,29 @@ def _match_requirements(label: DraftLabel, target: str | None, requirements) -> 
             label.obligation_ids.append(rq["id"])
 
 
-def _scene_requirements(family: Family) -> list[dict[str, Any]]:
+def _keeps(subject: str, traits: dict[str, str], wording: str) -> str:
+    """A protected subject's requirement, in the form every tool that reads subjects parses:
+    the subject's phrase, then " keeps ", then what it keeps (`pack/tools/per_subject.py`).
+    In full wording each trait it states is a clause of its own, checkable alone."""
+    kept = "its identity, shape, position and extent relative to the source"
+    stated = [f"its {k} ({traits[k]})" for k in ("colour", "count", "lettering") if k in traits]
+    if wording == "full" and stated:
+        listed = stated[0] if len(stated) == 1 else ", ".join(stated[:-1]) + " and " + stated[-1]
+        return f"{_cap(subject)} keeps {kept}, and {listed}."
+    return f"{_cap(subject)} keeps {kept}."
+
+
+def _scene_requirements(family: Family, wording: str = "full") -> list[dict[str, Any]]:
+    traits = family.traits or [{} for _ in family.protected]
     return [
         {
             "id": f"RQ{n}",
             "kind": "must_hold",
             "scope": ["candidate"],
             "evidence": ["source"],
-            "text": f"{_cap(s)} keeps its identity, shape, position and extent relative to the source.",
+            "text": _keeps(s, t, wording),
         }
-        for n, s in enumerate(family.protected, start=1)
+        for n, (s, t) in enumerate(zip(family.protected, traits), start=1)
     ]
 
 
@@ -192,17 +205,25 @@ def _generator_of(family: Family, item: Item, gen: Any, generators: dict[str, An
     return g
 
 
-def _scene_item(family, item, n, source, gen, generators, use_case, seed_offset=0) -> _Built:
+def _scene_item(
+    family, item, n, source, gen, generators, use_case, seed_offset=0, wording="full", earlier=None
+) -> _Built:
     # Only source fidelity judges against the source; a reality-check job is the candidate alone.
     with_source = use_case == "source-fidelity"
-    requirements = _scene_requirements(family) if with_source else []
+    requirements = _scene_requirements(family, wording) if with_source else []
     item_gen = _generator_of(family, item, gen, generators)
-    candidate, label = ops.apply(item.op, source, item_gen, family.source.seed + n + 1 + seed_offset)
+    given = None if item.same_as is None else (earlier or {})[item.same_as]
+    candidate, label = ops.apply(item.op, source, item_gen, family.source.seed + n + 1 + seed_offset, given)
     if label.expected == "fail" and label.obligation_ids == ["SF1"]:
-        _match_requirements(label, item.op.get("removes") or item.op.get("alters"), requirements)
+        target = item.op.get("removes") or item.op.get("alters") or item.op.get("covers")
+        _match_requirements(label, target, requirements)
     rec = {"id": item.id, "family": family.id, "op": dict(item.op), "generated_on": today()}
     if item.generator is not None:
         rec["generator"] = item.generator
+    if item.same_as is not None:
+        rec["same_as"] = item.same_as
+    if item.brief is not None:
+        rec["brief"] = item.brief
     if label.notes:
         rec["edit_notes"] = label.notes
     if seed_offset:
@@ -212,14 +233,14 @@ def _scene_item(family, item, n, source, gen, generators, use_case, seed_offset=
         id=item.id,
         candidate=candidate,
         label=label,
-        brief=family.brief,
+        brief=family.brief if item.brief is None else item.brief,
         record=rec,
         others=[("source", "source", None, source_rel, sha256(source))] if with_source else [],
         requirements=requirements,
     )
 
 
-def _build_scene_family(family, gen, out: Path, use_case, generators) -> tuple[list[_Built], dict, Cells]:
+def _build_scene_family(family, gen, out: Path, use_case, generators, wording="full") -> tuple[list[_Built], dict, Cells]:
     source = gen.generate(family.source.prompt, family.source.seed, family.source.size)
     rel = out / "families" / family.id / SOURCE_FILE
     rel.parent.mkdir(parents=True, exist_ok=True)
@@ -236,10 +257,14 @@ def _build_scene_family(family, gen, out: Path, use_case, generators) -> tuple[l
         "generated_on": today(),
         "protected": list(family.protected),
     }
-    built = [
-        _scene_item(family, item, n, source, gen, generators, use_case)
-        for n, item in enumerate(family.items)
-    ]
+    if any(family.traits):
+        record["traits"] = [dict(t) for t in family.traits]
+    built: list[_Built] = []
+    earlier: dict[str, bytes] = {}
+    for n, item in enumerate(family.items):
+        b = _scene_item(family, item, n, source, gen, generators, use_case, 0, wording, earlier)
+        built.append(b)
+        earlier[item.id] = b.candidate
     return built, record, [("source", source, None)] + [(b.id, b.candidate, b.label) for b in built]
 
 
@@ -522,7 +547,9 @@ def build(plan: Plan, out: Path, owner: Path, generators: dict[str, Any]) -> Bui
         elif family.kind == "brief":
             built, record, cells = _build_brief_family(family, gen)
         else:
-            built, record, cells = _build_scene_family(family, gen, out, plan.set.use_case, generators)
+            built, record, cells = _build_scene_family(
+                family, gen, out, plan.set.use_case, generators, plan.set.requirements
+            )
             report.images += 1
         families_out.append({"id": family.id, "description": family.description})
         record_families.append(record)
@@ -607,7 +634,15 @@ def rebuild(plan: Plan, out: Path, owner: Path, generators: dict[str, Any], item
     else:
         source = (out / "families" / family.id / SOURCE_FILE).read_bytes()
         n = family.items.index(item)
-        b = _scene_item(family, item, n, source, gen, generators, use_case, seed_offset)
+        followers = [i.id for i in family.items if i.same_as == item.id]
+        if followers:
+            raise ValueError("another item is judged on this item's pictures; build the set again instead")
+        earlier = {}
+        if item.same_as is not None:
+            earlier[item.same_as] = (out / "items" / item.same_as / CANDIDATE_FILE).read_bytes()
+        b = _scene_item(
+            family, item, n, source, gen, generators, use_case, seed_offset, plan.set.requirements, earlier
+        )
         cells = [("source", source, None)]
     entry, drafts = _write_item(plan.set.id, use_case, out, b)
     record = tomllib.loads(read_text(owner_dir / "construction.toml"))
