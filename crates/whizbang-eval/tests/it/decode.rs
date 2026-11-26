@@ -125,31 +125,74 @@ fn neither_is_a_loss_of_the_recipe_in_version_2() {
             .text()
             .contains("protocol version 2: a neither is a loss")
     );
+    // And the losses it counted, so a record written from it cannot report one loss.
+    assert_eq!(decode.groups[0].counted_losses, 8);
+    assert!(
+        decode
+            .text()
+            .contains("neither 7, losses with neither 8: worse"),
+        "{}",
+        decode.text()
+    );
 }
 
 #[test]
 fn no_decided_pair_is_never_preferred() {
     // No win, no loss and no `neither`: no share of wins reaches a fraction of nothing.
     assert_ne!(outcome(2, 1, [S; 8]), Outcome::Preferred);
-    let protocol = |rules: &str| {
+    let parse = |version: u32, rules: &str| {
         let text = format!(
-            "version = 2\nname = \"t\"\nseed = 7\narms = [\"a\", \"b\"]\nmin_decided = 1\n\
-             {rules}[[group]]\nname = \"g\"\nimages = [\"i1\"]\n"
+            "version = {version}\nname = \"t\"\nseed = 7\narms = [\"a\", \"b\"]\n\
+             min_decided = 1\n[rules]\n{rules}[[group]]\nname = \"g\"\nimages = [\"i1\"]\n"
         );
-        Protocol::parse(text.as_bytes()).unwrap().0
+        Protocol::parse(text.as_bytes()).map(|(p, _)| p)
     };
-    let same = Counts {
-        same: 1,
-        ..Counts::default()
-    };
-    // Not even when the preferred fraction is nothing.
-    let any = protocol("[rules]\npreferred = [0, 1]\nnot_worse = [1, 3]\n");
-    assert_eq!(decode::outcome(&any, same), Outcome::NotWorse);
-    let one_win = Counts {
-        wins: 1,
-        ..Counts::default()
-    };
-    assert_eq!(decode::outcome(&any, one_win), Outcome::Preferred);
+    // A preferred fraction at a half or under, or a not_worse one over a half, would let
+    // one decided pair make a group preferred, or a loss leave it not worse: refused,
+    // under either version.
+    for version in [1, 2] {
+        for rules in [
+            "preferred = [0, 1]\nnot_worse = [1, 3]\n",
+            "preferred = [1, 2]\nnot_worse = [1, 3]\n",
+            "preferred = [2, 3]\nnot_worse = [2, 3]\n",
+            "preferred = [2, 3]\nnot_worse = [1, 1]\n",
+        ] {
+            let refused = parse(version, rules).unwrap_err();
+            assert!(refused.contains("half"), "{rules}: {refused}");
+        }
+    }
+    // At the edges that are taken, all losses or all `neither` is never preferred nor
+    // not worse, whatever the size of the round.
+    let edge = parse(2, "preferred = [51, 100]\nnot_worse = [1, 2]\n").unwrap();
+    let v1 = parse(1, "preferred = [51, 100]\nnot_worse = [1, 2]\n").unwrap();
+    for n in 1..=20_u32 {
+        let lost = Counts {
+            losses: n,
+            ..Counts::default()
+        };
+        let neither = Counts {
+            neither: n,
+            ..Counts::default()
+        };
+        assert_eq!(decode::outcome(&edge, lost), Outcome::Worse, "{n} losses");
+        assert_eq!(
+            decode::outcome(&edge, neither),
+            Outcome::Worse,
+            "{n} neither"
+        );
+        assert_eq!(
+            decode::outcome(&v1, lost),
+            Outcome::Worse,
+            "{n} losses, version 1"
+        );
+        let same = Counts {
+            same: n,
+            ..Counts::default()
+        };
+        assert_eq!(decode::outcome(&edge, same), Outcome::NotWorse, "{n} same");
+    }
+    assert_eq!(outcome(2, 1, [N; 8]), Outcome::Worse);
+    assert_eq!(outcome(2, 1, [L; 8]), Outcome::Worse);
 }
 
 #[test]

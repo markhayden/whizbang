@@ -404,6 +404,8 @@ pub struct GroupRead {
     pub losses: u32,
     pub same: u32,
     pub neither: u32,
+    /// The losses the outcome counted, every `neither` among them (protocol version 2).
+    pub losses_with_neither: u32,
     pub outcome: String,
 }
 

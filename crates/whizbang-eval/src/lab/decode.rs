@@ -148,6 +148,8 @@ pub struct Group {
     pub losses: u32,
     pub same: u32,
     pub neither: u32,
+    /// The losses the outcome counted: `losses`, and under version 2 every `neither` too.
+    pub counted_losses: u32,
     pub outcome: Outcome,
 }
 
@@ -350,6 +352,11 @@ pub fn decode(
             losses,
             same,
             neither,
+            counted_losses: if protocol.version >= 2 {
+                losses + neither
+            } else {
+                losses
+            },
             outcome: outcome(
                 protocol,
                 Counts {
@@ -392,8 +399,14 @@ impl Decode {
             ));
         }
         for g in &self.groups {
+            let counted = if self.version >= 2 {
+                format!(", losses with neither {}", g.counted_losses)
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "group {}: pairs {}, decided {}, wins {}, losses {}, same {}, neither {}: {}\n",
+                "group {}: pairs {}, decided {}, wins {}, losses {}, same {}, neither {}{counted}: \
+                 {}\n",
                 g.group,
                 g.pairs,
                 g.decided,

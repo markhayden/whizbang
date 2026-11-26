@@ -113,6 +113,13 @@ pub fn frozen(file: &Path) -> Result<Frozen, String> {
     if protocol_digest != gate.quality.protocol_sha256 {
         return Err("the protocol is not the file the gate pins (another SHA-256)".to_owned());
     }
+    if protocol.version < 2 {
+        return Err(
+            "the protocol is of version 1, under which not_worse cannot be reached; an edit \
+             gate's pairs are decoded under version 2 (plan mE, task P0)"
+                .to_owned(),
+        );
+    }
     Ok(Frozen {
         gate,
         digest: Digest::of_bytes(&bytes).hex(),
@@ -579,6 +586,7 @@ pub fn quality_of(
             losses: g.losses,
             same: g.same,
             neither: g.neither,
+            losses_with_neither: g.counted_losses,
             outcome: g.outcome.word().to_owned(),
         })
         .collect();

@@ -70,7 +70,8 @@ fn ten() -> u32 {
 
 impl Protocol {
     /// A protocol's bytes, read strictly, with their digest: version 1 or 2, a plain name, two
-    /// distinct arms, `min_decided` of at least 1, fractions between 0 and 1, groups with
+    /// distinct arms, `min_decided` of at least 1, `preferred` above a half and `not_worse`
+    /// at most a half, groups with
     /// unique names, none empty, and a picture in one group at most.
     pub fn parse(bytes: &[u8]) -> Result<(Protocol, String), String> {
         let text = std::str::from_utf8(bytes).map_err(|_| "the protocol is not UTF-8")?;
@@ -99,6 +100,21 @@ impl Protocol {
                     "rules.{name} = [{n}, {d}] is not a fraction between 0 and 1"
                 ));
             }
+        }
+        // `preferred` above a half and `not_worse` at most a half: else one decided pair
+        // could make a group preferred, or one loss leave it not worse. Every protocol
+        // frozen before version 2 holds two thirds and one third.
+        let [pn, pd] = protocol.rules.preferred;
+        let [nn, nd] = protocol.rules.not_worse;
+        if u64::from(pn) * 2 <= u64::from(pd) {
+            return refuse(format!(
+                "rules.preferred = [{pn}, {pd}] is not above a half"
+            ));
+        }
+        if u64::from(nn) * 2 > u64::from(nd) {
+            return refuse(format!(
+                "rules.not_worse = [{nn}, {nd}] is more than a half"
+            ));
         }
         if protocol.group.is_empty() {
             return refuse("at least one group is required".to_owned());
