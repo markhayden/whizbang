@@ -325,8 +325,9 @@ theirs; builders make no live call.
 6. **W1**, then **N1**.
 
 **O1's sessions** fall between these waves, as its tables say: O1.1 and O1.2 at once (O1.2
-once E's store is set); O1.3 when T2 and P1 have landed; O1.4 when P1 has; O1.5 when F1 has;
-O1.6 when L2 and P1 have; O1.7 when C1's recipe is built; O1.8 after R4. A round never starts
+once E's store is set); O1.3 when B1's second pull request has landed; O1.4 when P1 has; O1.5
+when T2 has; O1.6 when F1 has; O1.7 when L2 and P1 have; O1.8 when C1's recipe is built; O1.9
+after R4. A round never starts
 before the sessions O1 names for it are in O1's record; C1's measurement and its rung 2 are
 rounds in this sense, and so are D1's paid builds.
 
@@ -786,6 +787,10 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    is worked out from the items and findings exactly as v1's is, after the findings are read
    back to v1's form, so `check`'s rules are unchanged. `submission = "v3"` on `check`, the
    recipes and a matrix arm, as v2's setting is (ADR 0042, item 1); the default stays `v1`.
+   On the command line, `whizbang squint check --submission v3`, its help naming it
+   (`crates/whizbang/src/squint.rs` takes `v1` and `v2` today); in the playground, `v3` among
+   the choices of `check`'s `submission`, from its descriptor (O1.6 walks both).
+   `cli::squint_check_takes_submission_v3`.
 4. **Tests**: a provider conformance fixture of v3 for each adapter; v3 read back to v1's
    form gives the same verdict as the v1 submission it stands for, for a mandatory item, a
    reference item of several instances (some listed, none listed) and an observed finding; the new classes counted in
@@ -1251,9 +1256,9 @@ row on the panorama side of `view`):
 
 The owner and the orchestrator take **every tool** through the playground and the command line
 together, **one tool at a time**, in detail, before any round measures it. Nothing is skipped
-because a test covers it. Where a tool has no command line or no playground side, that is
-said in its row and recorded as a finding, never passed over. This task was added on the
-owner's word (2026-11-25).
+because a test covers it. Where a tool has no command line or no playground side of its own,
+that is said in its row and recorded as a finding, never passed over. This task was added on
+the owner's word (2026-11-25).
 
 **The definitive list.** 57 rows when this plan starts, from `main` at 5a927af2: the 48
 actions of the build's description (`whizbang describe`, `docs/reference/description.json`);
@@ -1265,7 +1270,8 @@ tool that a task adds or drops changes this list in the same pull request; a dro
 its row, saying when and why.
 
 How each kind is reached, as the code stands (`crates/whizbang/src/main.rs`, `rascal.rs`,
-`squint.rs`, `tool_try.rs`, `eval.rs`; `crates/whizbang/src/play_form.rs`, `ui/src/app.tsx`):
+`squint.rs`, `tool_try.rs`, `eval.rs`, `wiring.rs`; `crates/whizbang/src/play_form.rs`,
+`ui/src/api.ts`, `ui/src/app.tsx`):
 
 | Kind | Command line | Playground |
 |---|---|---|
@@ -1274,106 +1280,122 @@ How each kind is reached, as the code stands (`crates/whizbang/src/main.rs`, `ra
 | The loop | `whizbang rascal remove-checked` | The task `remove_checked` |
 | A use case of `check` | `whizbang squint check <use-case>` | Its task form: pictures, brief and judge only (`use_case_fields`); no setting of `check` can be given there |
 | `check` itself | No command of its own: `squint check` calls it | Its tool form, from its descriptor: `tools`, `details`, `detail`, `second_look`, `submission`, a job and its images |
-| `align`, `view`, `details`, `resize` | No command of their own: reached inside `squint check`, as the judge's calls or under `--details first` | Their tool forms |
-| `change_map`, `edge_similarity` | `whizbang try <name>`, `whizbang eval tool <name>` | Their tool forms |
-| A tool file | Listed under `[tools] paths` in the walkthrough's config; then `whizbang try <name>`, `whizbang eval tool <name> [--method <m>]`, `whizbang squint check source-fidelity --tool <name>` | No form or palette entry of its own: only as `check`'s `tools` setting; its record opens by its address |
-| A setting of `check` | `squint check`'s flags: `--details first --detail <tools>`, `--detail tiles`, `--second-look off\|on\|strict`, `--submission v1\|v2` (v3 from F1) | `check`'s tool form; not the use cases' forms |
-| The set builder | `uv run whizbang-sets` in `tools/sets/` | None: it is not an action |
+| `align`, `view`, `details`, `resize` | No command of their own: a one-step recipe file of the walkthrough's, run by `whizbang rascal run <file>`, spends nothing; inside `squint check` they are the judge's calls or `--details first` | Their tool forms |
+| `change_map`, `edge_similarity` | `whizbang try <name> --source <id> --candidate <id>`; `whizbang eval tool <name> --set <set>` | Their tool forms |
+| A tool file | Listed under `[tools] paths` in the session's config, then: `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config and does not list it | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
+| A setting of `check` | `squint check`'s flags: `--details first --detail <tools>`, `--details first --detail tiles`, `--second-look off\|on\|strict`, `--submission v1\|v2`, and `v3` once F1 adds it (F1, item 3) | `check`'s tool form; not the use cases' forms |
+| The set builder | `uv run whizbang-sets build\|rebuild\|promote` in `tools/sets/`; it writes set folders, not runs of a store | None: it is not an action |
 
-The 57 rows, by session:
+The 57 rows, by session. A session's config lists only the tool files that have landed.
 
 | Session | Rows, in this order | Waits for | Before |
 |---|---|---|---|
-| O1.1 | 33 rows, nothing paid. The primitives in `describe`'s order: `align`, `details`, `close`, `feather`, `grow`, `plug`, `render`, `resize`, `select`, `subtract`, `view`, `paste`, `cut`, `put`, `window`, `unwindow`, `apply`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`, `carry`, `tighten`, `inspect`, `fan`, `profile`, `ramp`, `measure` (30; `segment`, `fill`, `change_map` and `edge_similarity` come later); the recipes `mask_rect`, `protect`; the set builder, on a dev plan with its fake generator | This plan's merge | Every round, and D1's first paid build |
+| O1.1 | 35 rows, nothing paid. The primitives in `describe`'s order, all but `segment` and `fill`: `align`, `change_map`, `edge_similarity`, `details`, `close`, `feather`, `grow`, `plug`, `render`, `resize`, `select`, `subtract`, `view`, `paste`, `cut`, `put`, `window`, `unwindow`, `apply`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`, `carry`, `tighten`, `inspect`, `fan`, `profile`, `ramp`, `measure` (32); the recipes `mask_rect`, `protect`; the set builder, `--fake` only, as B1's first pull request left it | This plan's merge | Every round |
 | O1.2 | 8 rows, paid. `segment` (SAM 3 and Tiny; a phrase, a point, a box), `fill` (Bria through fal), `remove_prompt`, `remove`, `repair_area`, `repair`, `seam`, `remove_checked` (under the cheap judge) | E's store ("I need", item 1) | C1's measurement (item 1), V1, K1, R5, R6 |
-| O1.3 | 6 rows, and steps of 10 walked again. `change_map`, `edge_similarity`, `per_subject`, `outline`, `regions`, `classes` (each method); again: `segment` on the fixed-class entry; `view`'s panorama side, `line`, `rect`, `stroke`, `rasterize` through every binding, `fan`, `ramp`, `measure` (P1) | T2 and P1 | R2, K1, R3 |
-| O1.4 | 9 rows. `check`; `source-fidelity`, `reference-consistency`, `reality-checks`, `brief-compliance`, `product-fidelity`, each under v1 and v2; details first (with `align`, `change_map`, `edge_similarity`), `tiles`, the second look (`off`, `on`, `strict`) | P1 | R3, F2 |
-| O1.5 | 1 row. The submission format: v3 under `check` and each use case | F1 | F2, R4 |
-| O1.6 | Steps walked again. `remove_checked`, `select`, `carry` (L2); `seam` (P1's records) | L2 and P1 | R5 |
-| O1.7 | 1 row, if C1 builds it. The clicked removal | C1, item 3 | C1, item 4; R5 |
-| O1.8 | 1 row a variant. Each `source-fidelity-<name>` R4 admits | R4 | N1 |
+| O1.3 | The set builder walked again: live generation, its spend guard, full requirements, one real picture under `--cap-usd` | B1's second pull request | D1's first paid build |
+| O1.4 | 9 rows, and P1's steps walked again. `check`; `source-fidelity`, `reference-consistency`, `reality-checks`, `brief-compliance`, `product-fidelity`, each under v1 and v2; details first (with `align`, `change_map`, `edge_similarity`), `tiles`, the second look (`off`, `on`, `strict`); again: `view`'s panorama side, `line`, `rect`, `stroke`, `rasterize` through every binding, `fan`, `ramp`, `measure` | P1 | R2, R3, F2, R4, R5 |
+| O1.5 | 4 rows. `per_subject`, `outline`, `regions`, `classes`, each method; again: `segment` on the fixed-class entry | T2 | R2, K1, R3, R4 |
+| O1.6 | 1 row. The submission format: v3 under `check` and each use case | F1 | F2, R4 |
+| O1.7 | Steps walked again. `remove_checked`, `select`, `carry` (L2); `seam` (P1's records) | L2 and P1 | R5 |
+| O1.8 | 1 row, if C1 builds it. The clicked removal | C1, item 3 | C1, item 4; R5 |
+| O1.9 | 1 row a variant. Each `source-fidelity-<name>` R4 admits | R4 | N1 |
 
 **Which round waits for which sessions.** Every round after O1.1, and: D1's paid builds after
-O1.1; C1's measurement after O1.2; C1's rung 2 after O1.2 and O1.7; V1 after O1.2; K1 after
-O1.2 and O1.3; R2 after O1.3; R3 after O1.3 and O1.4; F2 after O1.4 and O1.5; R4 after O1.3,
-O1.4 and O1.5; R5 and R6 after O1.2, O1.6 and O1.7; W1 through K1, R4 and R6; N1 after O1.8.
-No session waits for a round, and each waits only for the tasks that build what it walks.
+O1.3; C1's measurement and V1 after O1.2; K1 after O1.2 and O1.5; R2 and R3 after O1.4 and
+O1.5; F2 after O1.4 and O1.6; R4 after O1.4, O1.5 and O1.6; C1's rung 2 after O1.2 and O1.8;
+R5 and R6 after O1.2, O1.4, O1.7 and O1.8; W1 through K1, R4 and R6; N1 after O1.9. Each
+session waits only for the tasks that build what it walks, and only O1.9 waits for a round,
+R4, which makes what it walks. F2 waits for P1 through O1.4, as every squint round does.
 
 **The store and the order of a session.** One session is one sitting of the owner's, on the
-owner's Mac, from `main`'s release build at a named commit, in E's store, with a walkthrough
-config that names the cheap judge as the judge, Bria through fal as the filler, and the four
-tool files under `[tools] paths`. The store has one writer at a time and `whizbang play` holds
-it, so each row runs the command line first, with the playground stopped, then the
+owner's Mac, from `main`'s release build at a named commit, in E's store, with a session config
+that names the cheap judge as the judge, Bria through fal as the filler, and the tool files
+that have landed under `[tools] paths`. The store has one writer at a time and `whizbang play`
+holds it, so each row runs the command line first, with the playground stopped, then the
 playground on the same store and config. The inputs are only the pictures of the tool's record,
 of the committed dev sets (`source-fidelity/scenes-v1`, `adversarial-v1`), of
 `segmentation/segment-01` and of the labs' committed corpora, brought in by `whizbang store
 import`. No picture of owner storage, of a held-out set or of R6's fresh corpus is used, so no
-row spends a picture a later round needs fresh.
+row spends a picture a later round needs fresh. Scratch files of a session (a one-step recipe
+file, a bundle file, a set built `--fake`) are kept in the system temp folder and removed
+after it.
 
 **Each row's cases.** Before its session, each row lists in the record the cases it walks:
 every mode the tool takes (`segment`'s phrase, point and box, on each backend; each method of
 a tool file; `second_look`'s three values; each submission format; `tiles` on a job of one
 image and its refusal on a pair), each worked example of its record, the case it handles badly
-if the record names one, and one refusal. A row passes when every case has its outcome.
+if the record names one, and one refusal. A row is done only when every case has its outcome.
 
 **The command line, for each case.**
 1. `whizbang describe`: the tool is listed with its kind and the mark its record states. A
-   tool file, a setting or the set builder is not an action: its record states its mark, and
-   the row says so.
+   tool file, a setting or the set builder is not in it: its record states its mark, and the
+   row says so.
 2. Its command's `--help`: every argument its record names, and no other. Where it has no
-   command of its own (the table above), the row records that as a finding and walks the
-   command that reaches it.
+   command of its own (the table above), the row records that as a finding and walks the route
+   the table gives.
 3. The case, by the command the record gives, or the route above where the record gives none.
    A primitive with no model is read against the record's pictures, picture by picture. A
    tool whose record was drawn with a scripted or fake backend (`fill`, the recipes, the loop,
    `outline`) runs on the live backend, and is read against what the record says must hold:
    pixels outside the mask unchanged, the mask's area and place, the verdict's form, the
-   evidence's bounds. For a tool offered to a judge, the run's record shows the judge's call
-   of it, or the row records that it was not called.
+   evidence's bounds. A tool offered to a judge: the run's record shows the judge's call of
+   it; if the judge did not call it, the case is not done, and is run again with a job whose
+   record example calls for it, or recorded as a finding.
 4. `whizbang runs show <run> --store <store>`: the run's record, with the arguments asked;
-   `whizbang runs replay <run> --store <store>`: reproduced without spending.
+   `whizbang runs replay <run> --store <store>`: reproduced, without spending.
 5. The refusal: an input the record says is refused (a missing field, a wrong size, a value
-   out of range, `tiles` on a pair). The message names the fault, and no run is made.
+   out of range, `tiles` on a pair). The row says which of two it expects, and checks it:
+   refused before anything runs, the message naming the fault and no run made; or a run that
+   ends invalid with the sentence its record names (`resize`'s long edge, `resize.rs`), and
+   what it charged.
 6. For a case that spends: `whizbang spend status --store <store>` shows its charge.
+
+The set builder has no store runs: its steps 3 to 6 are `build`, `rebuild` and `promote` on a
+dev plan, `whizbang eval sets check` on what it wrote, and its refusals (a request past
+`--cap-usd`, an origin the config does not approve, an owner folder inside the work tree).
 
 **The playground, for each case,** started by `whizbang play --store <store>` with the same
 config:
-1. The palette finds the tool, or the row records that it does not (a tool file, a setting);
-   its record opens and reads as the file does. `check` and `details` have no record file:
-   the row reads `check`'s use-case records and `tiles.md` instead and records the gap.
+1. The palette finds the tool, or the row records that it does not (a setting, the set
+   builder); its record opens and reads as the file does. `check` and `details` have no record
+   file: the row reads `check`'s use-case records and `tiles.md` instead, and records the gap.
 2. Its form opens; the case's inputs go in from the library; Run. A setting is given in
    `check`'s form. Where the form cannot take the case (a use case's form takes no setting of
    `check`), the row records that as a finding and runs it through `check`'s form.
 3. The result page: each output, the run's record, the spend meter.
 4. History lists the run. Copy command gives the command line of step 3, or says that none
    does. Compare, with the command line's run of step 3 as the baseline, shows the two the
-   same or names what differs. Run again makes the same call.
+   same or names what differs. Once a row: Run again makes the same call.
 5. The same refusal as the command line's step 5, shown in the form before Run where the form
-   can know it.
+   can know it, or as the invalid run's result.
 6. For a recipe or the loop: Bundle this run; the bundle opens in Bundles; its replay
-   reproduces the run without spending. `whizbang runs bundle` and `whizbang runs replay
-   --bundle <file>` do the same on the command line, after the playground has stopped.
+   reproduces the run without spending. `whizbang runs bundle` to a file in the system temp
+   folder and `whizbang runs replay --bundle <file>` do the same on the command line, after
+   the playground has stopped.
 
 **When a step fails.** A finding that changes what a tool does is fixed before the rounds the
 table names, and the steps it touched are walked again. A wording finding goes to the
 carry-over list. A side that is not offered (no command, no form) is a finding the owner
 decides on: built, or recorded as by design.
 
-**Spend.** Every paid case runs in E's store under its cap of one call; the set builder's
-real picture, if one is made, goes on the builder's ledger under its `--cap-usd`. In all about
-24 fills (eight edit rows, each on the command line, in the playground and Run again), about
-60 checks by the cheap judge and five by the default judge (one a use case), and four loops
-under the cheap judge; about 3 dollars with the steps walked again ("Spend", tier 1). A loop
-reserves its whole bound before it runs: while O1.2 or O1.6 is left, the headroom sum counts
-that reservation under the cheap judge, read before the run, if it is larger than 4 dollars.
+**Spend.** Every paid case runs in E's store under its cap of one call; the set builder's real
+picture goes on the builder's ledger under its `--cap-usd`. Counted from the cases: about 39
+fills (six edit rows of two examples each on both sides and one Run again, 30; the clicked
+removal, 5; `seam` walked again, 4); about 10 loops under the cheap judge (three examples on
+both sides and one Run again in O1.2, three in O1.7); about 86 checks by the cheap judge, 12 of
+them with a tool offered, and five by the default judge (one a use case); about 3.6 dollars,
+5 with the steps walked again ("Spend", tier 1). A loop reserves its whole bound before it
+runs: while O1.2 or O1.7 is left, the headroom sum counts that reservation under the cheap
+judge, read before the run, if it is larger than 4 dollars.
 
 **What is written.** `docs/results/mE-walkthroughs.md`: one row per tool, with the session, the
 date, the commit of the build, the tool's version, its backend, model, method and settings, each
 case's outcome at each step (works, or a finding with its number) and the pull request that
 fixed each finding. The record names only public inputs (a record's example, a committed set's
 item id, a corpus entry), and holds no owner picture, path, label, prompt, screenshot or
-verdict of an unreleased set. Bundles, screenshots and exported runs stay in the store, which is
-never committed. It is reviewed as the rounds' records are, for that.
+verdict of an unreleased set. Runs stay in E's store, which is never committed; a bundle file
+or a screenshot lives in the system temp folder only while the session needs it. It is
+reviewed as the rounds' records are, for that.
 
 - [ ] Done when: every row of the list as it stands at N1 is in the record with every case's
   outcome; every behaviour finding is fixed, or the tool ends E dropped with its row saying
@@ -1538,8 +1560,8 @@ store does (below).
 | C1 | If built: 20 fills for its rung 2 and 10 of the unshaped arm | 30 × 0.04 | 1.2 |
 | R5 | 48 runs of the five recipes that are not a loop (and the clicked removal), each a fill and a check by Argon | 48 × (0.04 + 0.0595) | 4.8 |
 | R6 | 60 fills of the fresh cases under the recipes that are not a loop; the owner marks them, no judge | 60 × 0.04 | 2.4 |
-| O1 | The walkthroughs: about 24 fills, 60 checks by Haiku, 5 by Argon, four loops under Haiku, and steps walked again after fixes | 24 × 0.04 + 60 × 0.00357 × 1.5 + 5 × 0.0595 + 4 × 0.13, then about a third more | 3 |
-| | **Expected** | | **about 60** |
+| O1 | The walkthroughs: about 39 fills, 10 loops under Haiku, 86 checks by Haiku (taken at a tool's arm), 5 by Argon, and steps walked again after fixes | 39 × 0.04 + 10 × 0.13 + 86 × 0.00357 × 1.5 + 5 × 0.0595, then about a third more | 5 |
+| | **Expected** | | **about 62** |
 
 **`remove_checked`'s rounds are tier 2.** A loop reserves its three attempts' whole bound
 before it runs, about 11.73 under Argon at its new price (`docs/guides/loop.md`, "What it
@@ -1628,10 +1650,10 @@ P1 ──────────────────┘
   are credited).
 - W1 after K1, R4 (the fresh set is spent) and R6.
 - Every round after the O1 sessions of the tools it measures (O1, "Which round waits for which
-  sessions"): every round and D1's paid builds after O1.1; C1's measurement and V1 after O1.2;
-  K1 after O1.2 and O1.3, so after P1 too; R2 after O1.3; R3 after O1.3 and O1.4; F2 after
-  O1.4 and O1.5, so after P1 too; R4 after O1.3 to O1.5; C1's rung 2 after O1.7, which is
-  after C1's build; R5 and R6 after O1.2, O1.6 and O1.7; N1 after O1.8.
+  sessions"): every round after O1.1; D1's paid builds after O1.3; C1's measurement and V1
+  after O1.2; K1 after O1.2 and O1.5; R2 and R3 after O1.4 and O1.5; F2 after O1.4 and O1.6,
+  so after P1 too; R4 after O1.4 to O1.6; C1's rung 2 after O1.8, which is after C1's build;
+  R5 and R6 after O1.2, O1.4, O1.7 and O1.8; N1 after O1.9.
 
 ## Risks
 
@@ -1678,7 +1700,7 @@ P1 ──────────────────┘
   point you click on it, exported; 10 photos with a scratch or a tear, each with a stroke and an area you draw
   in the playground and export; 10 panoramas not used before. Then the marks of R6's sheets
   and the picks of its pages.
-- **O1**: eight sittings, one a session, each tool walked with the orchestrator on the
+- **O1**: nine sittings, one a session, each tool walked with the orchestrator on the
   command line and in the playground, and a decision on each side a tool does not offer.
 - **T2, only if needed**: a yes to a new origin for the segmenter's files, if they are not
   served from `https://huggingface.co`.
@@ -1689,8 +1711,8 @@ P1 ──────────────────┘
 
 - Twenty-four tasks, nine of them the orchestrator's rounds; squint's ladder first, then
   rascal's. Among them O1 (added 2026-11-25): every tool, 57 rows to start, walked with you one
-  at a time on the command line and in the playground, in eight sessions, each before the
-  rounds that measure what it walks; about 3 dollars. Where a tool has no command or no form
+  at a time on the command line and in the playground, in nine sessions, each before the
+  rounds that measure what it walks; about 5 dollars. Where a tool has no command or no form
   of its own, that is a finding for you to decide on.
 - One fresh set, for source fidelity, kept whole in owner storage until its one round, seen
   by no agent; published after it, as `blind-v3` was.
@@ -1703,9 +1725,10 @@ P1 ──────────────────┘
 - At most one change to source fidelity's default recipe comes out of E: the format. A tool
   or the second look that passes is admitted as a variant of its own,
   `source-fidelity-<name>`.
-- Expected spend about 60 dollars of the 63.88 E has left, O1's 3 among them; cap 63.5. With
-  O1 the headroom sum passes E's store's 55.5, so the first cut (R4's second tool's arms to
-  tier 2) is made unless you say yes to 145. `remove_checked`'s
+- Expected spend about 62 dollars of the 63.88 E has left, O1's 5 among them; cap 63.5. With
+  O1, E's store's rounds come to about 56.3 of its 55.5, and the headroom sum to about 60.3, so
+  the first two cuts are made (R4's second tool's arms move to tier 2; F2 runs Haiku alone)
+  unless you say yes to 145. `remove_checked`'s
   rounds need tier 2.
 
 ## I need
@@ -1716,7 +1739,7 @@ P1 ──────────────────┘
    is yes, you reset it once more to what is left of the 145, a figure the orchestrator
    gives you with the command. Without it no paid walkthrough (O1.2) or round can start.
 2. **I need a yes or no: may milestone E spend up to 145 dollars in all, instead of 100?** The
-   first slice settled 36.12, tier 1 needs about 60 more and holds back the rest of the 100,
+   first slice settled 36.12, tier 1 needs about 62 more and holds back the rest of the 100,
    and tier 2 (the loop's rounds, the study's claim tested, a third judge on each tool, a
    rerun) about 45. Recommended: yes. With
    no, tier 2 does not run and the study's claim is withdrawn.
@@ -2126,3 +2149,40 @@ taken.
     screenshots stay in the store.
 12. **Minor: the task count and the box.** Right: the table holds 24 tasks; the box said "paid
     round". Taken: twenty-four; every round.
+
+### Review round O1-2
+
+Review round O1-2, on draft 2 of task O1. Verdict: revise. Round O1-1's fixes held but for its
+findings 3, 5, 9 and 10, completed here. Ten findings: 8 majors, 2 minors. Each was checked
+against the code; all were right and taken.
+
+1. **Major: a tool file has a form and a palette entry once the config lists it.** Right
+   (`tool_file.rs`, `descriptor`; `wiring.rs` registers it; `ui/src/api.ts`). Taken: the table
+   says so, and `describe`, which takes no config, does not list it.
+2. **Major: one config for every session would not start before `regions` and `classes`
+   exist.** Right (`wiring.rs`, `tool_files`, reads every path it lists). Taken: each
+   session's config lists only the tool files that have landed.
+3. **Major: O1.1's route for `align`, `view`, `details` and `resize` needed a live judge.**
+   Right. Taken: a one-step recipe file run by `rascal run`, nothing paid; a tool offered to a
+   judge and not called leaves its case not done.
+4. **Major: F2 and R5 could start before the sessions of `view` after P1 and of `check`.**
+   Right. Taken: P1's steps walked again with `check` in O1.4, after P1 alone, before R2, R3,
+   F2, R4 and R5; tool files in O1.5 after T2; F2's wait for P1 stated.
+5. **Major: the set builder was walked before its live half existed, by steps that do not apply
+   to it.** Right (`tools/sets/whizbang_sets/__main__.py`: live generation waits for B1's
+   second pull request). Taken: `--fake` in O1.1; O1.3 walks it again after B1's second pull
+   request, before D1's paid builds; its own steps (`build`, `rebuild`, `promote`, `eval sets
+   check`, its refusals) in place of a store's.
+6. **Major: F1 did not give the command line `--submission v3`.** Right (`squint.rs` takes
+   `v1` and `v2`). Taken: F1, item 3 adds the flag and the playground's choice, with a test.
+7. **Major: O1's spend was counted short.** Right: the edit rows' examples need about 39 fills
+   and the loop's about 10 runs. Taken: about 5 dollars, counted from the cases; the owner is
+   told that with it the first two cuts are made unless the ceiling is raised.
+8. **Major: not every refusal makes no run.** Right (`resize.rs`: a long edge it refuses ends
+   its run as invalid). Taken: each refusal states which it is, and what it charged.
+9. **Minor: flags incomplete.** Right (`door.rs` takes `--detail` only with `--details
+   first`). Taken: the full forms, `try`'s and `eval tool`'s required flags, `--method` from
+   T2.
+10. **Minor: two sentences contradicted the code.** Right (O1.9 waits for R4; `runs.rs` writes
+    no bundle inside the store). Taken: the exception named; bundle files and screenshots live
+    in the system temp folder for the session only.
