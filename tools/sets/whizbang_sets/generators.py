@@ -30,6 +30,25 @@ PROMPT = ("prompts",)
 PROMPT_AND_PICTURES = ("prompts", "source_images")
 
 
+#: The most pictures one request sends: a subject family's references.
+IMAGES_MOST = 4
+
+
+def _side(image: bytes) -> tuple[int, int]:
+    with Image.open(io.BytesIO(image)) as im:
+        return im.size
+
+
+def _bound(charge, size: int, images: list[bytes]):
+    """The charge of one request of this shape: the largest side it sends or asks for, and
+    how many pictures it sends. A request of more pictures than any is priced for is
+    refused before it is built."""
+    if len(images) > IMAGES_MOST:
+        raise GeneratorError(f"a request sends at most {IMAGES_MOST} pictures")
+    largest = max([size] + [max(_side(i)) for i in images])
+    return lambda recipient: charge(recipient, largest, len(images))
+
+
 def _key(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -45,9 +64,9 @@ def _data_address(image: bytes) -> str:
     return f"data:{_mime(image)};base64," + base64.b64encode(image).decode()
 
 
-def _json(sender: Sender, url: str, body: dict, credentials: dict, classes, what: str):
+def _json(sender: Sender, url: str, body: dict, credentials: dict, classes, what: str, charge=None):
     answer, recipient = sender.post(
-        url, json.dumps(body).encode(), {"Content-Type": "application/json"}, credentials, classes, what
+        url, json.dumps(body).encode(), {"Content-Type": "application/json"}, credentials, classes, what, charge
     )
     try:
         return json.loads(answer), recipient
@@ -64,10 +83,15 @@ class FalKlein:
     edit_model = "fal-ai/flux-2/klein/4b/edit"
     base = "https://fal.run"
 
-    def __init__(self, sender: Sender):
+    def __init__(self, sender: Sender, charge, base: str | None = None):
+        if charge is None:
+            raise ValueError("a live generator charges the spend guard; none was given")
         self.sender = sender
+        self.charge = charge
+        if base is not None:
+            self.base = base
 
-    def _call(self, model: str, body: dict, classes) -> bytes:
+    def _call(self, model: str, body: dict, classes, charge) -> bytes:
         d, recipient = _json(
             self.sender,
             f"{self.base}/{model}",
@@ -75,6 +99,7 @@ class FalKlein:
             {"Authorization": "Key " + _key("FAL_KEY")},
             classes,
             model,
+            charge,
         )
         images = d.get("images") or []
         if not images or not isinstance(images[0].get("url"), str):
@@ -95,7 +120,7 @@ class FalKlein:
             "num_images": 1,
             "output_format": "png",
         }
-        return self._call(self.model, body, PROMPT)
+        return self._call(self.model, body, PROMPT, _bound(self.charge, size, []))
 
     def edit(self, image: bytes, prompt: str, seed: int) -> bytes:
         return self.compose([image], prompt, seed)
@@ -108,7 +133,7 @@ class FalKlein:
             "num_images": 1,
             "output_format": "png",
         }
-        return self._call(self.edit_model, body, PROMPT_AND_PICTURES)
+        return self._call(self.edit_model, body, PROMPT_AND_PICTURES, _bound(self.charge, 0, images))
 
 
 class OpenAiImage:
@@ -119,8 +144,13 @@ class OpenAiImage:
     model = "gpt-image-2"
     base = "https://api.openai.com/v1/images"
 
-    def __init__(self, sender: Sender):
+    def __init__(self, sender: Sender, charge, base: str | None = None):
+        if charge is None:
+            raise ValueError("a live generator charges the spend guard; none was given")
         self.sender = sender
+        self.charge = charge
+        if base is not None:
+            self.base = base
 
     @staticmethod
     def _picture(d: dict, what: str) -> bytes:
@@ -139,18 +169,25 @@ class OpenAiImage:
             "n": 1,
         }
         key = {"Authorization": "Bearer " + _key("OPENAI_API_KEY")}
-        d, _ = _json(self.sender, f"{self.base}/generations", body, key, PROMPT, "images/generations")
+        d, _ = _json(
+            self.sender, f"{self.base}/generations", body, key, PROMPT, "images/generations",
+            _bound(self.charge, size, []),
+        )
         return self._picture(d, "images/generations")
 
     def edit(self, image: bytes, prompt: str, seed: int) -> bytes:
         return self.compose([image], prompt, seed)
 
     def compose(self, images: list[bytes], prompt: str, seed: int) -> bytes:
+        charge = _bound(self.charge, 0, images)
+        # The size is pinned to the first picture's, so the answer is of the shape priced.
+        width, height = _side(images[0])
         boundary = "----whizbang" + uuid.uuid4().hex
         parts = []
         for name, value in (
             ("model", self.model),
             ("prompt", prompt),
+            ("size", f"{width}x{height}"),
             ("quality", "medium"),
             ("output_format", "png"),
         ):
@@ -171,6 +208,7 @@ class OpenAiImage:
             {"Authorization": "Bearer " + _key("OPENAI_API_KEY")},
             PROMPT_AND_PICTURES,
             "images/edits",
+            charge,
         )
         try:
             d = json.loads(answer)
@@ -186,10 +224,15 @@ class GeminiImage:
     model = "gemini-3.1-flash-image"
     base = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def __init__(self, sender: Sender):
+    def __init__(self, sender: Sender, charge, base: str | None = None):
+        if charge is None:
+            raise ValueError("a live generator charges the spend guard; none was given")
         self.sender = sender
+        self.charge = charge
+        if base is not None:
+            self.base = base
 
-    def _call(self, parts: list[dict], classes) -> bytes:
+    def _call(self, parts: list[dict], classes, charge) -> bytes:
         body = {
             "contents": [{"parts": parts}],
             "generationConfig": {
@@ -204,6 +247,7 @@ class GeminiImage:
             {"x-goog-api-key": _key("GEMINI_API_KEY")},
             classes,
             self.model,
+            charge,
         )
         candidates = d.get("candidates") or [{}]
         for p in candidates[0].get("content", {}).get("parts", []):
@@ -212,7 +256,7 @@ class GeminiImage:
         raise GeneratorError(f"{self.model}: no picture part in the answer")
 
     def generate(self, prompt: str, seed: int, size: int) -> bytes:
-        return self._call([{"text": prompt}], PROMPT)
+        return self._call([{"text": prompt}], PROMPT, _bound(self.charge, size, []))
 
     def edit(self, image: bytes, prompt: str, seed: int) -> bytes:
         return self.compose([image], prompt, seed)
@@ -223,7 +267,7 @@ class GeminiImage:
             for i in images
         ]
         parts.append({"text": prompt})
-        return self._call(parts, PROMPT_AND_PICTURES)
+        return self._call(parts, PROMPT_AND_PICTURES, _bound(self.charge, 0, images))
 
 
 def _png(im: Image.Image) -> bytes:
@@ -266,11 +310,16 @@ class FakeGenerator:
         return _png(im)
 
 
-def live(sender: Sender) -> dict:
+def live(sender: Sender, guard) -> dict:
+    """The live generators, each charging `guard` (`spend.Guard`) before each attempt."""
+
+    def charge(name):
+        return lambda recipient, size, images: guard.charge(name, recipient, size, images)
+
     return {
-        "fal": FalKlein(sender),
-        "openai": OpenAiImage(sender),
-        "gemini": GeminiImage(sender),
+        "fal": FalKlein(sender, charge("fal")),
+        "openai": OpenAiImage(sender, charge("openai")),
+        "gemini": GeminiImage(sender, charge("gemini")),
         "fake": FakeGenerator(),
     }
 

@@ -14,10 +14,12 @@ import urllib.error
 import urllib.request
 
 import kit
+from PIL import Image
 
 from whizbang_sets import egress, generators
 
 TOKEN = "made-up-token-for-a-test"
+FREE = lambda recipient: None  # noqa: E731: a charge that records nothing, for egress alone
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -36,7 +38,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         body = self.server.body
-        self.send_response(200)
+        self.send_response(getattr(self.server, "status", 200))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -86,9 +88,20 @@ class Origins(unittest.TestCase):
         self.assertEqual(egress.origin_of("HTTPS://Fal.Run:443/x?y"), "https://fal.run")
         self.assertEqual(egress.origin_of("http://127.0.0.1:8080/a"), "http://127.0.0.1:8080")
         with_user = "https://someone" + chr(64) + "h.example/"  # an address naming a user
-        for bad in ("file:///etc/x", with_user, "ftp://h/", "https:///x", "https://h:port/"):
+        for bad in (
+            "file:///etc/x", with_user, "ftp://h/", "https:///x", "https://h:port/",
+            "https://h.example#x", "https://h.example?x", "https://h_x.example/", "https://-h.example/",
+            "https://h.example:0/", "https://h.example:080/", "https://h.example:65536/",
+            "https://127.1/", "https://0x7f.0.0.1/", "https://017700000001/", "https://00127.0.0.1/",
+            "https://h.example/a b", "https://h\u00e9.example/", "https://h.example/\\x",
+            "https://" + "a" * 64 + ".example/", "https://h.example/" + "a" * 2048,
+        ):
             with self.assertRaises(egress.Refused, msg=bad):
                 egress.origin_of(bad)
+        self.assertEqual(egress.origin_of("https://cdn.example/p.png?sig=1"), "https://cdn.example")
+        for after in ("https://fal.run/path", "https://fal.run/"):
+            with self.assertRaises(egress.Refused, msg=after):
+                egress.config_origin(after)
 
     def test_the_config_is_read_for_its_recipients(self):
         with kit.Scratch() as s:
@@ -101,12 +114,26 @@ class Origins(unittest.TestCase):
                 )
             a = egress.Approved.from_config(path)
             r = a.recipient_for("https://fal.run/x", ("prompts",))
+            self.assertEqual(r.shown(), "https://fal.run")
             self.assertTrue(r.reaches("https://cdn.fal.example"))
             with self.assertRaises(egress.Refused):
                 a.recipient_for("https://fal.run/x", ("prompts", "derived_images"))
             with open(path, "a") as f:
+                f.write('\n[egress.recipients.team]\norigin = "https://fal.run"\naccount = "team-1234"\nclasses = ["prompts"]\n')
+            both = egress.Approved.from_config(path)
+            team = both.recipients[1]
+            self.assertEqual((team.account, team.shown()), ("team-1234", "https://fal.run as team..."))
+            with self.assertRaisesRegex(egress.Refused, "several accounts"):
+                both.recipient_for("https://fal.run/x", ("prompts",))
+            self.assertIs(both.recipient_for("https://fal.run/x", ("prompts",), "team-1234"), team)
+            for bad in ('account = "two words"', 'account = ""', 'origin = "https://fal.run/x"', 'colour = "red"'):
+                with open(os.path.join(s, "bad.toml"), "w") as f:
+                    f.write('[egress.recipients.x]\norigin = "https://x.example"\nclasses = []\n' + bad + "\n")
+                with self.assertRaises(ValueError, msg=bad):
+                    egress.Approved.from_config(os.path.join(s, "bad.toml"))
+            with open(path, "a") as f:
                 f.write('\n[egress.recipients.other]\norigin = "https://o.example"\nclasses = ["secrets"]\n')
-            with self.assertRaisesRegex(ValueError, "unknown class"):
+            with self.assertRaisesRegex(ValueError, "not known"):
                 egress.Approved.from_config(path)
 
 
@@ -115,11 +142,11 @@ class Checked(unittest.TestCase):
         with Server() as there:
             s = sender(approved(("https://fal.run", (), ("prompts",))))
             with self.assertRaisesRegex(egress.Refused, "nothing was sent"):
-                s.post(there.origin + "/x", b"{}", {}, {"Authorization": TOKEN}, ("prompts",), "x")
+                s.post(there.origin + "/x", b"{}", {}, {"Authorization": TOKEN}, ("prompts",), "x", FREE)
             # Approved, but not for a picture: refused too.
             s = sender(approved((there.origin, (), ("prompts",))))
             with self.assertRaises(egress.Refused):
-                s.post(there.origin + "/x", b"{}", {}, {}, ("prompts", "source_images"), "x")
+                s.post(there.origin + "/x", b"{}", {}, {}, ("prompts", "source_images"), "x", FREE)
             self.assertEqual(there.seen, [])
 
     def test_a_redirect_to_an_origin_the_config_does_not_approve_is_refused(self):
@@ -127,7 +154,7 @@ class Checked(unittest.TestCase):
             there.httpd.redirect["/x"] = elsewhere.origin + "/y"
             s = sender(approved((there.origin, (), ("prompts",))))
             with self.assertRaisesRegex(egress.Refused, "redirect"):
-                s.post(there.origin + "/x", b"{}", {}, {"Authorization": TOKEN}, ("prompts",), "x")
+                s.post(there.origin + "/x", b"{}", {}, {"Authorization": TOKEN}, ("prompts",), "x", FREE)
             self.assertEqual(len(there.seen), 1)
             self.assertEqual(elsewhere.seen, [], "nothing reached the origin that is not approved")
 
@@ -135,7 +162,7 @@ class Checked(unittest.TestCase):
         with Server() as there, Server(body=b"picture") as cdn:
             there.httpd.redirect["/x"] = cdn.origin + "/y"
             s = sender(approved((there.origin, (cdn.origin,), ("prompts",))))
-            answer, _ = s.post(there.origin + "/x", b"{}", {}, {"Authorization": TOKEN}, ("prompts",), "x")
+            answer, _ = s.post(there.origin + "/x", b"{}", {}, {"Authorization": TOKEN}, ("prompts",), "x", FREE)
             self.assertEqual(answer, b"picture")
             self.assertEqual(there.seen[0][2], TOKEN)
             self.assertEqual(cdn.seen, [("GET", "/y", None)])
@@ -153,6 +180,20 @@ class Checked(unittest.TestCase):
             with self.assertRaisesRegex(egress.Refused, "redirect"):
                 s.get(cdn.origin + "/moved", via, "x")
             self.assertEqual(elsewhere.seen, [])
+            # Another recipient the config approves is still not where this one's pictures are.
+            both = approved((there.origin, (cdn.origin,), ("prompts",)), (elsewhere.origin, (), ("prompts",)))
+            with self.assertRaisesRegex(egress.Refused, "download"):
+                sender(both).get(elsewhere.origin + "/p.png", both.recipients[0], "x")
+            self.assertEqual(elsewhere.seen, [])
+
+    def test_a_provider_s_answer_to_a_failure_is_never_in_the_error_s_text(self):
+        opener, _ = scripted([http_error(400)])
+        s = egress.Sender(approved(("https://x.example", (), ("prompts",))), sleep=lambda w: None, opener=opener)
+        with self.assertRaises(egress.GeneratorError) as caught:
+            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x", FREE)
+        self.assertEqual(str(caught.exception), "x: HTTP 400")
+        self.assertEqual(caught.exception.status, 400)
+        self.assertIn("error", caught.exception.detail)
 
     def test_no_proxy_is_used_whatever_the_environment_names(self):
         made = []
@@ -164,7 +205,7 @@ class Checked(unittest.TestCase):
         os.environ["https_proxy"] = "http://127.0.0.1:9"
         try:
             s = egress.Sender(approved(("https://x.example", (), ("prompts",))), opener=opener)
-            self.assertEqual(s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x")[0], b"ok")
+            self.assertEqual(s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x", FREE)[0], b"ok")
         finally:
             del os.environ["https_proxy"]
         proxies = [h for h in made if isinstance(h, urllib.request.ProxyHandler)]
@@ -206,14 +247,14 @@ class Retries(unittest.TestCase):
         opener, calls = scripted([http_error(503), urllib.error.URLError("reset"), b"ok"])
         waits = []
         s = egress.Sender(self.a(), sleep=waits.append, opener=opener)
-        self.assertEqual(s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x")[0], b"ok")
+        self.assertEqual(s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x", FREE)[0], b"ok")
         self.assertEqual((len(calls), waits), (3, list(egress.RETRY_WAITS[:2])))
 
     def test_a_client_error_is_not_tried_again(self):
         opener, calls = scripted([http_error(401)])
         s = egress.Sender(self.a(), sleep=lambda w: None, opener=opener)
         with self.assertRaisesRegex(egress.GeneratorError, "HTTP 401"):
-            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x")
+            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x", FREE)
         self.assertEqual(len(calls), 1)
 
     def test_a_lasting_outage_gives_up_after_every_wait(self):
@@ -221,8 +262,15 @@ class Retries(unittest.TestCase):
         opener, calls = scripted([http_error(503)] * n)
         s = egress.Sender(self.a(), sleep=lambda w: None, opener=opener)
         with self.assertRaisesRegex(egress.GeneratorError, "HTTP 503"):
-            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x")
+            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x", FREE)
         self.assertEqual(len(calls), n)
+
+
+def CHARGES(recipient, side, pictures):  # noqa: N802: the charge the generators' tests give
+    CHARGED.append((side, pictures))
+
+
+CHARGED = []
 
 
 class Recording:
@@ -232,8 +280,10 @@ class Recording:
         self.answer, self.download = answer, download
         self.posts, self.gets = [], []
 
-    def post(self, url, body, headers, credentials, classes, what):
+    def post(self, url, body, headers, credentials, classes, what, charge=None):
         self.posts.append((url, classes, credentials))
+        self.bodies = getattr(self, "bodies", []) + [body]
+        charge("recipient")
         return json.dumps(self.answer).encode(), "recipient"
 
     def get(self, url, via, what):
@@ -251,9 +301,9 @@ class Generators(unittest.TestCase):
             os.environ.pop(k, None)
 
     def test_fal_sends_a_prompt_alone_to_generate_and_a_picture_with_it_to_edit(self):
-        picture = b"\x89PNG\r\n\x1a\nfake"
+        picture = kit.png(Image.new("RGB", (32, 32), (4, 5, 6)))
         r = Recording({"images": [{"url": "data:image/png;base64," + base64.b64encode(picture).decode()}]})
-        fal = generators.FalKlein(r)
+        fal = generators.FalKlein(r, CHARGES)
         self.assertEqual(fal.generate("a lake", 1, 64), picture)
         self.assertEqual(fal.edit(picture, "no boat", 2), picture)
         self.assertEqual([p[1] for p in r.posts], [("prompts",), ("prompts", "source_images")])
@@ -262,26 +312,46 @@ class Generators(unittest.TestCase):
 
     def test_fal_downloads_a_picture_it_answers_with_an_address_through_the_check(self):
         r = Recording({"images": [{"url": "https://cdn.fal.example/p.png"}]}, download=b"pic")
-        self.assertEqual(generators.FalKlein(r).generate("a lake", 1, 64), b"pic")
+        self.assertEqual(generators.FalKlein(r, CHARGES).generate("a lake", 1, 64), b"pic")
         self.assertEqual(r.gets, [("https://cdn.fal.example/p.png", "recipient")])
 
     def test_openai_and_gemini_read_the_picture_from_the_answer(self):
         data = base64.b64encode(b"pic").decode()
         r = Recording({"data": [{"b64_json": data}]})
-        openai = generators.OpenAiImage(r)
+        openai = generators.OpenAiImage(r, CHARGES)
         self.assertEqual(openai.generate("a lake", 1, 64), b"pic")
-        self.assertEqual(openai.edit(b"\x89PNG\r\n\x1a\n", "no boat", 1), b"pic")
+        self.assertEqual(openai.edit(kit.png(Image.new("RGB", (32, 32))), "no boat", 1), b"pic")
         self.assertEqual([p[1] for p in r.posts], [("prompts",), ("prompts", "source_images")])
         r = Recording({"candidates": [{"content": {"parts": [{"inlineData": {"data": data}}]}}]})
-        self.assertEqual(generators.GeminiImage(r).edit(b"\xff\xd8", "no boat", 1), b"pic")
+        self.assertEqual(generators.GeminiImage(r, CHARGES).edit(kit.png(Image.new("RGB", (32, 32))), "no boat", 1), b"pic")
         self.assertEqual(r.posts[0][1], ("prompts", "source_images"))
         with self.assertRaises(egress.GeneratorError):
-            generators.GeminiImage(Recording({"candidates": []})).generate("x", 1, 64)
+            generators.GeminiImage(Recording({"candidates": []}), CHARGES).generate("x", 1, 64)
+
+    def test_each_request_is_charged_by_its_shape_and_openai_s_edit_pins_its_size(self):
+        CHARGED.clear()
+        picture = kit.png(Image.new("RGB", (96, 64), (1, 2, 3)))
+        data = base64.b64encode(b"pic").decode()
+        r = Recording({"data": [{"b64_json": data}]})
+        openai = generators.OpenAiImage(r, CHARGES)
+        openai.generate("a lake", 1, 512)
+        openai.compose([picture, picture], "two", 1)
+        self.assertEqual(CHARGED, [(512, 0), (96, 2)])
+        self.assertIn(b'name="size"\r\n\r\n96x64\r\n', r.bodies[1])
+        with self.assertRaisesRegex(egress.GeneratorError, "at most 4"):
+            openai.compose([picture] * 5, "five", 1)
+
+    def test_a_live_generator_needs_its_charge_and_a_post_without_one_is_refused(self):
+        with self.assertRaises(ValueError):
+            generators.FalKlein(Recording({}), None)
+        s = egress.Sender(approved(("https://x.example", (), ("prompts",))))
+        with self.assertRaisesRegex(egress.Refused, "no charge"):
+            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x")
 
     def test_a_missing_key_is_said_by_its_name(self):
         del os.environ["FAL_KEY"]
         with self.assertRaisesRegex(egress.GeneratorError, "FAL_KEY is not set"):
-            generators.FalKlein(Recording({})).generate("x", 1, 64)
+            generators.FalKlein(Recording({}), CHARGES).generate("x", 1, 64)
 
 
 if __name__ == "__main__":
