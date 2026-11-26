@@ -41,7 +41,7 @@ not have. A run that shows a panorama is told of `yaw`, `pitch` and `fov` beside
 `image` alone required, and the description says that the three together ask for a square
 perspective view of a panorama, with their units and ranges, and that `also` has the same
 projection. The decision cache keys `view` by its descriptor's version and the version of its
-pixels (`1.1.0+1`), so no decision kept before the panorama side answers a run after it
+pixels (`1.1.0+2` since the second pull request of plan mE's task P1), so no decision kept before the panorama side answers a run after it
 (ADR 0031).
 
 **Outputs.** One crop, or two when `also` is given, in the order asked. Each is:
@@ -54,8 +54,11 @@ pixels (`1.1.0+1`), so no decision kept before the panorama side answers a run a
   mapping whose box is the whole pixels that were cut, in the source's pixels; for the
   angles, ADR 0051's perspective mapping, whose parameters are the three angles. A
   location on a crop by box maps back through it, and through the bindings of the crops
-  it was cut from in turn (`whizbang_squint::view::box_to_root`); a point maps through
-  either.
+  it was cut from in turn (`whizbang_squint::view::box_to_root`). A box on a perspective
+  view, or on a crop of one, lands on the panorama as its footprint there: the polygon of
+  its boundary, two parts cut at the seam when it crosses it, or a band the panorama's
+  full width when it holds a pole (`whizbang_squint::view::box_onto_panorama`, through
+  `whizbang_core::artifact::carry`). A point maps through either binding.
 
 Either every crop asked for is returned or none is. A request that cannot be met is refused
 with a sentence that says what to send instead.
@@ -80,9 +83,13 @@ doubles, so the same request gives the same bytes on every machine.
    pixel counted by the area of it inside the rectangle. With a cut `w` by `h` shown at `m`
    by `n`, the weight of source column `x` in crop column `i` is the length of the overlap
    of `[x × m, (x + 1) × m)` and `[i × w, (i + 1) × w)`, and rows are the same with `n` and
-   `h`; a sample is `(2 × S + w × h) / (2 × w × h)` in whole numbers, where `S` is the sum
-   of column weight times row weight times source sample. That is the mean to the nearest
-   level, a half going up. The four channels are averaged apart.
+   `h`. Alpha is `(2 × A + w × h) / (2 × w × h)` in whole numbers, where `A` is the sum of
+   column weight times row weight times source alpha: the mean to the nearest level, a
+   half going up. Each colour is weighted by alpha as well: `(2 × C + A) / (2 × A)`, where
+   `C` is the sum of column weight times row weight times source alpha times source
+   colour; where `A` is 0, nothing in the rectangle shows, and the colour is the plain mean
+   `(2 × S + w × h) / (2 × w × h)` of column weight times row weight times source colour.
+   Where every alpha in the rectangle is the same, the two are the same.
 6. **The file.** The crop is written as a PNG of 8 bits a channel, red, green, blue and
    alpha, with no other chunk, by the core's one encoder (`whizbang_core::identity::encode`):
    the `image` crate, with its fast compression and its adaptive filter. The bytes come
@@ -106,8 +113,10 @@ request gives the same bytes on every machine.
 3. **Where each pixel looks.** Pixel `(u, v)` shows the panorama at the point ADR 0051's
    mapping takes `(u + 0.5, v + 0.5)` to.
 4. **The sample.** Bilinear, between the centres of the four panorama pixels around that
-   point: columns taken round the seam, rows held to the first and the last. The four
-   channels are sampled apart, and each is rounded to the nearest level, a half going up.
+   point: columns taken round the seam, rows held to the first and the last. Alpha is the
+   blend of the four alphas; each colour the blend weighted by alpha as well, as in step 5
+   above, or the plain blend where the four alphas are equal or all 0. Each is rounded to
+   the nearest level, a half going up.
 5. **The file.** As step 6 above.
 6. **The binding.** The view's pixels onto the panorama's, by a perspective mapping with
    the three angles, stated from the view.
@@ -287,27 +296,27 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 | Image | Megapixels | File | `view` of the whole image | Of which reading the image | `view` of a box 256 pixels square |
 |---|---|---|---|---|---|
-| 1024x768 | 0.8 | 0.1 MB | 7.6 | 2.7 | 3.3 |
-| 4096x3072 | 12.6 | 1.5 MB | 68 | 41 | 42 |
-| 8000x6000 | 48.0 | 5.9 MB | 230 | 160 | 161 |
+| 1024x768 | 0.8 | 0.1 MB | 7.7 | 2.7 | 3.3 |
+| 4096x3072 | 12.6 | 1.5 MB | 76 | 42 | 42 |
+| 8000x6000 | 48.0 | 5.9 MB | 250 | 159 | 158 |
 
 | Picture | Method | Samples that differ from the exact mean | Largest difference, in levels | Mean difference | The whole call |
 |---|---|---|---|---|---|
-| The scene of the examples, 1280x800, shown at 1024x640 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 13 |
-| | The `image` crate's `resize` with the triangle filter, as in squint | 12.8% | 33 | 0.99 | 18 |
+| The scene of the examples, 1280x800, shown at 1024x640 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 15 |
+| | The `image` crate's `resize` with the triangle filter, as in squint | 12.8% | 33 | 0.99 | 17 |
 | | The `image` crate's `thumbnail` | 11.9% | 162 | 6.80 | 13 |
-| Noise with alpha, 1500x1100, shown at 1024x751 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 41 |
-| | The `image` crate's `resize` with the triangle filter, as in squint | 94.2% | 41 | 6.61 | 104 |
-| | The `image` crate's `thumbnail` | 99.1% | 215 | 38.50 | 99 |
-| The scene repeated, 4096x3072, shown at 1024x768 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 67 |
-| | The `image` crate's `resize` with the triangle filter, as in squint | 17.7% | 40 | 1.54 | 85 |
-| | The `image` crate's `thumbnail` | 0.0% | 0 | 0.00 | 67 |
+| Noise with alpha, 1500x1100, shown at 1024x751 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 43 |
+| | The `image` crate's `resize` with the triangle filter, as in squint | 96.9% | 147 | 13.84 | 104 |
+| | The `image` crate's `thumbnail` | 99.2% | 241 | 40.23 | 99 |
+| The scene repeated, 4096x3072, shown at 1024x768 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 75 |
+| | The `image` crate's `resize` with the triangle filter, as in squint | 17.7% | 40 | 1.54 | 82 |
+| | The `image` crate's `thumbnail` | 0.0% | 0 | 0.00 | 65 |
 
 | Panorama | Megapixels | A perspective view, 90 degrees | Shown at | Of which reading the panorama |
 |---|---|---|---|---|
-| 2048x1024 | 2.1 | 16 | 512x512 | 5.2 |
-| 4096x2048 | 8.4 | 60 | 1024x1024 | 19 |
-| 8192x4096 | 33.6 | 113 | 1024x1024 | 70 |
+| 2048x1024 | 2.1 | 16 | 512x512 | 5.0 |
+| 4096x2048 | 8.4 | 61 | 1024x1024 | 18 |
+| 8192x4096 | 33.6 | 112 | 1024x1024 | 68 |
 
 <!-- timed: end -->
 
@@ -339,36 +348,40 @@ the crop with the same encoder settings and read it back.
   is reproducible: the review of this tool found its output the same bit for bit on three
   platforms while `image` is pinned at 0.25.10. But it is reproducible only while the
   library is pinned, and it matches no statement in whole numbers: it works in floating
-  point and is not the mean of each rectangle, from which it differs by up to 41 levels
-  on these pictures. That is why it was replaced. The cost of replacing it is in the
+  point and is not the mean of each rectangle, from which it differs by up to 40 levels
+  on the opaque pictures here, and by up to 147 on noise with alpha, where the method
+  weights the colours by alpha and the filter does not. That is why it was replaced. The cost of replacing it is in the
   baseline comparison: a crop of a cut over 1024 pixels on a side no longer has squint's
   pixels (the last row of "Limits"). It took the longest on each picture in the run
   recorded above.
 - **The `image` crate's `thumbnail`** gave the exact mean at the one whole-number ratio
   tried, 4096 pixels to 1024. At the two ratios under two it is far from the mean, by up to
-  215 levels, so it is not a method for a cut of any size.
+  241 levels, so it is not a method for a cut of any size.
 
 The three take similar times, because reading the image and writing the crop are most of
 every call. Neither library method is in the code: both are called only by the script that
 writes this page.
 
-**Not tried: a mean weighted by alpha.** The method averages the four channels apart, so
-in a reduced crop the colour under a transparent pixel counts as much as the colour of an
-opaque one, and hidden colour bleeds into visible pixels at the edge of a transparent
-area. A mean of the colours weighted by alpha, with alpha averaged as now, would not let
-it. A worked example, at two source pixels to a crop pixel
-(`hidden_colour_bleeds_into_a_reduced_crop_at_the_edge_of_a_transparent_area`):
+**A reduced crop with transparency: three ways compared** (plan mE, task P1, item 6). Up
+to that task the method averaged the four channels apart, so the colour under a
+transparent pixel counted as much as an opaque one's. Three ways were compared on two
+synthetic pictures, each at two source pixels to a crop pixel each way, by one rule: a
+colour that is hidden in the source must not show at a visible edge in the crop
+(`scale.rs`, `a_reduced_crop_with_transparency_is_the_mean_weighted_by_alpha` and
+`hidden_colour_does_not_show_at_the_edge_of_a_transparent_area_of_a_reduced_crop`).
 
-| | Source pixel | Source pixel | Crop pixel | Shown over a white page |
-|---|---|---|---|---|
-| The source | white, alpha 255 | black, alpha 0 | | 255 and 255: white |
-| The method | | | `(128, 128, 128)`, alpha 128 | 191: a grey the source does not have |
-| Weighted by alpha | | | `(255, 255, 255)`, alpha 128 | 255: white |
+| Picture | The mean as it was | The mean weighted by alpha | Flattened onto white, then the mean |
+|---|---|---|---|
+| White at alpha 255 beside black at alpha 0 | `(128, 128, 128)` at alpha 128: over a white page 191, a grey the source does not have | `(255, 255, 255)` at alpha 128: over a white page 255, white | `(255, 255, 255)`, opaque: white, and its transparency is gone |
+| In each block of four, one red at alpha 255 and three green at alpha 0 | `(64, 191, 0)` at alpha 64: mostly a green nobody sees | `(255, 0, 0)` at alpha 64: red, a quarter covered | `(255, 191, 191)`, opaque: a pink of red and the ground |
 
-The method is kept as it is: it is the one stated and tested, and no judge has yet been
-shown a reduced crop with transparency. How one is shown to a judge is decided in
-milestone 2, with image preparation and the judge loop, and the comparison belongs here
-(`docs/carry-over.md`).
+The plain mean fails the rule: the hidden black and green show. Flattening keeps the hidden
+colour out, but puts the ground's colour in its place, a choice of ground that changes
+every crop, and loses the alpha a caller may need. The mean weighted by alpha keeps the
+hidden colour out and the alpha as it was, so it is the method now, for a reduced crop and
+for a perspective view's sample alike. Where nothing in a rectangle shows, the colours are
+the plain mean, as before; where every alpha is the same, nothing changes, so no crop of an
+opaque image changed. The action's version went from 1 to 2.
 
 ## Limits
 
@@ -379,14 +392,13 @@ milestone 2, with image preparation and the judge loop, and the comparison belon
 | `also` has the projection of `image`, as in squint: a flat image and a panorama are refused together, whichever way round | "also is a panorama and image is flat: the two have one projection" (`a_second_image_of_another_projection_is_refused`) |
 | A perspective view can be enlarged, where a crop never is: its side is at least 256, so a panorama under `256 × 360 / fov` pixels wide is magnified, and one pixel of it covers several of the view's | Every view of squint's 512-pixel panorama in the third table under "Rung 2 results" is 256 square |
 | A perspective view's pixels are a resampling, not the panorama's own: a thing a pixel wide is spread over its neighbours, and its colour is a blend | The scene's columns of the third table: up to 23 levels from the scene at single pixels, and under a fifth of a level on average |
-| Alpha is sampled apart from the colours in a perspective view, as it is averaged apart in a reduced crop (the row on alpha below), so a hidden colour can show at the edge of a transparent area. Which way a view and a reduced crop treat transparency is decided once, for both (plan mE, task P1, item 6) | ADR 0051, "Alternatives" |
-| A location in a perspective view is not carried onto the panorama yet, and a box on one does not map back by `box_to_root`, which takes crops by box only. A point maps through the binding both ways. Plan mE's task P1 carries locations through every binding | `carry` refuses with "a location is not carried through a perspective view yet" |
+| A box on a perspective view lands on the panorama as a polygon sampled at 60 points of its boundary, not as a box: its edges curve there. A line, a stroke and a view are not carried through a perspective view, and a box on the panorama lands in a view as the box around what the view sees of it | `a_box_on_a_view_or_on_a_crop_of_one_lands_on_the_panorama`; `a_box_on_a_panorama_lands_in_the_view_and_one_behind_it_is_refused` |
 | A large box loses fine detail, and can show a pattern the source does not have | The second example above |
 | A crop is never enlarged, and a cut under 8 pixels a side is refused | `[0.5, 0.5, 0.51, 0.51]` of a 256 by 192 image covers 3 by 2 pixels and is refused (`a_bad_request_is_the_callers_mistake`) |
 | A fraction meant to fall on a pixel edge can fall a hair off it, and the cut is then a whole pixel wider on that side: past it on the high side, short of it on the low side. Squint's `view` did the same. Of the 78,989 pairs of a fraction from 0 to 1 written with one, two or three decimals and a width from 8 to 4096 pixels on which it names a whole number of pixels, 1,539 widen a high edge and 826 a low edge (`how_often_a_fraction_meant_as_a_pixel_edge_falls_a_hair_off_it`) | 0.07 of 100 pixels is 7.000000000000001 as a double, so the cut ends at pixel 8; 0.7 of 90 pixels is 62.99999999999999, so the cut starts at column 62 (`a_fraction_a_hair_past_a_pixel_edge_widens_the_cut_by_a_pixel`) |
 | `also` may have another aspect ratio than `image`. It is accepted, and the same fractions then cut another shape, so the two crops do not show the same region in any sense but the fractions | `[0.25, 0.25, 0.75, 0.75]` of a 200 by 100 image and of a 100 by 200 one gives a crop of 100 by 50 and one of 50 by 100 (`a_second_image_of_another_shape_is_cut_to_another_shape`) |
 | A location is as fine as the crop. In a reduced crop, what one crop pixel shows is found again within half a crop pixel, which is several source pixels when the crop is much reduced | The last row of the first table under "Rung 2 results": an 8000 pixel wide image shown 1024 wide |
-| Alpha is averaged apart from the colours, so in a reduced crop the colour under a transparent pixel counts as much as an opaque one, and hidden colour bleeds into visible pixels at the edge of a transparent area. A mean weighted by alpha was not tried ("Alternatives") | One opaque red pixel and three transparent green ones are shown as `(64, 191, 0)` at alpha 64 (`alpha_is_averaged_apart_from_the_colours`) |
+| Alpha is kept in a reduced crop, and the colours are weighted by it: a crop pixel that is mostly transparent shows the colour of the little that is visible, at its low alpha. A judge sees a crop as its preparation shows it | One opaque red pixel and three transparent green ones are shown as `(255, 0, 0)` at alpha 64 (`a_reduced_crop_with_transparency_is_the_mean_weighted_by_alpha`) |
 | The whole image is decoded on every call, however small the box | The last column of the first table under "Speed and cost" |
 | An image over the core's decode limits (50 megapixels and 64 MiB unless the caller changes them) is refused before anything is cut | ADR 0001, "Limits" |
 | A box that reaches past the crop it is stated on is clipped to the crop by `box_to_root`, and flagged as partial. That is not what squint did: its `to_root` refused a box outside 0 to 1 of its frame, so a box on a flat crop was never clipped. Whether to refuse as squint did is decided with the scripted run (`docs/carry-over.md`) | `[-10, 20, 30, 80]` on a 50 by 50 crop is clipped to `[0, 20, 30, 50]` of it and maps to `[50, 70, 80, 100]` of its source, with `partial` set (`a_box_past_the_crop_is_clipped_and_flagged`) |
@@ -453,3 +465,10 @@ and 2, and this record shows them for flat images and for panoramas, so `view` i
   - the whole of a panorama by box is still a panorama, where squint's crop frame of it
     was flat;
   - a perspective view needs a whole panorama; part of one is refused.
+- 2026-11-25, plan mE, task P1, its second pull request: a reduced crop and a perspective
+  view weight each colour by alpha ("Alternatives"), so the action's version is 2; the
+  pixels of the two fixed vectors with alpha that are reduced, `tall` and `inner`, changed,
+  and their digests were worked out again apart from the tool. No crop of an opaque image
+  changed. A box on a perspective view lands on its panorama (`box_onto_panorama`), and a
+  point computed past an edge of a magnified crop is given slack in proportion to the
+  magnification (ADR 0051, "The slack past an edge").
