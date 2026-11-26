@@ -210,9 +210,24 @@ fn runs_stats_counts_a_loops_attempts_and_retries() {
         [
             "2 runs, 3 attempts, 1 retries; kept an attempt that was checked 1, not checked 1, \
              none 0",
-            "  attempts ended\t1\tattempt N passed",
-            "  attempts ended\t1\tone unchecked pass: the check is off",
+            "  attempts ended\t1\tone_unchecked_pass",
+            "  attempts ended\t1\tpassed",
         ]
+    );
+    // By the record's word (plan mE, task L1, item 1); a record of a version before the
+    // word, by its sentence, as before: the same run, written as `run/6`.
+    let record = world.record(retried.run().as_str());
+    let written = String::from_utf8(record.to_bytes()).unwrap();
+    let older =
+        written
+            .replacen("\"run/8\"", "\"run/6\"", 1)
+            .replacen(",\"reason\":\"passed\"", "", 1);
+    let older = whizbang_core::contract::RunRecord::from_bytes(older.as_bytes()).unwrap();
+    let id = retried.run().to_string();
+    let counted = whizbang::stats::loops(&[(id.clone(), record), (id, older)]).unwrap();
+    assert_eq!(
+        counted.ended,
+        [("attempt N passed".to_owned(), 1), ("passed".to_owned(), 1)]
     );
     // `runs show` prints a loop's attempts, after the run's calls.
     let shown = crate::wired::shown(&world.root, retried.run().as_str());

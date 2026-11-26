@@ -384,15 +384,15 @@ fn a_fill_run_holds_no_byte_of_its_key() {
 #[test]
 fn a_loops_record_lists_each_attempt_its_runs_its_verdict_and_what_the_retry_changed() {
     use crate::checked::{Setup, calls, looped, passes, remains, run_of};
-    use whizbang_core::contract::record::{RUN_6, RUN_6_SCHEMA};
+    use whizbang_core::contract::record::{RUN_8, RUN_8_SCHEMA};
     // Plan m4, task L1, item 8: a first attempt the judge fails, saying the thing
     // remains, and a second, with a wider mask, that passes. The record as it is stored.
     let setup = Setup::answering(vec![remains(), passes()]);
     let (world, finished) = looped("loop-record", &setup);
     let record = world.record(finished.run().as_str());
     let stored: serde_json::Value = serde_json::from_slice(&record.to_bytes()).unwrap();
-    assert_eq!(stored["record"], RUN_6);
-    let schema: serde_json::Value = serde_json::from_str(RUN_6_SCHEMA).unwrap();
+    assert_eq!(stored["record"], RUN_8);
+    let schema: serde_json::Value = serde_json::from_str(RUN_8_SCHEMA).unwrap();
     whizbang_testkit::schema::validate(&schema, &stored).unwrap();
     // Each attempt: its number, its runs in order, its verdict, what the retry changed
     // to make it, and what its requests settled.
@@ -421,6 +421,8 @@ fn a_loops_record_lists_each_attempt_its_runs_its_verdict_and_what_the_retry_cha
     // Which was kept, and why the attempts ended.
     assert_eq!(attempts["kept"], 2);
     assert_eq!(attempts["ended"], "attempt 2 passed");
+    // And why, as a word of a closed set (plan mE, task L1, item 1).
+    assert_eq!(attempts["reason"], "passed");
     assert_eq!(attempts["list"].as_array().unwrap().len(), 2);
     // Every run an attempt lists is a call of the loop's own, and each of those is
     // listed by one attempt.
@@ -443,7 +445,7 @@ fn a_loops_record_lists_each_attempt_its_runs_its_verdict_and_what_the_retry_cha
 fn a_located_retry_lists_its_crops_the_masks_they_gave_and_the_places_that_joined_as_themselves() {
     use crate::checked::{looped, passes, run_of, submission};
     use crate::located::{PLACE, citing, finding, looked, seen_at};
-    use whizbang_core::contract::record::{RUN_6, RUN_6_SCHEMA};
+    use whizbang_core::contract::record::{RUN_8, RUN_8_SCHEMA};
     // Plan m4, task L2, item 7: the judge fails the first attempt and names two places
     // where the thing remains. The segmenter finds it inside the cut of the first, a
     // quarter of the picture, and finds nothing inside the cut of the second, 18
@@ -459,8 +461,8 @@ fn a_located_retry_lists_its_crops_the_masks_they_gave_and_the_places_that_joine
     assert_eq!(world.kit.crops(), [(34, 34), (18, 18)]);
     let record = world.record(finished.run().as_str());
     let stored: serde_json::Value = serde_json::from_slice(&record.to_bytes()).unwrap();
-    assert_eq!(stored["record"], RUN_6);
-    let schema: serde_json::Value = serde_json::from_str(RUN_6_SCHEMA).unwrap();
+    assert_eq!(stored["record"], RUN_8);
+    let schema: serde_json::Value = serde_json::from_str(RUN_8_SCHEMA).unwrap();
     whizbang_testkit::schema::validate(&schema, &stored).unwrap();
     // What the retry changed: each crop it cut, by the crop's identity, with the first
     // mask it gave, carried onto the picture; and null for the place that joined as

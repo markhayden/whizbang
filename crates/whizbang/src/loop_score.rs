@@ -311,7 +311,9 @@ fn output_of(record: &RunRecord, port: &str) -> Option<ArtifactId> {
 
 /// Why a loop's attempts ended, as one of a closed set: each sentence the loop writes,
 /// with every number made `N`, is one of these or `other` (as `scripts/loop-evidence.py`
-/// reads them). A sentence never reaches the file.
+/// reads them). A sentence never reaches the file. A record of `run/8` holds the word
+/// itself ([`AttemptsEnded`](whizbang_core::contract::record::AttemptsEnded)), which is
+/// read instead.
 pub fn reason_of(sentence: &str) -> &'static str {
     let plain: String = (sentence.chars())
         .map(|c| if c.is_ascii_digit() { 'N' } else { c })
@@ -433,6 +435,8 @@ pub fn runs_of(root: &Path, manifest: &Manifest, judge: &str) -> Result<Vec<RunS
             attempts.push(seen);
         }
         let ended = record.attempts().map(|a| a.ended.as_str()).unwrap_or("");
+        // The record's own word when it holds one (`run/8`), its sentence's otherwise.
+        let word = record.attempts().and_then(|a| a.reason).map(|r| r.word());
         found.push(RunSeen {
             run: id.clone(),
             item: entry.id.clone(),
@@ -444,7 +448,7 @@ pub fn runs_of(root: &Path, manifest: &Manifest, judge: &str) -> Result<Vec<RunS
             reason: if listed.is_empty() {
                 "no_attempt".to_owned()
             } else {
-                reason_of(ended).to_owned()
+                word.unwrap_or_else(|| reason_of(ended)).to_owned()
             },
         });
     }

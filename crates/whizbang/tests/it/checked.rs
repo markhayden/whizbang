@@ -990,13 +990,25 @@ impl Looped {
         read.unwrap().unwrap()
     }
 
-    /// The attempts a run's record lists.
+    /// The attempts a run's record lists. Every test that reads them holds the word of
+    /// why they ended (plan mE, task L1, item 1) to the sentence beside it: the word the
+    /// sentence of an older record is read as, by `eval loop score` and the loop's
+    /// evidence alike; and no word where the loop never said why.
     pub fn attempts(&self, finished: &Finished) -> Attempted {
         let record = self.record(finished.run().as_str());
-        record
+        let attempts = record
             .attempts()
             .expect("the loop's record lists its attempts")
-            .clone()
+            .clone();
+        match attempts.reason {
+            Some(reason) => {
+                assert_eq!(record.version(), whizbang_core::contract::RUN_8);
+                let read = whizbang::loop_score::reason_of(&attempts.ended);
+                assert_eq!(reason.word(), read, "{}", attempts.ended);
+            }
+            None => assert_eq!(attempts.ended, ATTEMPTS_NOT_ENDED),
+        }
+        attempts
     }
 }
 
