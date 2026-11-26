@@ -405,7 +405,7 @@ pub fn stored_png_size(width: u32, height: u32, opaque: bool) -> u64 {
 /// Whether every pixel of every one of these RGBA pictures is opaque: the one choice of a
 /// pair's pictures, whole and of the focus, between RGB and RGBA, so the sides share it.
 pub fn opaque(pictures: &[&[u8]]) -> bool {
-    (pictures.iter()).all(|rgba| rgba.chunks_exact(4).all(|px| px[3] == u8::MAX))
+    (pictures.iter()).all(|rgba| rgba.as_chunks::<4>().0.iter().all(|px| px[3] == u8::MAX))
 }
 
 /// A picture of a pair written as a PNG whose pixel data is not compressed (plan mE, task
@@ -441,7 +441,7 @@ pub fn stored_png(pixels: &[u8], width: u32, height: u32, opaque: bool) -> Resul
     for line in pixels.chunks_exact(row) {
         raw.push(0);
         if opaque {
-            raw.extend(line.chunks_exact(4).flat_map(|px| &px[..3]));
+            raw.extend(line.as_chunks::<4>().0.iter().flat_map(|px| &px[..3]));
         } else {
             raw.extend(line);
         }
