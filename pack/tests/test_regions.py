@@ -146,6 +146,24 @@ class Find(unittest.TestCase):
             self.assertIn("# max_regions = 12\n", file.read())
 
 
+class Run(unittest.TestCase):
+    def test_hint_phrases_are_asked_first_and_matched_as_they_are_kept(self):
+        source = scene([POOL])
+        tub = scene([POOL, (125, 20, 150, 40)])
+        arguments = {"job": job("The pool keeps its shape."), "preserve": "pool\u00e9", "phrases": "pool"}
+        context = Faked(source, tub, arguments)
+        output = regions.run(context)
+        # The hint first, kept as printable text (its accent a space), then the job's
+        # subject, once though named twice.
+        self.assertEqual([p for image, p in context.asked if image == "source"], ["pool ", "pool"])
+        plain = regions.run(Faked(source, tub, {"job": job("The pool keeps its shape."), "phrases": "pool"}))
+        # The kept phrase matches the subject the region lies on: the region on the hint's
+        # mask is raised by its factor.
+        self.assertEqual(output["regions"][0]["label"], "pool  changed")
+        # (Both scores are rounded to three places, so the factor is read to within one.)
+        self.assertAlmostEqual(output["regions"][0]["score"], min(1.0, plain["regions"][0]["score"] * regions.PRESERVE), delta=0.0015)
+
+
 # --- the record's examples ------------------------------------------------------------------
 
 

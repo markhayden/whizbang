@@ -110,9 +110,16 @@ fn a_result_past_the_budget_of_evidence_items_is_refused_whole() {
     .unwrap_err();
     assert!(refused.contains("a budget of 1"), "{refused}");
     assert_eq!((list, evidence.count()), (before, 0));
-    assert!(
-        (checklist::iou(&[0.0, 0.0, 2.0, 2.0], &[1.0, 0.0, 3.0, 2.0]) - 1.0 / 3.0).abs() < 1e-9
-    );
+    let iou = checklist::iou;
+    assert!((iou(&[0.0, 0.0, 2.0, 2.0], &[1.0, 0.0, 3.0, 2.0]) - 1.0 / 3.0).abs() < 1e-9);
+    // The same box is 1; disjoint boxes, and boxes that only touch, are 0; a box inside
+    // another is its share of it; boxes with no area are 0, never a division by zero.
+    assert_eq!(iou(&[1.0, 1.0, 3.0, 3.0], &[1.0, 1.0, 3.0, 3.0]), 1.0);
+    assert_eq!(iou(&[0.0, 0.0, 1.0, 1.0], &[5.0, 5.0, 6.0, 6.0]), 0.0);
+    assert_eq!(iou(&[0.0, 0.0, 1.0, 1.0], &[1.0, 0.0, 2.0, 1.0]), 0.0);
+    assert_eq!(iou(&[0.0, 0.0, 4.0, 4.0], &[1.0, 1.0, 3.0, 3.0]), 0.25);
+    assert_eq!(iou(&[2.0, 2.0, 2.0, 2.0], &[2.0, 2.0, 2.0, 2.0]), 0.0);
+    assert_eq!(iou(&[2.0, 2.0, 2.0, 5.0], &[0.0, 0.0, 4.0, 4.0]), 0.0);
 }
 
 #[test]

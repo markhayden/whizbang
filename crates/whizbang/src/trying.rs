@@ -107,6 +107,18 @@ pub fn declared_in(tool: &str, files: Option<&ToolFiles>) -> Result<Declared, St
     ))
 }
 
+/// The arguments the rules' hints give a tool (plan mE, task T1, item 4): each that the
+/// hints name for it and that it declares as an argument of text.
+pub fn hinted_arguments(
+    declared: &Declared,
+    hints: &whizbang_squint::use_case::Hints,
+) -> Vec<(String, Value)> {
+    (hints.arguments(&declared.tool).into_iter())
+        .filter(|(name, _)| declared.texts.contains(name))
+        .map(|(name, value)| (name, Value::text(&value)))
+        .collect()
+}
+
 /// The arguments `try` gives a tool file, each `NAME=VALUE`: a name it declares, given
 /// once, and a number where it declares one. A tool this build links takes none.
 pub fn arguments_of(
@@ -409,13 +421,8 @@ pub fn eval_tool(
             };
             // And what the rules of its use case hint to the tool (plan mE, task T1, item
             // 4), as the arguments of text it declares under those names.
-            let hints = whizbang_squint::use_case::rules(&job.use_case)
-                .map(|rules| rules.hints.arguments(&declared.tool))
-                .unwrap_or_default();
-            for (name, value) in hints {
-                if declared.texts.contains(&name) {
-                    arguments.push((name, Value::text(&value)));
-                }
+            if let Some(rules) = whizbang_squint::use_case::rules(&job.use_case) {
+                arguments.extend(hinted_arguments(declared, &rules.hints));
             }
             planned.push((
                 id.clone(),

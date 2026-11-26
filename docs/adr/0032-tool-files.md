@@ -150,7 +150,9 @@ written to it before still reads as it did.
 - **The output** may then hold `regions`, beside `readings` and `not_applicable`. Each is
   an object of `frame`, the binding of an image the run handed the tool (`source`,
   `candidate`); exactly one of `box`, `[left, top, right, bottom]` with area, and `polygon`,
-  3 to 64 points `[x, y]` with area, in pixels of that image and inside it; `label`,
+  3 to 64 points `[x, y]` with area, in pixels of that image and inside it (a polygon whose
+  signed area by the shoelace sums to exactly zero is refused: points on one line, and a
+  figure eight whose two loops cancel; one with any area, however small, is taken); `label`,
   printable ASCII of 1 to the declared bytes; and `score`, from 0 to 1. Nothing else. Each is held to
   these rules before anything uses it, as a reading is: a region past the declared count, of
   another frame, outside its image, or of a tool that declares none fails the run, and
@@ -161,11 +163,13 @@ written to it before still reads as it did.
   kinds hold the tool's `region_kind` (`whizbang_squint::checklist::ingest`, squint's,
   plan mE, task T1, item 4). `check`'s loop does not call it yet: an evidence item is a
   checklist id the judge must then answer, and the submission's keys are fixed when the
-  run opens (`crates/whizbang-squint/src/check.rs`, which plan mE gives to tasks M1 and F1).
+  run opens (`crates/whizbang-squint/src/check.rs`); plan mE's task F1 wires it in, with
+  the hints.
 - **Hints.** A rule file's `[hints]` (`[hints.regions]` `preserve` and `ignore`,
   `[hints.outline]` `classes`) is given to a tool file as the arguments of text it declares
-  under those names (`preserve`, `ignore`; `phrases` for `outline`), by `eval tool`; no
-  base rule file holds one.
+  under those names (`preserve`, `ignore`; `phrases` for `outline`), by `eval tool` alone:
+  `try` and `squint check --tool` do not, and `check` takes them up with plan mE's task F1.
+  No base rule file holds one.
 - **What a tool file may import.** It runs in the tool worker, from the pack: besides the
   standard library it may import the pack's own modules. `pack/tools/outline.py` and
   `pack/tools/regions.py` read their subjects through `whizbang_pack.subjects`, per-subject

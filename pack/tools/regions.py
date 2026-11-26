@@ -72,7 +72,8 @@ they changed, raised for a `preserve` subject and lowered for an `ignore` one (t
 its strongest region, 0 when it finds none.
 
 Subjects come from the job's requirements of kind `must_hold` (`whizbang_pack.subjects`),
-from `phrases`, and from `preserve` and `ignore`, at most `SUBJECTS_MOST`.
+from `phrases`, and from `preserve` and `ignore`, at most `SUBJECTS_MOST`: the hints'
+first, then the job's, then `phrases`, each once, as printable text.
 
 What changed from squint. Squint's labels were classes ("floor -> swimming pool") and its
 hints classes; here they are the subjects' phrases, and the class labels come with plan mE's
@@ -268,16 +269,20 @@ def run(context):
     residual = [abs(x - y) for x, y in zip(a, b)]
     photometric = int("".join("1" if d > CHANGED else "0" for d in residual), 2)
     named = subjects_of(json.loads(arguments["job"]))[0] if arguments.get("job") else []
-    preserve, ignore = _phrases(arguments.get("preserve")), _phrases(arguments.get("ignore"))
-    named += _phrases(arguments.get("phrases")) + preserve + ignore
+    # Phrases are compared as they are kept, printable and cut; the hints' come first, so
+    # that `SUBJECTS_MOST` never leaves out a subject whose score they move.
+    preserve = [printable(p, 200) for p in _phrases(arguments.get("preserve"))]
+    ignore = [printable(p, 200) for p in _phrases(arguments.get("ignore"))]
+    named = preserve + ignore + named + _phrases(arguments.get("phrases"))
     subjects, seen = [], set()
     for phrase in named:
+        phrase = printable(phrase, 200)
         if phrase in seen or len(subjects) >= SUBJECTS_MOST:
             continue
         seen.add(phrase)
         before = grid.mask(*mask_of(context, "source", phrase, MOST))
         after = grid.mask(*mask_of(context, "candidate", phrase, MOST))
-        subjects.append((printable(phrase, 200), before, after))
+        subjects.append((phrase, before, after))
     found, changed, photometric = find(grid, residual, photometric, subjects, set(preserve), set(ignore))
     covered = 0
     disagree = 0

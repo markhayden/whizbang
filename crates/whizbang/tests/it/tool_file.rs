@@ -587,3 +587,47 @@ fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
     let refused = tool_file::checked(&plain, &located(json!([])), &frames()).unwrap_err();
     assert!(refused.contains("which it does not declare"), "{refused}");
 }
+
+#[test]
+fn the_rules_hints_are_given_to_a_tool_as_the_arguments_of_text_it_declares() {
+    // Plan mE, task T1, item 4: what `eval tool` adds to each item's arguments.
+    use whizbang::trying::{Declared, hinted_arguments};
+    use whizbang_core::contract::Value;
+    use whizbang_squint::use_case::{Hints, OutlineHints, RegionHints};
+    let hints = Hints {
+        regions: Some(RegionHints {
+            preserve: vec!["wall".into(), "pool".into()],
+            ignore: vec!["chair".into()],
+        }),
+        outline: Some(OutlineHints {
+            classes: vec!["pool".into()],
+        }),
+    };
+    let declared = |tool: &str, texts: &[&str]| Declared {
+        tool: tool.to_owned(),
+        primary: "strongest".to_owned(),
+        changed: whizbang_eval::tool::Changed::Larger,
+        report: REPORT.to_owned(),
+        file: true,
+        takes_job: true,
+        texts: texts.iter().map(|t| (*t).to_owned()).collect(),
+    };
+    assert_eq!(
+        hinted_arguments(&declared("regions", &["job", "preserve", "ignore"]), &hints),
+        [
+            ("preserve".to_owned(), Value::text("wall; pool")),
+            ("ignore".to_owned(), Value::text("chair")),
+        ]
+    );
+    // Only what the tool declares: a tool that takes no `ignore` is given none.
+    assert_eq!(
+        hinted_arguments(&declared("regions", &["preserve"]), &hints),
+        [("preserve".to_owned(), Value::text("wall; pool"))]
+    );
+    assert_eq!(
+        hinted_arguments(&declared("outline", &["job", "phrases"]), &hints),
+        [("phrases".to_owned(), Value::text("pool"))]
+    );
+    assert!(hinted_arguments(&declared("per_subject", &["phrases"]), &hints).is_empty());
+    assert!(hinted_arguments(&declared("regions", &["preserve"]), &Hints::default()).is_empty());
+}

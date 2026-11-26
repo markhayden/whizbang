@@ -26,9 +26,10 @@ changed).
   model's.
 
 **How subjects are named.** From the item's job (`job`), by per-subject comparison's rule
-(`whizbang_pack.subjects`); by name (`phrases`); and from the rules' `[hints.regions]`, its
-`preserve` and `ignore` phrases, which a run hands it as the arguments of those names. At
-most 16, each asked once on each picture. The item's label is never read.
+(`whizbang_pack.subjects`); by name (`phrases`); and from `preserve` and `ignore`, which
+`whizbang eval tool` fills from the rules' `[hints.regions]` (`try` and `squint check --tool`
+do not; `check` takes the hints up with plan mE's task F1). At most 16, each asked once on
+each picture, as printable text: the hints' first, then the job's, then `phrases`. The item's label is never read.
 
 **The method.** Both pictures are brought to a working grid whose longer side is `GRID`
 (the picture's own when smaller), each working pixel the mean luminance of up to four by
