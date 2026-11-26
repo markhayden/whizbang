@@ -1,15 +1,30 @@
 //! `pairs_page::…`: what the pairs page (`whizbang lab pairs`) gives an inspecting picker,
-//! and what its keys do (plan m4, task A1, item 9).
+//! and what its keys do (plan m4, task A1, item 9; plan mE, task P0, items 1 and 2).
 
 use crate::cli::{chunks, pixels_of};
 use crate::lab::{FILLED_WITH_AND_SOURCE, ThreeImages};
 
+/// Each chunk of a PNG, as its type and the length of its data.
+fn lengths(png: &[u8]) -> Vec<(String, u32)> {
+    let names = chunks(png);
+    let mut at = 8;
+    (names.into_iter())
+        .map(|name| {
+            let length = u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+            at += 12 + length as usize;
+            (name, length)
+        })
+        .collect()
+}
+
 #[test]
-fn a_pictures_size_on_disk_does_not_tell_its_arm() {
-    // A reference arm hands back the source, and a picture is written from its pixels by
-    // one encoder: so that arm's file had the source's size to the byte, and the other
-    // arm's had another. Now the three pictures of a pair are one size on disk, and so
-    // are the three of its focus: a size says nothing of a side.
+fn a_pictures_bytes_tell_only_its_dimensions() {
+    // A reference arm hands back the source, and a compressing encoder gave that arm's
+    // file the source's size to the byte; a chunk of padding then hid the size, but its own
+    // length told what the file had lacked (plan mE, task P0, item 1). Now every picture
+    // is written uncompressed: its size and each chunk's length follow from its width and
+    // height alone, so any two pictures of one size are files of one shape.
+    use whizbang::pairs_page::{opaque, stored_png, stored_png_size};
     use whizbang_core::identity::encode::{Channels, png_of};
     let lab = ThreeImages::new("pairs-sizes", FILLED_WITH_AND_SOURCE);
     let over = lab.over(0);
@@ -21,8 +36,7 @@ fn a_pictures_size_on_disk_does_not_tell_its_arm() {
     let pairs = assignment["pair"].as_array().unwrap();
     assert_eq!(pairs.len(), 3);
     let read = |name: &str| std::fs::read(out.join("pictures").join(name)).ok();
-    // What the encoder alone gives a picture: its size before this change.
-    let plain = |file: &[u8]| {
+    let compressed = |file: &[u8]| {
         let pixels = pixels_of(file);
         png_of(
             pixels.rgba(),
@@ -44,27 +58,28 @@ fn a_pictures_size_on_disk_does_not_tell_its_arm() {
             }
             focused += usize::from(kind == "-focus");
             assert_eq!(files.len(), 3, "pair {n}{kind}");
-            // One size on disk, each a whole PNG that holds its pixels and, beside them,
-            // one chunk of padding a reader passes over.
-            let sizes: Vec<usize> = files.iter().map(Vec::len).collect();
-            assert!(sizes.iter().all(|size| *size == sizes[0]), "{sizes:?}");
+            // The pair's one choice: RGB (colour type 2) when every picture is opaque.
+            let colour = files[0][25];
+            let opaque = colour == 2;
             for file in &files {
-                let found = chunks(file);
-                assert_eq!(found.first().map(String::as_str), Some("IHDR"));
-                assert_eq!(found.last().map(String::as_str), Some("IEND"));
-                assert_eq!(found.iter().filter(|c| *c == "paDd").count(), 1);
-                assert!(
-                    found
-                        .iter()
-                        .all(|c| ["IHDR", "IDAT", "paDd", "IEND"].contains(&c.as_str())),
-                    "{found:?}"
+                assert_eq!(
+                    file[25], colour,
+                    "pair {n}{kind}: the sides share a colour type"
                 );
-                // The picture is the picture: the padding changes no pixel.
-                assert_eq!(pixels_of(file).rgba(), pixels_of(&plain(file)).rgba());
+                let pixels = pixels_of(file);
+                let (width, height) = (pixels.width(), pixels.height());
+                // The file is what its dimensions give, to the byte, and holds no chunk
+                // but the picture's own: the encoder's own file of a blank picture of
+                // that size has the same chunks of the same lengths.
+                assert_eq!(file.len() as u64, stored_png_size(width, height, opaque));
+                let blank = vec![u8::MAX; pixels.rgba().len()];
+                let blank = stored_png(&blank, width, height, opaque).unwrap();
+                assert_eq!(lengths(file), lengths(&blank), "pair {n}{kind}");
+                let names: Vec<String> = lengths(file).into_iter().map(|(n, _)| n).collect();
+                assert_eq!(names, ["IHDR", "IDAT", "IEND"]);
             }
-            // Without the padding the sizes differed, and the side whose size was the
-            // source's was the reference arm's.
-            let before: Vec<usize> = files.iter().map(|file| plain(file).len()).collect();
+            // A compressing encoder would have told the reference arm by its size.
+            let before: Vec<usize> = files.iter().map(|file| compressed(file).len()).collect();
             if before[0] != before[1] {
                 told += 1;
                 assert!(
@@ -79,6 +94,80 @@ fn a_pictures_size_on_disk_does_not_tell_its_arm() {
         "the pairs of this round would have told their arms by size"
     );
     assert!(focused > 0, "a pair of this round has a focus");
+    // Past one stored block of deflate, as a real picture is: the two sides of a pair,
+    // one with a transparent pixel and one opaque, are written RGBA both, files of one
+    // length and one shape; two opaque sides are RGB both, as alike. A reader decodes
+    // each to its pixels.
+    let (width, height) = (300, 120);
+    let noise: Vec<u8> = (0..width * height * 4)
+        .map(|i| {
+            if i % 4 == 3 {
+                255
+            } else {
+                (i * 7919 % 251) as u8
+            }
+        })
+        .collect();
+    let flat = vec![200_u8; noise.len()]
+        .chunks_exact(4)
+        .flat_map(|_| [200, 120, 40, 255])
+        .collect::<Vec<u8>>();
+    let mut clear = flat.clone();
+    clear[3] = 0;
+    for (left, right) in [(&noise, &clear), (&noise, &flat)] {
+        let shared = opaque(&[left, right]);
+        assert_eq!(shared, right == &flat);
+        let (a, b) = (
+            stored_png(left, width, height, shared).unwrap(),
+            stored_png(right, width, height, shared).unwrap(),
+        );
+        assert_eq!(a.len() as u64, stored_png_size(width, height, shared));
+        assert_eq!(b.len(), a.len());
+        assert_eq!(lengths(&a), lengths(&b));
+        assert_eq!(pixels_of(&a).rgba(), left.as_slice());
+        assert_eq!(pixels_of(&b).rgba(), right.as_slice());
+    }
+    // An opaque pair is three bytes a pixel; a picture with any transparency is refused
+    // as opaque, so a side never loses its alpha.
+    assert!(stored_png_size(width, height, true) < stored_png_size(width, height, false));
+    assert!(stored_png(&clear, width, height, true).is_err());
+}
+
+#[test]
+fn pairs_drawn_from_runs_are_pictures_whose_bytes_tell_only_their_dimensions() {
+    // `lab pairs --from-runs` (plan mE, task M2) writes through the same function as a
+    // round of the lab: a run of `remove_prompt` against the picture it was given, the
+    // reference that hands the source back, so its side is the source to the pixel.
+    use whizbang::pairs_page::stored_png_size;
+    let recorded = crate::edits_gate::recorded_of("pairs-from-runs-sizes", false);
+    let assignment = recorded.pairs(&recorded.remove_cases, None, "pairs");
+    let pictures = assignment.with_file_name("pictures");
+    let mut names: Vec<String> = (std::fs::read_dir(&pictures).unwrap())
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert!(names.contains(&"001-left.png".to_owned()), "{names:?}");
+    for name in &names {
+        let file = std::fs::read(pictures.join(name)).unwrap();
+        let pixels = pixels_of(&file);
+        assert_eq!(
+            file.len() as u64,
+            stored_png_size(pixels.width(), pixels.height(), file[25] == 2),
+            "{name}"
+        );
+        let found: Vec<String> = lengths(&file).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(found, ["IHDR", "IDAT", "IEND"], "{name}");
+    }
+    // The three whole pictures share their dimensions, so they are files of one length.
+    let sizes: Vec<usize> = ["left", "right", "source"]
+        .iter()
+        .map(|side| {
+            std::fs::read(pictures.join(format!("001-{side}.png")))
+                .unwrap()
+                .len()
+        })
+        .collect();
+    assert!(sizes.iter().all(|s| *s == sizes[0]), "{sizes:?}");
 }
 
 /// The page's own script, as the page written for these pair ids holds it, and its data.
@@ -174,9 +263,8 @@ fn a_backspace_takes_back_the_last_pick() {
         "{code}"
     );
     // And what the script does, run as it is under `node` with only what it touches of a
-    // page, where there is a `node`: every hosted runner has one, and the owner's Mac.
-    // No JavaScript engine is among the pinned tools, so a machine without one holds the
-    // page to its text alone, and says so.
+    // page. Node is among the pinned tools `just check` needs (`scripts/tool-versions.txt`),
+    // so a machine without one fails here (plan mE, task P0, item 2).
     let dir = whizbang_testkit::scratch::Scratch::new("pairs-backspace");
     let file = |name: &str, text: &str| {
         let path = dir.path().join(name);
@@ -212,14 +300,12 @@ fn a_backspace_takes_back_the_last_pick() {
         .arg(file("data.json", &data))
         .args(keys)
         .output();
-    let ran = match ran {
-        Ok(ran) => ran,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("no `node` here: the page's script was held to its text, and not run");
-            return;
-        }
-        Err(error) => panic!("node: {error}"),
-    };
+    let ran = ran.unwrap_or_else(|error| {
+        panic!(
+            "node, which runs the page's script, cannot be started ({error}); it is a pinned \
+             tool: `just setup` names the command that installs it"
+        )
+    });
     assert!(
         ran.status.success(),
         "{}",

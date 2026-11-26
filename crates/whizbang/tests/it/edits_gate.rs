@@ -87,7 +87,7 @@ pub fn recorded_of(label: &str, with_loop: bool) -> Recorded {
     let protocol = write(
         "protocol.toml",
         format!(
-            "version = 1\nname = \"m2-pairs\"\nseed = 7\narms = [\"recipe\", \"source\"]\n\
+            "version = 2\nname = \"m2-pairs\"\nseed = 7\narms = [\"recipe\", \"source\"]\n\
              min_decided = 1\n\n[[group]]\nname = \"all\"\nimages = [\"{CASE}\"]\n"
         ),
     );
@@ -145,6 +145,25 @@ pub fn picks_for(assignment: &Path, for_the_recipe: bool) -> PathBuf {
 
 /// A gate file of the recipe beside the cases and the protocol, for one case of one family.
 fn gate(recorded: &Recorded, recipe: &str, cases: &Path, rung: u8, from: &str) -> PathBuf {
+    gate_in(
+        recorded.dir.path(),
+        &recorded.protocol,
+        recipe,
+        cases,
+        rung,
+        from,
+    )
+}
+
+/// [`gate`] in a folder of its own, beside `protocol.toml` there.
+fn gate_in(
+    dir: &Path,
+    protocol: &Path,
+    recipe: &str,
+    cases: &Path,
+    rung: u8,
+    from: &str,
+) -> PathBuf {
     let pin = |path: &Path| digest_of(&std::fs::read(path).unwrap());
     let name = cases.file_name().unwrap().to_str().unwrap();
     let judge = if from == "check" {
@@ -167,14 +186,38 @@ fn gate(recorded: &Recorded, recipe: &str, cases: &Path, rung: u8, from: &str) -
          [cost]\nguide_micros = 1000000\ntimes = 2.0\n\n[latency]\ntimes = 2.0\n\n\
          [[latency.record]]\npixels = 4096\nms = 600000\n{admits}",
         pin(cases),
-        pin(&recorded.protocol)
+        pin(protocol)
     );
-    let file = recorded
-        .dir
-        .path()
-        .join(format!("{recipe}-gate-{rung}.toml"));
+    let file = dir.join(format!("{recipe}-gate-{rung}.toml"));
     std::fs::write(&file, text).unwrap();
     file
+}
+
+#[test]
+fn a_gates_quality_protocol_of_version_1_is_refused() {
+    // Under version 1 `not_worse` cannot be reached and a `neither` is no loss: an edit
+    // gate's pairs are decoded under version 2 (plan mE, task P0), so a gate pinning a
+    // protocol of version 1 is refused before anything is read of a store.
+    let dir = Scratch::new("m2-gate-v1");
+    let write = |name: &str, text: String| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let cases = write("remove-cases.toml", cases_text(REMOVE, REMOVE_REQUEST));
+    let protocol_of = |version: u32| {
+        format!(
+            "version = {version}\nname = \"m2-pairs\"\nseed = 7\narms = [\"recipe\", \"source\"]\n\
+             min_decided = 1\n\n[[group]]\nname = \"all\"\nimages = [\"{CASE}\"]\n"
+        )
+    };
+    let protocol = write("protocol.toml", protocol_of(1));
+    let file = gate_in(dir.path(), &protocol, REMOVE, &cases, 3, "marks");
+    let refused = edits_gate::frozen(&file).err().unwrap();
+    assert!(refused.contains("version 1"), "{refused}");
+    let protocol = write("protocol.toml", protocol_of(2));
+    let file = gate_in(dir.path(), &protocol, REMOVE, &cases, 3, "marks");
+    assert_eq!(edits_gate::frozen(&file).unwrap().protocol.version, 2);
 }
 
 #[test]
