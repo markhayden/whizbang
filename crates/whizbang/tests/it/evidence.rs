@@ -2967,6 +2967,24 @@ fn rows_under<'a>(page: &'a str, heading: &str) -> Vec<&'a str> {
     table[2..].to_vec()
 }
 
+/// The loop's evidence reads what the loop writes (plan mE, task L1, items 1 and 2): every
+/// word of why a loop's attempts ended that a record holds is one the tally counts; and
+/// the tally holds the loop's own sentence of a located retry that added nothing.
+#[test]
+fn the_loops_evidence_reads_every_word_the_loop_writes_and_its_sentence_of_a_retry_that_added_nothing()
+ {
+    use whizbang_core::contract::record::AttemptsEnded;
+    let script = std::fs::read_to_string(repository().join("scripts/loop-evidence.py")).unwrap();
+    for word in AttemptsEnded::ALL {
+        assert!(
+            script.contains(&format!("(\"{}\", r\"^", word.word())),
+            "{word:?}"
+        );
+    }
+    let same = whizbang_rascal::checked::SAME_MASK;
+    assert!(script.contains(&format!("SAME_MASK = \"{same}\"")));
+}
+
 #[test]
 fn the_loop_records_hold_only_aggregates_by_group() {
     // Plan e1, task L2, items 1 and 3. The manifest the round ran: 20 entries in four
