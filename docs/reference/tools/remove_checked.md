@@ -196,10 +196,15 @@ kit's segmenter, the scripted filler and the scripted judge, which answer at onc
 is timed is the loop's own work, the pictures read, cut, compared and joined. While it runs
 the loop keeps what it decodes, so its picture is decoded once however many places it looks
 into, and a located retry's own times are in the run's diagnostic `located-a<n>.txt`. This
-is the baseline an edit gate's latency limit compares runs against.
+is the baseline an edit gate's latency limit compares runs against. Measured on the owner's
+Mac (Apple silicon), in a release build, on 2026-11-26.
 
 <!-- times: begin -->
-Not measured yet: `scripts/tool-record.sh remove_checked` times it, in a release build.
+| Picture | A run's local work, the median of three |
+|---|---|
+| 256 by 256 | 47 ms |
+| 1024 by 1024 | 562 ms |
+| 2048 by 2048 | 2190 ms |
 <!-- times: end -->
 
 The loop's judge, when `--judge` names none, is the config's default judge, which the
