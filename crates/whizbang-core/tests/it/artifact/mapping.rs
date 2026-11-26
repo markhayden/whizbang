@@ -313,7 +313,7 @@ fn polygon_of(shape: &Shape) -> &[Point] {
     }
 }
 
-fn spread(points: &[Point]) -> (f64, f64, f64, f64) {
+fn spread(points: &[Point]) -> Spread {
     let xs = points.iter().map(|p| p.x);
     let ys = points.iter().map(|p| p.y);
     (
@@ -325,7 +325,10 @@ fn spread(points: &[Point]) -> (f64, f64, f64, f64) {
 }
 
 /// The spreads of a carry's two parts, the one on the left of the panorama first.
-fn sides(carried: &Carried) -> ((f64, f64, f64, f64), (f64, f64, f64, f64)) {
+/// Left, right, top and bottom of a part.
+type Spread = (f64, f64, f64, f64);
+
+fn sides(carried: &Carried) -> (Spread, Spread) {
     let [a, b] = &carried.parts[..] else {
         panic!("{:?}", carried.parts);
     };
