@@ -163,14 +163,15 @@ def one_grid(source, candidate, aspect):
         raise ValueError("the source and the candidate are not one grid: register the candidate onto the source first")
 
 
-def mask_of(context, image, phrase, most):
+def mask_of(context, image, phrase, most, model=None):
     """The union of what the segmenter finds for a phrase in the named picture: a mask of
     its own size, as `(value, width, height)`. Each instance's mask is of the size the
     instance states, which must be the picture's: a mask of another size is refused rather
-    than read out of line."""
+    than read out of line. `model`, when given, is the model of the catalogue asked."""
     shown = context.image(image)
     value = 0
-    for instance in context.segment(image, phrase=phrase, most=most):
+    asked = {"model": model} if model is not None else {}
+    for instance in context.segment(image, phrase=phrase, most=most, **asked):
         if (instance.width, instance.height) != (shown.width, shown.height) or len(instance.mask) != shown.width * shown.height:
             raise ValueError("the segmenter answered a mask of another size than the picture's")
         value |= int(instance.mask.translate(_BITS), 2)

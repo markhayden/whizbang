@@ -161,6 +161,10 @@ if [ "$candidate" = 1 ]; then
   "$root/scripts/candidate.sh" prepare "$work"
   exec env CARGO_TARGET_DIR="$work/target" WHIZBANG_MODELS_DIR="$work/models" "$work/tree/scripts/test-models.sh" "$@"
 fi
+# The installed pack is this tree's, file for file (plan mE, task T2): a pack installed by an
+# older build answers a model it has no adapter for with `rejected` and nothing more.
+"$root/scripts/candidate.sh" pack-matches "$root" "$dir" >/dev/null ||
+  refuse "the pack in WHIZBANG_MODELS_DIR is not this tree's: run this tree's whizbang setup --extra torch --models-dir with it"
 shared=$target/tmp/model-tier
 mkdir -p "$shared/out"
 rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt" "$shared/out/tiny.txt" \

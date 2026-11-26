@@ -126,6 +126,32 @@ class Load(unittest.TestCase):
             self.assertIsNone(runtime.folder)
 
 
+class Missing(unittest.TestCase):
+    def test_a_package_the_library_asks_for_while_it_builds_the_model_is_named(self):
+        # transformers 5.23's EoMT builds its loss with the model, and the loss asks for
+        # scipy: a runtime without it is refused with the library's words, not the type.
+        class Lacking(StandIn):
+            def load(self, folder, device="auto"):
+                raise ImportError("EomtLoss requires the SciPy library but it was not found in your environment.")
+
+        with self.assertRaises(adapter.Fault) as refused:
+            loaded(self, Lacking())
+        self.assertEqual(refused.exception.fault, "unavailable")
+        self.assertIn("SciPy library", refused.exception.sentence)
+        self.assertIn("whizbang setup --extra torch", refused.exception.sentence)
+
+
+class Lock(unittest.TestCase):
+    def test_the_torch_extra_pins_scipy_which_the_librarys_eomt_asks_for(self):
+        with open(os.path.join(kit.PACK, "pyproject.toml"), encoding="utf-8") as file:
+            project = file.read()
+        self.assertIn("\"scipy==", project)
+        with open(os.path.join(kit.PACK, "uv.lock"), encoding="utf-8") as file:
+            lock = file.read()
+        self.assertIn('name = "scipy"', lock)
+        self.assertIn('{ name = "scipy", marker = ', lock)
+
+
 class Phrases(unittest.TestCase):
     def test_a_class_is_its_pixels_and_any_other_phrase_is_refused(self):
         runtime = StandIn()

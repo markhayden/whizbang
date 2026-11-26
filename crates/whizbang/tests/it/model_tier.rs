@@ -1192,7 +1192,6 @@ fn eomt_labels_every_pixel_of_the_fixture_on_the_mac() {
         .identity())
     .digest()
     .to_string();
-    let executor = tier.runner(&over);
     let limits = DecodeLimits::default();
     let origin = Origin::new(Step::new("fixture", "1")).unwrap();
     let image = Image::new(
@@ -1208,6 +1207,10 @@ fn eomt_labels_every_pixel_of_the_fixture_on_the_mac() {
     let mut publication = store.begin().unwrap();
     let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
     publication.publish().unwrap();
+    // The store is held by one handle at a time: the fixture's is let go before the
+    // executor opens it, and the binary reads the record once the executor is dropped.
+    drop(store);
+    let executor = tier.runner(&over);
     let classes = ade20k_classes();
     let call = Call::new("labels")
         .input("image", id)
@@ -1241,6 +1244,7 @@ fn eomt_labels_every_pixel_of_the_fixture_on_the_mac() {
     assert_eq!(pixels, 640 * 480);
     let second = executor.submit(&call).unwrap();
     assert_eq!(second.outcome(), first.outcome());
+    drop(executor);
     let record = tier.record(first.run().as_str());
     for model in record["models"].as_array().unwrap() {
         assert_eq!(
@@ -1249,7 +1253,6 @@ fn eomt_labels_every_pixel_of_the_fixture_on_the_mac() {
         );
         assert_eq!(model["version"].as_str(), Some(identity.as_str()));
     }
-    drop(executor);
     let mut lines = vec![
         ("run".to_owned(), first.run().as_str().to_owned()),
         ("device".to_owned(), "mps".to_owned()),

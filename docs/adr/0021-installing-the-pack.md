@@ -52,7 +52,10 @@ installs the pack without a network: the hosted engine of story 1 runs no Python
 installed, so no build backend is fetched. The runtime is one extra, `torch`, which pins
 `torch==2.15.0`, `torchvision==0.29.2` and `transformers==5.23.0`. `torchvision` is in it
 because the library's image processor for SAM 3 imports it (`image_processing_sam3.py`
-imports `torchvision.ops`). With no extra, `setup` installs nothing from a package index.
+imports `torchvision.ops`). (Amended 2026-11-26, plan mE's task T2: and `scipy==1.18.1`, because the
+library's EoMT, the fixed-class segmenter's model, builds its loss with the model and the
+loss asks for `scipy`; its wheel for the Mac from the Python package index, pinned by hash in
+the lock as every other.) With no extra, `setup` installs nothing from a package index.
 
 The pinned Python, 3.12.15, runs the locked versions: every package of the lock has a
 wheel for CPython 3.12, or one for any Python, on both platforms, and on the Mac the

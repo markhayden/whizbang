@@ -96,6 +96,10 @@ pub enum Command {
         /// A set to score on, by its id (`<use-case>/<set>`); give it again for more.
         #[arg(long = "set", value_name = "SET", required = true)]
         sets: Vec<String>,
+        /// The method each run of the tool is given (`regions` and `outline`: sam3 or
+        /// eomt); refused for a tool that declares no methods. Its default when not given.
+        #[arg(long, value_name = "METHOD")]
+        method: Option<String>,
         /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
         #[arg(long, value_name = "DIR", default_value = "evalsets")]
         root: PathBuf,
@@ -646,6 +650,7 @@ fn run_command(command: &Command) -> Result<String, String> {
         Command::Tool {
             tool,
             sets,
+            method,
             root,
             at,
             under,
@@ -658,6 +663,7 @@ fn run_command(command: &Command) -> Result<String, String> {
                 at.root(),
                 root,
                 &declared,
+                method.as_deref(),
                 sets,
                 whizbang::trying::RESAMPLES,
             );

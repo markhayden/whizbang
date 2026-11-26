@@ -253,6 +253,7 @@ the package in `docs/results/2026-11-tool-study.md`.
 | whizbang | A check's result shows its `job` argument as raw JSON, and its `set` argument, on the result and on its History row, with a literal `\n` between its lines. Found by plan m7, N1's pass by hand. New with plan m7, opened by N1's pass by hand | The next change to the result screen or History's rows, at the latest milestone 8 | A check's job is shown as its brief and its requirements, and `set` as one line a setting, on the result and in History, with a unit test |
 | whizbang | A bundle taken into the playground can be replayed offline only from the command line (`whizbang runs replay --bundle-digest`): its page offers "Open its step", which is live, alone. Found by plan m7, N1's pass by hand. New with plan m7, opened by N1's pass by hand | The next change to bundles in the playground, at the latest milestone 8 | A bundle's page offers an offline replay of each step this build decides replayable, with its report, and a Chrome case |
 | whizbang | A chain's bundle is saved with no dialog of what it holds and never holds, where a run's bundle has one (Bundle this run…): Bundle chain in History, and Bundle the new chain on a chain's last step, download at once. Found by plan m7, N1's pass by hand. New with plan m7, opened by N1's pass by hand | The next change to bundles in the playground, at the latest milestone 8 | A chain's bundle shows what it holds and never holds, and its size, before it is saved, as a run's does, with a Chrome case |
+| whizbang | A tool file's method is any text: `regions` and `outline` take `method` as text and raise on one they do not know, so a misspelt method (`C+regions@eomtt`) is found only when the tool runs, after a paid arm has begun. `eval tool --method` refuses only a method that is no name, or a tool with no `method` argument. New with plan mE, task T2, from the review of its second pull request | E, before R3's first paid arm that names a method: a follow-up of task F1, which owns `check.rs` | An optional `choices` on a tool file's argument (`tool-file/1`), checked by `eval tool --method`, by `check`'s `methods` and by the matrix's arm parser (`crates/whizbang-eval/src/matrix.rs`), so a method a tool does not declare is refused before anything runs, with a test of each |
 
 ## Evaluations
 
@@ -276,8 +277,8 @@ the package in `docs/results/2026-11-tool-study.md`.
 
 | From | Item | Where it is | Note |
 |---|---|---|---|
-| squint | `regions`, `classes`, `outline` tools | `tools/python/src/squint_tools/` | See "Evaluations". The 2026-11-11 study found a clear gain only for `regions` on one model, and that `outline` ranked noise above the real change |
-| squint | Fixed-class segmenter | `tools/python/MODEL.md` | Comes back as a catalogue entry if any of the three needs it |
+| squint | `regions`, `classes`, `outline` tools | `tools/python/src/squint_tools/` | See "Evaluations". The 2026-11-11 study found a clear gain only for `regions` on one model, and that `outline` ranked noise above the real change. **Brought in by plan mE, tasks T1 and T2:** each a tool file of the pack, marked experimental, with its record (`pack/tools/outline.py`, `regions.py`, `classes.py`); `regions` and `outline` each take a `method`, `sam3` or `eomt`, and `whizbang eval tool --method` scores either. Their rungs are R2 to R4's; N1 moves the row out of this section |
+| squint | Fixed-class segmenter | `tools/python/MODEL.md` | Comes back as a catalogue entry if any of the three needs it. **Back, by plan mE, task T2:** the catalogue's `eomt-ade20k` (ADR 0053), which `classes` and the methods `eomt` ask through the action `labels`; N1 moves the row out of this section |
 
 ## Not ported
 
