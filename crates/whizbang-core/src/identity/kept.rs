@@ -8,7 +8,9 @@
 //! the kept copy: the loop holds one for its run, so its picture is decoded once.
 //!
 //! What is kept is bounded: the [`KEPT`] files identified last, the oldest let go first,
-//! and all of it when the last [`KeptDecodes`] is let go. Nothing is kept while none is
+//! and all of it when the last [`KeptDecodes`] is let go. At most four pictures of the
+//! decode limits' 50 megapixels, at four bytes a pixel, is about 800 MB while one is held.
+//! A copy is shared, never copied again ([`super::identify_shared`]). Nothing is kept while none is
 //! held, and a file is then not even hashed for it. Every run of the process shares what
 //! is kept while one is held; a copy is the same identification as a decode, since a
 //! decode of the same bytes under the same limits gives the same pixels.
@@ -89,7 +91,7 @@ pub(super) fn identify(
     bytes: &[u8],
     limits: &DecodeLimits,
     decode: fn(&[u8], &DecodeLimits) -> Result<Identified>,
-) -> Result<Identified> {
+) -> Result<Arc<Identified>> {
     let keeping = kept().held > 0;
     let key = keeping.then(|| Digest::of_bytes(bytes));
     if let Some(key) = key {
@@ -99,12 +101,13 @@ pub(super) fn identify(
         if let Some(at) = found
             && let Some(entry) = kept.files.remove(at)
         {
-            let identified = Identified::clone(&entry.2);
+            // The kept copy, shared: nothing of it is copied.
+            let identified = Arc::clone(&entry.2);
             kept.files.push_back(entry);
             return Ok(identified);
         }
     }
-    let identified = decode(bytes, limits)?;
+    let identified = Arc::new(decode(bytes, limits)?);
     let mut kept = kept();
     counted(&mut kept, identified.identity.file.0);
     if let Some(key) = key
@@ -114,7 +117,7 @@ pub(super) fn identify(
             kept.files.pop_front();
         }
         kept.files
-            .push_back((key, *limits, Arc::new(identified.clone())));
+            .push_back((key, *limits, Arc::clone(&identified)));
     }
     Ok(identified)
 }

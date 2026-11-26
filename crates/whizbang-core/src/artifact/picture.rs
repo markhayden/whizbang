@@ -2,8 +2,8 @@
 //! is for (ADR 0002). A rendering of a mask is an image, and never a mask.
 
 use crate::identity::{
-    Binding, CanonicalPixels, DecodeLimits, Fields, ImageIdentity, Projection, Space, Topology,
-    identify,
+    Binding, CanonicalPixels, DecodeLimits, Fields, Identified, ImageIdentity, Projection, Space,
+    Topology, identify, identify_shared,
 };
 
 use super::wire::{Reader, Writer};
@@ -43,7 +43,8 @@ impl Image {
         origin: Origin,
         limits: &DecodeLimits,
     ) -> Result<Image> {
-        let identified = identify(&file, limits)?;
+        // Shared: only its identity and its size are read here.
+        let identified = identify_shared(&file, limits)?;
         let space = Space::new(
             identified.pixels.width(),
             identified.pixels.height(),
@@ -93,6 +94,12 @@ impl Image {
     /// The canonical pixels, decoded again from the file.
     pub fn pixels(&self, limits: &DecodeLimits) -> Result<CanonicalPixels> {
         Ok(identify(&self.file, limits)?.pixels)
+    }
+
+    /// The same, shared: while what is decoded is kept (`identity::keep_decoded`), the
+    /// kept copy itself, read where it is and never copied.
+    pub fn pixels_shared(&self, limits: &DecodeLimits) -> Result<std::sync::Arc<Identified>> {
+        Ok(identify_shared(&self.file, limits)?)
     }
 
     pub fn origin(&self) -> &Origin {

@@ -229,8 +229,9 @@ fn perspective(
     limits: &DecodeLimits,
 ) -> Result<Crop, ViewError> {
     let space = image.space();
-    let pixels = image.pixels(limits)?;
-    let shown = looked(&pixels, asked, side(space.width(), asked.fov))?;
+    let decoded = image.pixels_shared(limits)?;
+    let pixels = &decoded.pixels;
+    let shown = looked(pixels, asked, side(space.width(), asked.fov))?;
     let origin = Origin::new(
         Step::new(NAME, VERSION)
             .argument("yaw", &asked.yaw.to_string())
@@ -315,8 +316,8 @@ fn crop(image: &Image, bbox: &[f64; 4], limits: &DecodeLimits) -> Result<Crop, V
             space.height()
         ));
     }
-    let pixels = image.pixels(limits)?;
-    let shown = shown(&pixels, [left, top, right, bottom])?;
+    let decoded = image.pixels_shared(limits)?;
+    let shown = shown(&decoded.pixels, [left, top, right, bottom])?;
     let origin = Origin::new(
         Step::new(NAME, VERSION)
             .argument("left", &bbox[0].to_string())

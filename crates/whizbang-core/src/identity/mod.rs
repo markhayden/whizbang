@@ -29,6 +29,7 @@ pub use mapping::Mapping;
 pub use perspective::{Basis, Perspective, panorama_direction};
 pub use pixels::{
     CanonicalPixels, DecodeLimits, Identified, ImageIdentity, Profile, Stored, identify,
+    identify_shared,
 };
 pub use space::{Point, Projection, Space, Topology};
 

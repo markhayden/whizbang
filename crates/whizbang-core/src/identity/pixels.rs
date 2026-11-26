@@ -6,6 +6,7 @@
 //! not multiplied into the colours.
 
 use std::io::Cursor;
+use std::sync::Arc;
 
 use image::metadata::Orientation;
 use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageError, ImageReader, RgbaImage};
@@ -171,6 +172,13 @@ pub struct Identified {
 /// ([`super::kept::keep_decoded`]), a file decoded under the same limits is not decoded
 /// again.
 pub fn identify(bytes: &[u8], limits: &DecodeLimits) -> Result<Identified> {
+    let shared = identify_shared(bytes, limits)?;
+    Ok(Arc::try_unwrap(shared).unwrap_or_else(|kept| Identified::clone(&kept)))
+}
+
+/// [`identify`], shared: while what is decoded is kept, the kept copy itself, so a reader
+/// that only reads it (the identity, the size, the pixels) copies nothing.
+pub fn identify_shared(bytes: &[u8], limits: &DecodeLimits) -> Result<Arc<Identified>> {
     super::kept::identify(bytes, limits, decode)
 }
 

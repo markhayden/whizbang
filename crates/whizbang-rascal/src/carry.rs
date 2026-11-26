@@ -125,8 +125,9 @@ impl Placed {
                 large.height()
             ));
         }
-        let cut = crop.pixels(limits).map_err(CarryError::Mask)?;
-        let whole = image.pixels(limits).map_err(CarryError::Mask)?;
+        let cut = crop.pixels_shared(limits).map_err(CarryError::Mask)?;
+        let whole = image.pixels_shared(limits).map_err(CarryError::Mask)?;
+        let (cut, whole) = (&cut.pixels, &whole.pixels);
         let (width, across) = (width as usize, large.width() as usize);
         let (left, top) = (left as usize, top as usize);
         let (mut differ, mut first) = (0_u64, None);
