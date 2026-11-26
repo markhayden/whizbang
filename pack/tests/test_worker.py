@@ -815,6 +815,7 @@ class Adapters(unittest.TestCase):
 RUNTIME = {
     "sam3.py": ("PIL", "torch", "transformers"),
     "owlv2_sam2.py": ("PIL", "torch", "transformers", "safetensors"),
+    "eomt_ade20k.py": ("PIL", "numpy", "torch", "transformers"),
 }
 
 
@@ -859,6 +860,7 @@ class Imports(unittest.TestCase):
                 "__init__.py",
                 "adapter.py",
                 "conformance.py",
+                "eomt_ade20k.py",
                 "fake_models.py",
                 "fakes.py",
                 "front.py",

@@ -197,7 +197,7 @@ fn a_second_capability_request_while_one_is_open_is_refused() {
         answered += 1;
         for _ in 0..2_000 {
             if heard.load(Ordering::SeqCst) >= 2 {
-                return Ok(row());
+                return Ok(row().into());
             }
             std::thread::park_timeout(Duration::from_millis(5));
         }
@@ -226,7 +226,7 @@ fn a_tools_fault_ends_the_group_and_a_child_holding_the_pipes_with_it() {
     let mut worker = supervisor();
     let cancellation = Cancellation::new();
     let ended = worker.run(run_of(FAULTS), &limits(&cancellation), &mut |_| {
-        Ok(Vec::new())
+        Ok(Vec::<Mask>::new().into())
     });
     assert_eq!(
         ended,
@@ -305,7 +305,9 @@ fn a_worker_that_cannot_end_its_group_has_it_ended_by_whizbang() {
         deadline: None,
         limit: Duration::from_secs(2),
     };
-    let ended = worker.run(run_of(HOLDS_THE_LOCK), &limits, &mut |_| Ok(Vec::new()));
+    let ended = worker.run(run_of(HOLDS_THE_LOCK), &limits, &mut |_| {
+        Ok(Vec::<Mask>::new().into())
+    });
     assert_eq!(ended, Err(ToolFault::TimedOut));
     assert_eq!(worker.pid(), None);
     let child = child_of(&worker);
@@ -323,7 +325,7 @@ fn a_tool_file_of_another_digest_is_run_by_a_worker_of_its_own() {
     let cancellation = Cancellation::new();
     let one = "def run(context):\n    return {}\n";
     let other = "def run(context):\n    return {'readings': []}\n";
-    let mut nothing = |_: &Asked| Ok(Vec::new());
+    let mut nothing = |_: &Asked| Ok(Vec::<Mask>::new().into());
     worker
         .run(run_of(one), &limits(&cancellation), &mut nothing)
         .unwrap();

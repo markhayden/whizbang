@@ -41,7 +41,7 @@ impl Mark {
 /// `outline` and `regions` (plan mE, task T1) and the detail `tiles` (plan mE, task A0,
 /// item 3). Every record under `docs/reference/tools/` that states a mark is here, which a
 /// test holds.
-pub const RECORDS: [(&str, &str); 22] = [
+pub const RECORDS: [(&str, &str); 23] = [
     (
         "remove_prompt",
         include_str!("../../../docs/reference/tools/remove_prompt.md"),
@@ -105,6 +105,10 @@ pub const RECORDS: [(&str, &str); 22] = [
     (
         "segment",
         include_str!("../../../docs/reference/tools/segment.md"),
+    ),
+    (
+        "labels",
+        include_str!("../../../docs/reference/tools/labels.md"),
     ),
     (
         "view",

@@ -1,6 +1,7 @@
 // Test helpers outside `#[test]` functions may unwrap; a failure there is a test failure.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod admitted;
 mod anthropic;
 mod backends;
 mod baseline;
@@ -67,6 +68,7 @@ mod segment;
 mod select;
 mod serve;
 mod serve_http;
+mod sets;
 mod setup;
 mod spend;
 mod stats;

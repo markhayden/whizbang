@@ -163,6 +163,36 @@
           "from": "https://huggingface.co/facebook/sam2.1-hiera-tiny/resolve/de431c4043854a71d8101e17995dfe596bf101a5/preprocessor_config.json"
         }
       ]
+    },
+    {
+      "name": "eomt-ade20k",
+      "title": "EoMT large, ADE20K (fixed-class)",
+      "revision": "2026-11.1",
+      "adapter": "eomt-ade20k",
+      "licence": "MIT",
+      "platforms": ["macos-arm64"],
+      "features": ["phrase", "labels"],
+      "origins": ["https://huggingface.co", "https://us.aws.cdn.hf.co"],
+      "files": [
+        {
+          "name": "README.md",
+          "size": 2716,
+          "sha256": "sha256:956a0496b774be96186e8355fcec5d41ca45659c7719b5937338e9310c115cd5",
+          "from": "https://huggingface.co/tue-mps/ade20k_semantic_eomt_large_512/resolve/aeb262f5a0bc609236d27f1277c3173ce57aeb27/README.md"
+        },
+        {
+          "name": "config.json",
+          "size": 6778,
+          "sha256": "sha256:5b11b6c2cc74bfbe1c31871e107d90cf161015818a1bc96dc4db5f1f003e55af",
+          "from": "https://huggingface.co/tue-mps/ade20k_semantic_eomt_large_512/resolve/aeb262f5a0bc609236d27f1277c3173ce57aeb27/config.json"
+        },
+        {
+          "name": "model.safetensors",
+          "size": 1264130192,
+          "sha256": "sha256:715f374b2bc9f2329caa99c9c3d425dcb072f2d0751a960534b4bfd35fe5930c",
+          "from": "https://huggingface.co/tue-mps/ade20k_semantic_eomt_large_512/resolve/aeb262f5a0bc609236d27f1277c3173ce57aeb27/model.safetensors"
+        }
+      ]
     }
   ]
 }

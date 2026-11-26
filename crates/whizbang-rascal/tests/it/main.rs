@@ -16,6 +16,7 @@ mod grow_runs;
 mod heal;
 mod inspect;
 mod invert;
+mod labels;
 mod line;
 mod ops_actions;
 mod paste;

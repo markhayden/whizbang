@@ -21,7 +21,7 @@ fn the_shipped_catalogue_parses_names_sam3_and_no_fake_model() {
         .iter()
         .map(|entry| entry.name().as_str())
         .collect();
-    assert_eq!(names, ["sam3", "tiny"]);
+    assert_eq!(names, ["eomt-ade20k", "sam3", "tiny"]);
     let entry = sam3();
     assert_eq!(entry.title().as_str(), "SAM 3");
     assert_eq!(entry.adapter().as_str(), "sam3");

@@ -36,6 +36,11 @@ pub const ARM_TOOLS_LIMIT: usize = 8;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Matrix {
+    /// Every hypothesis the round's correction counts, where the matrix states it (plan mE,
+    /// task M1, item 6): its gates' comparisons and the judge's rule's beside them. Left
+    /// out of the identity when not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hypotheses: Option<usize>,
     pub matrix: Spec,
     /// Each gate file frozen on the matrix, by its path beside the matrix, with the SHA-256
     /// of its bytes. Left out of the identity when empty.
@@ -189,6 +194,9 @@ impl Judge {
 pub struct Arm {
     pub first: bool,
     pub tools: Vec<String>,
+    /// The method a tool file the arm offers is run with, by the tool's name (plan mE, task
+    /// M1, item 12): `C+regions@eomt`. A tool that names none runs its default method.
+    pub methods: BTreeMap<String, String>,
     pub details: Vec<Detail>,
     pub second_look: Vec<Look>,
     pub submission: Option<String>,
@@ -387,7 +395,10 @@ impl std::fmt::Display for Arm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(if self.first { "F" } else { "C" })?;
         for tool in &self.tools {
-            write!(f, "+{tool}")?;
+            match self.methods.get(tool) {
+                Some(method) => write!(f, "+{tool}@{method}")?,
+                None => write!(f, "+{tool}")?,
+            }
         }
         if !self.details.is_empty() {
             let named: Vec<String> = (self.details.iter())
@@ -433,13 +444,29 @@ impl std::str::FromStr for Arm {
             Some("F") => true,
             _ => return Err(format!("arm {text:?} is not C or F, with +<tool> after it")),
         };
-        let tools: Vec<String> = parts.map(str::to_owned).collect();
-        if tools.len() > ARM_TOOLS_LIMIT || !tools.iter().all(|tool| plain(tool)) {
+        let mut tools: Vec<String> = Vec::new();
+        let mut methods = BTreeMap::new();
+        for part in parts {
+            let (tool, method) = match part.split_once('@') {
+                Some((tool, method)) => (tool, Some(method)),
+                None => (part, None),
+            };
+            if !plain(tool) || method.is_some_and(|m| !plain(m)) || tools.iter().any(|t| t == tool)
+            {
+                return Err(format!("arm {text:?} names a tool that is no tool's name"));
+            }
+            if let Some(method) = method {
+                methods.insert(tool.to_owned(), method.to_owned());
+            }
+            tools.push(tool.to_owned());
+        }
+        if tools.len() > ARM_TOOLS_LIMIT {
             return Err(format!("arm {text:?} names a tool that is no tool's name"));
         }
         let mut arm = Arm {
             first,
             tools,
+            methods,
             details: Vec::new(),
             second_look: Vec::new(),
             submission: None,
@@ -523,12 +550,23 @@ enum Written {
 #[serde(deny_unknown_fields)]
 struct Table {
     arm: String,
+    /// More tools the arm offers, each with the method it is run with.
+    #[serde(default)]
+    tools: Vec<ToolMethod>,
     #[serde(default)]
     details: Vec<Detail>,
     #[serde(default)]
     second_look: Option<Looks>,
     #[serde(default)]
     submission: Option<String>,
+}
+
+/// A tool file an arm offers, with the method it is run with.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolMethod {
+    tool: String,
+    method: String,
 }
 
 /// A table's second look: `on`, `strict` or `off` for every use case, or a list of looks.
@@ -551,6 +589,16 @@ impl<'de> Deserialize<'de> for Arm {
                     ));
                 }
                 let mut arm = read(&table.arm)?;
+                for one in table.tools {
+                    if arm.tools.contains(&one.tool) {
+                        return Err(serde::de::Error::custom(format!(
+                            "arm {}: the tool {} is named twice",
+                            table.arm, one.tool
+                        )));
+                    }
+                    arm.tools.push(one.tool.clone());
+                    arm.methods.insert(one.tool, one.method);
+                }
                 arm.details = table.details;
                 arm.second_look = match table.second_look {
                     None => Vec::new(),
@@ -633,6 +681,9 @@ impl Matrix {
             return Err("a matrix names each set, judge and arm once".to_owned());
         }
         self.validate_lists(&arms)?;
+        if self.hypotheses == Some(0) {
+            return Err("a matrix's hypotheses are at least one".to_owned());
+        }
         for (file, digest) in &self.gates {
             let plain = |part: &str| {
                 !part.is_empty()
@@ -822,6 +873,15 @@ impl Matrix {
         }
         out
     }
+}
+
+/// The resamples of every interval of a round whose correction counts `hypotheses` (plan mE,
+/// task M1, item 6): enough that each tail of a 95% interval split `hypotheses` ways holds
+/// at least 20 draws, rounded up to a thousand, and never fewer than 20,000.
+pub fn resamples_for(hypotheses: usize) -> usize {
+    let wanted = (20 * 2 * hypotheses.max(1)) as f64 / 0.05;
+    let thousands = (wanted / 1_000.0).ceil() as usize * 1_000;
+    thousands.max(20_000)
 }
 
 /// What one decision of a model under arm C settled at in the study, in millionths of a

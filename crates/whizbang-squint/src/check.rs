@@ -38,7 +38,7 @@
 //! either way the refusal is in the run's record. Nothing a judge writes is an
 //! instruction: it names a tool and gives arguments, and both are data.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -386,6 +386,11 @@ impl Check {
             ValueType::choice(&SUBMISSIONS),
             Value::text(DEFAULT_SUBMISSION),
         ))
+        .argument(Argument::optional(
+            "methods",
+            "The method each tool file named runs with, as tool:method separated by commas, frozen for the run: a call of the judge that names another method is refused.",
+            ValueType::Text,
+        ))
         .input(InputPort::variadic(
             MEASURED_IMAGES,
             ArtifactType::Image,
@@ -661,6 +666,9 @@ fn run_tools_submit(
     Ok(())
 }
 
+/// The argument of a tool file that names its method.
+pub const METHOD: &str = "method";
+
 /// One run of the loop: what it froze, and what it has dispatched and kept so far.
 struct Run<'a> {
     context: &'a Context,
@@ -697,6 +705,8 @@ struct Run<'a> {
     /// ran as another: then the key is not kept.
     revisions: Vec<(String, String)>,
     edited: bool,
+    /// The method of each tool file the call froze (plan mE, task M1, item 12), by name.
+    methods: BTreeMap<String, String>,
 }
 
 impl Run<'_> {
@@ -851,10 +861,27 @@ impl Run<'_> {
             let result = ToolResult::new(call.id(), text, error, Vec::new());
             result.map_err(|why| failed("tool_result", &why))
         };
-        let (images, arguments) = match files::call_of(&tool, call.arguments(), &self.names) {
+        let (images, mut arguments) = match files::call_of(&tool, call.arguments(), &self.names) {
             Ok(asked) => asked,
             Err(why) => return answer(&format!("not called: {why}"), true),
         };
+        // A method the call froze is the tool's for the run: a call that names another is
+        // refused, and one that names none is given it.
+        if let Some(method) = self.methods.get(&tool.name) {
+            match arguments.get(METHOD) {
+                Some(Json::String(asked)) if asked != method => {
+                    let said = format!(
+                        "refused: the run froze the method of {} as {method}; a call cannot name \
+                         another",
+                        tool.name
+                    );
+                    return answer(&said, true);
+                }
+                _ => {
+                    arguments.insert(METHOD.to_owned(), Json::String(method.clone()));
+                }
+            }
+        }
         let Some(file_tools) = &self.file_tools else {
             return answer("not called: no tool file is on offer", true);
         };
@@ -1246,6 +1273,29 @@ impl Action for Check {
                 }
             }
         }
+        // Each tool file's frozen method: a tool file the run names, which takes a method,
+        // once each.
+        let mut methods: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(Value::Text(text)) = argument("methods") {
+            for one in text.split(',') {
+                let named = one.split_once(':').filter(|(tool, method)| {
+                    !tool.is_empty() && !method.is_empty() && !method.contains(':')
+                });
+                let Some((tool, method)) = named else {
+                    return Err(Failure::invalid(
+                        "methods is tool:method, separated by commas",
+                    ));
+                };
+                let takes = (named_files.iter())
+                    .find(|file| file.name == tool)
+                    .is_some_and(|file| file.arguments.iter().any(|a| a.name == METHOD));
+                if !takes || methods.insert(tool.to_owned(), method.to_owned()).is_some() {
+                    return Err(Failure::invalid(
+                        "methods names each tool file the run offers, which takes a method, once",
+                    ));
+                }
+            }
+        }
         let chosen = |name: &str, names: &[&str]| match argument(name) {
             Some(Value::Text(text)) if names.contains(&text.as_str()) => Ok(text.clone()),
             _ => Err(Failure::invalid(&format!(
@@ -1470,6 +1520,7 @@ impl Action for Check {
                 file_tools: self.toolbox.files.clone(),
                 revisions,
                 edited: false,
+                methods,
             };
             // The images open the conversation, each with the name a tool call gives.
             let mut opening = Vec::new();

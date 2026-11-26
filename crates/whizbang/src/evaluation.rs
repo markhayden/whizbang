@@ -81,12 +81,25 @@ pub fn judging() -> Judging<'static> {
     }
 }
 
-/// The repository the sets' pictures are in: a set that names any other is not fetched.
-pub const SETS_REPOSITORY: &str = "github.com/markhayden/wafflery-evalsets";
+/// The repository the sets' pictures are in, by its current name: a set that names any
+/// other is not fetched.
+pub const SETS_REPOSITORY: &str = "github.com/markhayden/whizbang-evalsets";
+
+/// The names the repository had before (plan mE, task B1, item 6): sets sealed before it
+/// was renamed name it so, and a sealed set is never edited. Each is read as
+/// [`SETS_REPOSITORY`], and the pictures are fetched under the current name.
+pub const SETS_REPOSITORY_ALIASES: [&str; 1] = ["github.com/markhayden/wafflery-evalsets"];
+
+/// The repository a set's `images_repo` names, by its current name: [`SETS_REPOSITORY`]
+/// for it or for one of its old names, and nothing for any other.
+pub fn sets_repository(images_repo: &str) -> Option<&'static str> {
+    (images_repo == SETS_REPOSITORY || SETS_REPOSITORY_ALIASES.contains(&images_repo))
+        .then_some(SETS_REPOSITORY)
+}
 
 /// The address of one picture of a set: `<base>/<owner>/<repo>/<revision>/<set id>/<path>`.
-/// The set must name [`SETS_REPOSITORY`] and a revision of 40 hex digits; the path is the
-/// job's, which the set's check holds to plain names.
+/// The set must name [`SETS_REPOSITORY`], or an old name of it, and a revision of 40 hex
+/// digits; the path is the job's, which the set's check holds to plain names.
 pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, String> {
     let meta = &set.manifest.set;
     let plain = |part: &str| {
@@ -98,12 +111,11 @@ pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, Stri
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
     // The one repository the sets' pictures are fetched from, whatever else a set names.
-    let Some(repo) = meta.images_repo.strip_prefix("github.com/") else {
+    let Some(repo) =
+        sets_repository(&meta.images_repo).and_then(|current| current.strip_prefix("github.com/"))
+    else {
         return Err(format!("{}: images_repo is not {SETS_REPOSITORY}", meta.id));
     };
-    if meta.images_repo != SETS_REPOSITORY {
-        return Err(format!("{}: images_repo is not {SETS_REPOSITORY}", meta.id));
-    }
     let rev = meta.images_rev.as_deref().unwrap_or_default();
     if rev.len() != 40 || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!(
@@ -137,7 +149,7 @@ pub struct Fetching<'a> {
 
 /// The pictures of a set the store does not hold yet, each once: its pin, and the item
 /// and image a complaint names it by.
-fn wanted(set: &Set, root: &Path) -> Result<(Vec<sets::Picture>, usize), String> {
+pub(crate) fn wanted(set: &Set, root: &Path) -> Result<(Vec<sets::Picture>, usize), String> {
     let held = import::pictures_by_file(root)?;
     let mut seen = std::collections::BTreeSet::new();
     let mut wanted = Vec::new();
@@ -437,6 +449,14 @@ fn call_of(planned: &Planned, argument: &CellArgument) -> Result<Call, String> {
     if let Some(submission) = &arm.submission {
         call = call.argument("submission", Value::text(submission));
     }
+    // A tool file's method frozen in the arm (plan mE, task M1, item 12), only when it names
+    // one, so an arm that names none keeps its calls as they were.
+    if !arm.methods.is_empty() {
+        let methods: Vec<String> = (arm.methods.iter())
+            .map(|(tool, method)| format!("{tool}:{method}"))
+            .collect();
+        call = call.argument("methods", Value::text(&methods.join(",")));
+    }
     if planned.cell.backend != "default" {
         call = call.argument("judge", Value::text(&planned.cell.backend));
     }
@@ -553,6 +573,48 @@ pub fn run_under(
     let mut report = summary(planned, labels, running.root, &identity, gate)?;
     report.started = started;
     Ok(report)
+}
+
+/// `eval matrix --past-forecast` (plan mE, task M1, item 13): the forecast of the cells still
+/// to run, which is advice, and the matrix run anyway, each run admitted against the
+/// allowance as any run is, so that the allowance, which is enforced, holds the matrix. A run
+/// refused for it ends the matrix, the cells left to run named by count; run again after a
+/// new allowance, it resumes.
+pub fn run_past_forecast(
+    matrix: &Matrix,
+    planned: &[Planned],
+    labels: &BTreeMap<(String, String), sets::Expected>,
+    running: &Running<'_>,
+) -> Result<(u64, Report), String> {
+    let identity: String = matrix.identity().chars().take(16).collect();
+    let now = attempts_under(running.root, &identity, None)?;
+    let still: Vec<Cell> = (planned.iter())
+        .filter(|p| {
+            let last = now.get(&p.cell).and_then(|list| list.last());
+            matches!(last, None | Some((_, _, Ended::Interrupted)))
+        })
+        .map(|p| p.cell.clone())
+        .collect();
+    let forecast = matrix::forecast(&still)?;
+    let past = Running {
+        executor: running.executor,
+        root: running.root,
+        left_micros: u64::MAX,
+        stop: running.stop,
+    };
+    match run(matrix, planned, labels, &past) {
+        Ok(report) => Ok((forecast, report)),
+        Err(why) => {
+            let report = summary(planned, labels, running.root, &identity, None)?;
+            let left = report.not_run + report.interrupted;
+            Err(format!(
+                "{why}; the matrix ran past its forecast {forecast} millionths of a dollar, and \
+                 {left} of the matrix's {} cells are left to run: run it again after a new \
+                 allowance to resume",
+                report.cells
+            ))
+        }
+    }
 }
 
 /// Whether the matrix may resume over what the store holds under a binary whose default
