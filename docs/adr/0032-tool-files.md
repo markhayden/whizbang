@@ -161,14 +161,19 @@ written to it before still reads as it did.
   and a judge that called the tool is shown them in its answer. The checklist takes regions
   as evidence items, each bound to the mandatory instances on its image whose evidence
   kinds hold the tool's `region_kind` (`whizbang_squint::checklist::ingest`, squint's,
-  plan mE, task T1, item 4). `check`'s loop does not call it yet: an evidence item is a
-  checklist id the judge must then answer, and the submission's keys are fixed when the
-  run opens (`crates/whizbang-squint/src/check.rs`); plan mE's task F1 wires it in, with
-  the hints.
+  plan mE, task T1, item 4). Under a use case, `check`'s loop calls it on each result of
+  such a tool (plan mE, task F1): each region on the raw frame of an image of the job (one
+  on an aligned frame or a crop is said not taken, never an item) is
+  an item the judge is told of in the tool's answer and must give a disposition, at most
+  24 in a run (squint's budget, a result past it not presented); v2's and v3's tools are
+  made again for them, and v1's, which names no item, is sent as it was.
 - **Hints.** A rule file's `[hints]` (`[hints.regions]` `preserve` and `ignore`,
   `[hints.outline]` `classes`) is given to a tool file as the arguments of text it declares
-  under those names (`preserve`, `ignore`; `phrases` for `outline`), by `eval tool` alone:
-  `try` and `squint check --tool` do not, and `check` takes them up with plan mE's task F1.
+  under those names (`preserve`, `ignore`; `phrases` for `outline`), by `eval tool`, and by
+  `check` under a use case unless the judge's call gave the argument (plan mE, task F1): a
+  value the judge gave, even an empty one, stands over the hint; `try` does not. Under
+  `check`, a tool file may ask `segment` and `labels`, each frozen with the run's tools
+  when it names a tool file, and offered to no judge.
   No base rule file holds one.
 - **What a tool file may import.** It runs in the tool worker, from the pack: besides the
   standard library it may import the pack's own modules. `pack/tools/outline.py` and

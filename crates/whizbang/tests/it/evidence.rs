@@ -2561,6 +2561,7 @@ fn submission_rows(scores: &toml::Table) -> [Vec<String>; 3] {
             ("also", "also_by_class"),
             ("cause", "causes"),
             ("recovery", "recoveries_by_kind"),
+            ("failure", "failures_by_class"),
         ] {
             for (name, count) in s
                 .get(field)

@@ -266,6 +266,36 @@ pub enum EditsCommand {
         #[command(flatten)]
         at: Where,
     },
+    /// Score an edit recipe's gate (plan mE, task M2; `edit-gate/1`, frozen before its
+    /// round) from the store: each case's run by its request id; task success from the
+    /// checks of the finished edits (rung 3) or from a person's marks (--labels and
+    /// --sheet); preservation outside the kept mask, exact; blinded quality from the lab
+    /// decode of the picks made on the pairs of these runs (--assignment and --picks);
+    /// operational errors, cost and latency. Writes the receipt, edit-receipt/1, and
+    /// prints aggregates only. Reads the store only; the owner's files are refused inside
+    /// a git work tree.
+    Gate {
+        /// The gate file; the cases and the protocol it pins are beside it.
+        #[arg(long, value_name = "FILE")]
+        gate: PathBuf,
+        /// A person's marks of the cases' contact sheet, the marks.json it saves.
+        #[arg(long, value_name = "FILE", requires = "sheet")]
+        labels: Option<PathBuf>,
+        /// The sheet's assignment.json, which the marks are read through.
+        #[arg(long, value_name = "FILE", requires = "labels")]
+        sheet: Option<PathBuf>,
+        /// The assignment of the pairs of these runs, as `lab pairs --from-runs` wrote it.
+        #[arg(long, value_name = "FILE", requires = "picks")]
+        assignment: Option<PathBuf>,
+        /// The picks made on those pairs.
+        #[arg(long, value_name = "FILE", requires = "assignment")]
+        picks: Option<PathBuf>,
+        /// Where the receipt is written.
+        #[arg(long, value_name = "FILE")]
+        receipt: PathBuf,
+        #[command(flatten)]
+        at: Where,
+    },
 }
 
 #[derive(Subcommand)]
@@ -307,17 +337,21 @@ pub enum LoopCommand {
     /// loop was given and the filled picture side by side, in an order drawn from a seed
     /// drawn for this sheet, with no verdict, coverage, attempt or judge on the page, and
     /// marks to set. Never inside a git work tree, nor in a folder that is not empty.
-    /// Prints counts.
+    /// Prints counts. With --cases, the sheet of any recipe's runs (plan mE, task M2): each
+    /// case's finished picture beside the picture its run was given, both from the store.
     Sheet {
         /// The loop's manifest, as labs/e-loop/segment-01.toml.
-        #[arg(long, value_name = "FILE")]
-        manifest: PathBuf,
+        #[arg(long, value_name = "FILE", required_unless_present = "cases")]
+        manifest: Option<PathBuf>,
         /// A folder of the pictures, laid out as their repository is.
-        #[arg(long, value_name = "DIR")]
-        set: PathBuf,
+        #[arg(long, value_name = "DIR", required_unless_present = "cases")]
+        set: Option<PathBuf>,
         /// The judge, by its name in the config's `[backends.judge]` tables.
-        #[arg(long, value_name = "NAME")]
-        judge: String,
+        #[arg(long, value_name = "NAME", required_unless_present = "cases")]
+        judge: Option<String>,
+        /// The cases (`edit-cases/1`): any action's runs, by request id.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["manifest", "set", "judge"])]
+        cases: Option<PathBuf>,
         /// The folder the page is written in: new or empty, never inside a git work tree.
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
@@ -578,6 +612,9 @@ fn run_command(command: &Command) -> Result<String, String> {
             whizbang::edits::write_record(&record, out)?;
             Ok(record.text())
         }
+        Command::Edits {
+            command: EditsCommand::Gate { .. },
+        } => edits_gate(command),
         Command::Loop { command } => eval_loop(command),
         Command::Run {
             gate,
@@ -689,11 +726,25 @@ fn eval_loop(command: &LoopCommand) -> Result<String, String> {
             Ok(score.text())
         }
         LoopCommand::Sheet {
-            manifest,
-            set,
-            judge,
+            cases: Some(cases),
             out,
             at,
+            ..
+        } => {
+            let asked = whizbang::loop_sheet::AskedCases {
+                cases,
+                root: at.root(),
+                out,
+            };
+            whizbang::loop_sheet::sheet_of_cases(&asked).map(|written| written.text())
+        }
+        LoopCommand::Sheet {
+            manifest: Some(manifest),
+            set: Some(set),
+            judge: Some(judge),
+            out,
+            at,
+            ..
         } => {
             let asked = whizbang::loop_sheet::Asked {
                 manifest,
@@ -704,7 +755,38 @@ fn eval_loop(command: &LoopCommand) -> Result<String, String> {
             };
             whizbang::loop_sheet::sheet(&asked).map(|written| written.text())
         }
+        LoopCommand::Sheet { .. } => {
+            Err("eval loop sheet takes --manifest, --set and --judge, or --cases".to_owned())
+        }
     }
+}
+
+/// `eval edits gate` (plan mE, task M2).
+fn edits_gate(command: &Command) -> Result<String, String> {
+    let Command::Edits {
+        command:
+            EditsCommand::Gate {
+                gate,
+                labels,
+                sheet,
+                assignment,
+                picks,
+                receipt,
+                at,
+            },
+    } = command
+    else {
+        return Err("not an edit gate".to_owned());
+    };
+    let gating = whizbang::edits_gate::Gating {
+        gate,
+        root: at.root(),
+        marks: labels.as_deref().zip(sheet.as_deref()),
+        picks: assignment.as_deref().zip(picks.as_deref()),
+        receipt,
+        commit: crate::COMMIT,
+    };
+    whizbang::edits_gate::score(&gating).map(|receipt| receipt.text())
 }
 
 /// `eval baseline`: the gate, in a build made with the replay.

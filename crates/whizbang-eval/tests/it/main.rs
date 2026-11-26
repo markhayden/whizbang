@@ -3,6 +3,7 @@
 
 mod baseline;
 mod bootstrap;
+mod edits_gate;
 mod eval_tool;
 mod gate;
 mod matrix;

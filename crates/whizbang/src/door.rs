@@ -822,7 +822,7 @@ pub struct Measuring<'a> {
     /// Whether a submission that leaves a mandatory item tentative gets one more turn:
     /// `off`, `on` or `strict` (plan m3, task U1, item 4).
     pub second_look: &'a str,
-    /// The form the judge answers in, `v1` or `v2`, when the caller named one (plan e1,
+    /// The form the judge answers in, `v1`, `v2` or `v3`, when the caller named one (plan e1,
     /// task F1): stated to the recipe then; otherwise the value the recipe's judge step
     /// names answers, whatever `check`'s own default is.
     pub submission: Option<&'a str>,

@@ -2355,3 +2355,68 @@ fn two_corpora_differing_only_in_a_pictures_projection_make_two_cells() {
     let held = serde_json::to_string(&cells[0].components).unwrap();
     assert!(!held.contains("projection"), "{held}");
 }
+
+#[test]
+fn pairs_from_recorded_loop_runs_decode_against_their_assignment() {
+    use crate::edits_gate::{picks_for, recorded};
+    let recorded = recorded("pairs-from-runs");
+    // The loop's kept picture against the picture it was given, then against remove_prompt's.
+    for (reference, out) in [
+        (None, "against-source"),
+        (Some(recorded.remove_cases.as_path()), "against-remove"),
+    ] {
+        let assignment = recorded.pairs(&recorded.loop_cases, reference, out);
+        let picks = picks_for(&assignment, true);
+        let decoded = laboratory::decode_files(&recorded.protocol, &assignment, &picks).unwrap();
+        assert!(
+            decoded.contains("group all: pairs 1, decided 1, wins 1, losses 0"),
+            "{decoded}"
+        );
+        let drawn: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&assignment).unwrap()).unwrap();
+        let pair = &drawn["pair"][0];
+        let a = pair[pair["a_side"].as_str().unwrap()]["cell"]
+            .as_str()
+            .unwrap();
+        assert_eq!(a, recorded.loop_run);
+        let b_side = if pair["a_side"] == "left" {
+            "right"
+        } else {
+            "left"
+        };
+        let b = pair[b_side]["cell"].as_str().unwrap();
+        match reference {
+            None => assert!(b.starts_with("source.")),
+            Some(_) => assert_eq!(b, recorded.remove_run),
+        }
+        // A side swapped after the draw is refused before anything is decoded.
+        let swapped = std::fs::read_to_string(&assignment).unwrap().replace(
+            &format!("\"a_side\": \"{}\"", pair["a_side"].as_str().unwrap()),
+            &format!("\"a_side\": \"{b_side}\""),
+        );
+        let tampered = assignment.with_file_name("tampered.json");
+        std::fs::write(&tampered, swapped).unwrap();
+        let refused = laboratory::decode_files(&recorded.protocol, &tampered, &picks).unwrap_err();
+        assert!(refused.contains("seed draws"), "{refused}");
+    }
+    // A case the protocol judges with no run in the store: no page.
+    let missing = recorded.dir.path().join("missing.toml");
+    std::fs::write(
+        &missing,
+        std::fs::read_to_string(&recorded.loop_cases)
+            .unwrap()
+            .replace(crate::edits_gate::LOOP_REQUEST, "m2-never-run"),
+    )
+    .unwrap();
+    let asked = whizbang::pairs_page::FromRuns {
+        cases: &missing,
+        protocol: &recorded.protocol,
+        reference: None,
+        root: &recorded.world.root,
+        out: &recorded.dir.path().join("none"),
+        limit: None,
+        force: false,
+    };
+    let refused = whizbang::pairs_page::pairs_from_runs(&asked).unwrap_err();
+    assert!(refused.contains("no finished run"), "{refused}");
+}

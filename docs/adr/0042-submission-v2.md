@@ -7,6 +7,8 @@ section 16 (row E), section 17 (the submission "ported as is, then redesigned th
 ladder"); plan `docs/plans/e1-judge-format-loop.md`, task F1
 Amended: 2026-11-21, with task F2 of the same plan: the format round did not adopt v2, by
 clause (c) of `submission/1`; v1 stays the default. Added: "The format round".
+Amended: 2026-11-25, with plan `docs/plans/mE-evidence-and-edit-quality.md`, task F1: a third
+value, `v3`. Added: "Amended: submission v3".
 
 ## Context
 
@@ -135,7 +137,78 @@ recipes stay `v1`, and judge round J1 runs under `C;submission=v1`. v2 stays one
 for a later slice, which may narrow it (the bundle's parts were measured together) or gate it
 on fresh data.
 
+## Amended: submission v3 (2026-11-25)
+
+Plan mE, task F1.
+
+**What the round counted.** Under v1, `claude-haiku-5-5` ended 14 of its 220 decisions as
+invalid submissions, and under v2 4; its rejections, each counted by its class, were under
+v1 `evidence` 45, `finding_cites` 32, `missing_item` 10, `bad_field` 3, `location` 3,
+`not_a_list` 2, and under v2 `finding_cites` 77, `location` 14, `not_a_list` 5, `bad_field` 1,
+with `finding_cites` 6 and `location` 6 more named under `also`
+(`docs/results/e-submission.md`, "Rejections, causes and recoveries"). v2's one recovery in
+use, `evidence_dropped` (238), took `evidence` out; what was left was `finding_cites`. The
+committed record counts rejections, not the rule that ended each failure, so the 14 and the 4
+are not broken down by rule there; `whizbang eval judges` now counts each submission failure
+by the class of the rejection that ended it, the last of its run (`failures_by_class`, a
+row `failure` of the format round's table), so that the next round's record does. The
+class `finding_cites` is a finding's `obligation_ids`: none, one not of the list, an
+exemption, or no mandatory one, or one that does not judge the finding's image.
+
+**The decision.**
+
+1. **`submission = "v3"`** on `check`, the five recipes (`--set judge.submission=v3`),
+   `whizbang squint check --submission v3`, a matrix arm (`C;submission=v3`) and the
+   playground's choices, from `check`'s descriptor; the default stays `v1`.
+2. **v1's list of items, each with its checklist id**, written as an enum of the checklist's
+   ids (no keyed object: Flash's 14 faults under v2 came with its larger tool). A finding on
+   an item is written inside its answer, under `findings`, and cites nothing: it bears on
+   the item's instances. An item of one instance names it; a finding inside an item of more
+   than one (a reference's, an evidence item's) may list which of them it bears on, none
+   listed meaning all, from `instances`, an enum of every instance of such an item
+   (`use_case::submit_tool_v3`). The schema has one form of item whatever the checklist, so
+   it grows by an id or an instance at a time, never by a form: at its largest checklist
+   (nine references and 24 evidence items) it stays within 12 KiB with its definitions
+   written in place, as the Google adapter writes them
+   (`submission::v3s_tool_stays_small_at_its_largest_checklist`). A finding keeps its own
+   disposition (`violation`, `allowed_change`, `cant_tell`), confidence, reason,
+   `allowed_by`, location and evidence.
+3. **Observed findings** stay v1's, in the separate `findings`, their disposition
+   `observed` in the schema, citing observe rules.
+4. **Read back to v1's form, and decided by v1's rules** (`use_case::read_back`): each
+   finding inside an item becomes one of v1's whose `obligation_ids` are its instances'
+   obligations, each once, after the item's; then the observed findings. So v3 gives no
+   verdict v1 could not, and every check v1 makes of a finding is made of it: its
+   disposition, its location against the obligations it cites, an exemption that applies.
+   A rejection names a finding inside an item by its item (`chk:ob:SF1@candidate finding
+   0`), and the verdict's reason does too.
+5. **What nesting makes impossible, and what is refused.** A citation that is missing or
+   not of the list cannot be written. A finding inside an item that lists an instance the
+   item does not hold (another item's, among the enum's), or an item's findings that are
+   no list, is refused under a new class, `item_findings`, counted in `rejections/2` (whose
+   contract is unchanged; a reader of an earlier build counts the name as unknown) and on
+   its own row of `runs stats --rejections` (`class item_findings`). An exemption has no item: an answer under an
+   id that names one is refused as unknown, and its findings as v1 refuses a finding that
+   cites an exemption, in v1's words; so is a listed instance that names an exemption. No
+   new rule between an item's answer and its findings is added.
+6. **v2's one repair naming every problem, and its recoveries, are kept,** applied to the
+   findings inside items as to the others; `array_form` is not, since a list is v3's own
+   form, and a keyed object is not read.
+7. **The second look** keeps its contract, as under v2: v1's tool, on the first submission
+   read back.
+8. **v3 is a setting no default uses.** Its dev round (plan mE, task F2) decides whether v3
+   or v2 goes to the gate on fresh data.
+
+**Why it is shaped so.** The counts say small models fail the citation, not the list: v1's
+list form drew no fault, and v2's keyed object did; `finding_cites` was most of what v2 left.
+Nesting moves the citation from the judge to the checklist, and the read-back keeps the
+verdict v1's.
+
 ## Consequences
+
+- **Amended with v3:** `check` is 1.9.0, for the value `v3`, the evidence items a tool file's
+  regions add and the hints given it, so every key of the decision cache made by 1.8.0
+  misses.
 
 - A run's arguments now hold `submission`, so every key of the decision cache made by 1.7.0
   misses, as any version change of `check` makes it do.

@@ -490,6 +490,30 @@ default, is unchanged. The format round of milestone E kept v1 as the default: v
 models' submission failures, but moved each small judge's accuracy or false-reject rate by
 more than 2 points (`docs/results/e-submission.md`; ADR 0042).
 
+**Submission v3** (`--submission v3`, experimental; ADR 0042, "Amended: submission v3").
+The judge is given v1's list of items, each item's `id` an enum of the checklist's ids, and
+writes a finding on an item inside that item's answer, under `findings`: it cites nothing,
+since it bears on the item's own obligations. An item of several instances (a reference's)
+lets a finding list which of them it bears on, from an enum of every such item's instances;
+one of another item's is refused. Observed
+findings stay in the separate `findings`, citing observe rules. v2's recoveries (but
+`array_form`) and its one repair naming every problem are kept. What v3 reads is read back
+to v1's form and decided by v1's rules, so it gives no verdict v1 could not. A finding
+inside an item that lists an instance the item does not hold is refused as
+`item_findings`.
+
+**Evidence items.** Under a use case, a tool file the run names that returns regions
+(`region_kind`) adds each region on an image of the job to the checklist as an item
+`chk:ev:<call>:<n>`, bound to the mandatory instances on that image whose evidence kinds
+hold its kind; the judge is told each in the tool's answer and must give it a disposition
+like any other item. A region that binds to nothing is said not taken, and so is a region
+on an aligned frame or a crop, which is never an item. A run holds at most
+24 evidence items, and a result past that is not presented. v2's and v3's tools are made
+again for the new items; v1's names no item and is unchanged. Under a use case, the rules'
+`[hints]` are given to any tool file the run names as the arguments of text it declares
+under their names, unless the judge's call gave them (a value it gave, even an empty one,
+stands).
+
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (4,096) and `max_pictures` (24), in a table

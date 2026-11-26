@@ -270,8 +270,8 @@ fn with_arms(arms: &str) -> String {
 
 #[test]
 fn an_arm_with_submission_v1_or_v2_parses_and_names_it_in_its_identity() {
-    // Plan e1, task F1, item 1.
-    for value in ["v1", "v2"] {
+    // Plan e1, task F1, item 1; v3, plan mE, task F1, item 3.
+    for value in ["v1", "v2", "v3"] {
         let arm: matrix::Arm = format!("C;submission={value}").parse().unwrap();
         assert_eq!(arm.submission.as_deref(), Some(value));
         assert_eq!(arm.to_string(), format!("C;submission={value}"));
@@ -294,7 +294,7 @@ fn an_arm_with_submission_v1_or_v2_parses_and_names_it_in_its_identity() {
     let table = Matrix::parse(&with_arms("[{ arm = \"C\", submission = \"v2\" }]")).unwrap();
     assert_eq!(table.identity(), v2.identity());
     // Any other value, or the setting twice, is refused.
-    assert!("C;submission=v3".parse::<matrix::Arm>().is_err());
+    assert!("C;submission=v4".parse::<matrix::Arm>().is_err());
     assert!("C;submission=".parse::<matrix::Arm>().is_err());
     assert!(
         "C;submission=v1;submission=v2"

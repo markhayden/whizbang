@@ -569,7 +569,7 @@ R5 and R6 need a scorer that `eval run --gate` is not: it gates balanced accurac
    `edits_gate::too_few_runs_is_inconclusive`; `loop_sheet::a_sheet_of_any_recipe`;
    `lab::pairs_from_recorded_loop_runs_decode_against_their_assignment`.
 
-- [ ] Done when: the tests pass. **Reviewer reads hardest:** that a mark file is never read
+- [x] Done when: the tests pass. **Reviewer reads hardest:** that a mark file is never read
   from inside the repo and that no mark or phrase reaches a receipt.
 
 ## B1. The set builder, ported (large, two pull requests)
@@ -844,7 +844,24 @@ Mac is the orchestrator's, and the box is ticked once it has passed there.
    `submission::v1_is_unchanged`.
 5. **ADR 0042 amended**: v3, and why it is shaped by the classes counted.
 
-- [ ] Done when: the tests pass. **Reviewer reads hardest:** that v3 read back to v1's form can
+   As built: the counts of item 1 are the committed record's, by class; it does not say
+   which rule ended each of the 14 and 4 failures, so `eval judges` now counts each failure
+   by the class of the rejection that ended it (`failures_by_class`), for F2's record. An
+   exemption has no checklist item, so "a finding on an exemption's item" is an answer under
+   an id that names one, refused as unknown with its finding refused in v1's words, and a
+   listed instance that names one, refused so too. The one new class is `item_findings`.
+   With it, from the reviews of T1 and T2 (the orchestrator's): `check` calls
+   `checklist::ingest` under a use case, its evidence items told to the judge in the tool's
+   answer and answered like any item, v2's and v3's tools made again for them; the rules'
+   hints reach a tool file as its declared arguments of text; `ingest` refuses a call id
+   taken; a label is quoted; the evidence items' places are kept in the checklist. Arm C
+   sends what it sent (`cli::squint_check_with_nothing_set_is_the_control_arm` holds the
+   digests of its two requests). From the review of #326: `check` is 1.9.0; v3's schema
+   has one form of item whatever the checklist (the instances a finding may list are those
+   of every item of several), held within 12 KiB at its largest checklist; and a tool file
+   may ask `labels` under `check`, frozen beside `segment`.
+
+- [x] Done when: the tests pass. **Reviewer reads hardest:** that v3 read back to v1's form can
   never give a verdict v1 could not, and that every rule of v1 it no longer needs to check is
   held by construction, with a test of each.
 

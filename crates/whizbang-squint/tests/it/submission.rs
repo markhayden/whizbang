@@ -383,9 +383,13 @@ fn every_rejection_has_a_class() {
     }
     // Every class but the two the loop gives (a call beside the submission, a turn
     // without one) is one of what `decided_of` and `cited_calls_held` give.
+    // `item_findings` is v3's alone (plan mE, task F1).
     for class in Class::ALL {
-        let of_the_loop = matches!(class, Class::NotAlone | Class::NoSubmission);
-        assert_eq!(seen.contains(&class), !of_the_loop, "{}", class.name());
+        let elsewhere = matches!(
+            class,
+            Class::NotAlone | Class::NoSubmission | Class::ItemFindings
+        );
+        assert_eq!(seen.contains(&class), !elsewhere, "{}", class.name());
     }
     // Each class is named in snake case, and the names are distinct.
     let names: Vec<&str> = Class::ALL.iter().map(|c| c.name()).collect();
@@ -402,7 +406,8 @@ fn every_rejection_has_a_class() {
             "finding_cites",
             "evidence",
             "not_alone",
-            "no_submission"
+            "no_submission",
+            "item_findings"
         ]
     );
     // A whole submission is no rejection.
@@ -821,4 +826,416 @@ fn v2_a_key_written_twice_is_a_duplicate_item() {
         "{{\"{SF1_KEY}\": {answer}, \"{SF2_KEY}\": {answer}, \"{SF1_KEY}\": {answer}}}"
     ));
     assert_eq!(read_v2(&submitted).unwrap_err().class, Class::DuplicateItem);
+}
+
+// --- submission v3 (plan mE, task F1) ----------------------------------------------------------
+
+/// A job of this use case: source-fidelity's with a source and the requirement `RQ1`, an
+/// exemption that waives `SF1` on a condition; reference-consistency's with one reference.
+fn v3_job(use_case: &str) -> whizbang_squint::job::Job {
+    let mut job = whizbang_squint::job::Job::shorthand(
+        use_case,
+        use_case == "source-fidelity",
+        usize::from(use_case != "source-fidelity"),
+        None,
+    );
+    if use_case == "source-fidelity" {
+        job.requirements = vec![
+            toml::from_str(
+                "id = \"RQ1\"\nkind = \"allowed\"\ntext = \"The sky may change.\"\n\
+                 waives = [\"SF1\"]\ncondition = \"Only the sky changed.\"\n",
+            )
+            .unwrap(),
+        ];
+    }
+    job
+}
+
+/// What v3 makes of a submission of this job, and what v1 makes of its v1 form.
+fn read_v3(
+    job: &whizbang_squint::job::Job,
+    submitted: &Json,
+) -> Result<Submitted, use_case::Rejection> {
+    let resolved = use_case::resolve(job).unwrap();
+    let checklist = Checklist::build(&resolved, job);
+    let given = use_case::Given {
+        arguments: submitted,
+        repeated: &[],
+    };
+    use_case::decided_of_v3(
+        &given,
+        job,
+        &resolved,
+        &checklist,
+        &["call:0".to_owned()],
+        &[],
+    )
+}
+
+fn read_v1(job: &whizbang_squint::job::Job, submitted: &Json) -> use_case::Decided {
+    let resolved = use_case::resolve(job).unwrap();
+    let checklist = Checklist::build(&resolved, job);
+    use_case::decided_of(submitted, job, &resolved, &checklist).unwrap()
+}
+
+/// A finding of v3 inside an item: a violation where `frame` says, its other fields set.
+fn inside(disposition: &str, frame: &str, instances: Option<Json>) -> Json {
+    let mut finding = json!({"disposition": disposition, "confidence": "confident",
+        "reason": "Seen.", "allowed_by": null, "evidence": [],
+        "location": {"kind": "bbox", "frame": frame, "bbox": [0.1, 0.1, 0.3, 0.3],
+                     "polygon": null, "yaw": null, "pitch": null, "fov": null}});
+    if let Some(instances) = instances {
+        finding["instances"] = instances;
+    }
+    finding
+}
+
+/// An item's answer of v3: its disposition, a location for a violation, its findings.
+fn item_v3(id: &str, disposition: &str, findings: Json) -> Json {
+    let mut item = answer(id);
+    item["disposition"] = json!(disposition);
+    if disposition == "violation" {
+        item["location"] = json!({"kind": "whole_image", "frame": "raw:candidate"});
+    }
+    item["findings"] = findings;
+    item
+}
+
+/// The finding of v1 a finding inside an item stands for: the same, citing these.
+fn cites(finding: &Json, obligations: &[&str]) -> Json {
+    let mut finding = finding.clone();
+    let fields = finding.as_object_mut().unwrap();
+    fields.remove("instances");
+    fields.insert("obligation_ids".to_owned(), json!(obligations));
+    finding
+}
+
+/// Each answer as v1 keeps it, without its item's findings: what v3's read-back and v1's
+/// reading are held equal by.
+fn kept(decided: &use_case::Decided) -> Vec<Json> {
+    decided.answers.clone()
+}
+
+#[test]
+fn v3_reads_back_to_the_v1_submission_it_stands_for() {
+    // A mandatory item's finding cites its one instance; an observed finding is v1's.
+    let job = v3_job("source-fidelity");
+    let on_sf1 = inside("violation", "raw:candidate", None);
+    let observed = json!({"obligation_ids": ["SF4"], "disposition": "observed",
+        "confidence": "confident", "reason": "Noted.", "allowed_by": null, "evidence": [],
+        "location": {"kind": "whole_image", "frame": "raw:candidate"}});
+    let v3 = json!({"items": [
+            item_v3("chk:ob:SF1@candidate", "violation", json!([on_sf1.clone()])),
+            item_v3("chk:ob:SF2@candidate", "held", json!([]))],
+        "findings": [observed.clone()]});
+    let mut v1 = v3.clone();
+    for item in v1["items"].as_array_mut().unwrap() {
+        item.as_object_mut().unwrap().remove("findings");
+    }
+    v1["findings"] = json!([cites(&on_sf1, &["SF1"]), observed]);
+    let read = read_v3(&job, &v3).unwrap();
+    assert_eq!(read.arguments["items"], v1["items"]);
+    assert_eq!(read.arguments["findings"], v1["findings"]);
+    let v1_read = read_v1(&job, &v1);
+    assert_eq!(read.decided.verdict.decision(), Decision::Fail);
+    assert_eq!(read.decided.verdict.decision(), v1_read.verdict.decision());
+    assert_eq!(kept(&read.decided), kept(&v1_read));
+    // The finding is named by its item in the reason, never by a place in a list.
+    assert!(
+        (read.decided.items.iter()).any(|i| i.starts_with("chk:ob:SF1@candidate finding 0 (SF1)")),
+        "{:?}",
+        read.decided.items
+    );
+    // An allowed change inside an item names its exemption, held to it as v1 holds one.
+    let mut allowed = inside("allowed_change", "raw:candidate", None);
+    allowed["allowed_by"] = json!("RQ1");
+    let v3 = json!({"items": [
+            item_v3("chk:ob:SF1@candidate", "held", json!([allowed.clone()])),
+            item_v3("chk:ob:SF2@candidate", "held", json!([]))], "findings": []});
+    let read = read_v3(&job, &v3).unwrap();
+    assert_eq!(read.decided.verdict.decision(), Decision::Pass);
+    assert_eq!(
+        read.arguments["findings"],
+        json!([cites(&allowed, &["SF1"])])
+    );
+    // A reference's item of several instances: a finding that lists some cites theirs; one
+    // that lists none, all of them, in the item's order.
+    let job = v3_job("reference-consistency");
+    let resolved = use_case::resolve(&job).unwrap();
+    let reference = Checklist::build(&resolved, &job);
+    let item = reference.get("chk:ref:reference-1").unwrap();
+    assert!(item.instances.len() > 1, "{:?}", item.instances);
+    let some = inside("cant_tell", "raw:candidate", Some(json!(["RC2@candidate"])));
+    let all = inside("violation", "raw:candidate", Some(json!([])));
+    let mut items: Vec<Json> = reference
+        .ids()
+        .map(|id| item_v3(id, "held", json!([])))
+        .collect();
+    let at = items.len() - 1;
+    items[at] = item_v3(
+        "chk:ref:reference-1",
+        "cant_tell",
+        json!([some.clone(), all.clone()]),
+    );
+    let v3 = json!({"items": items, "findings": []});
+    let read = read_v3(&job, &v3).unwrap();
+    let obligations: Vec<&str> = (item.instances.iter())
+        .map(|i| i.split('@').next().unwrap())
+        .collect();
+    let mut v1 = v3.clone();
+    for item in v1["items"].as_array_mut().unwrap() {
+        item.as_object_mut().unwrap().remove("findings");
+    }
+    v1["findings"] = json!([cites(&some, &["RC2"]), cites(&all, &obligations)]);
+    assert_eq!(read.arguments["findings"], v1["findings"]);
+    let v1_read = read_v1(&job, &v1);
+    assert_eq!(read.decided.verdict.decision(), Decision::Fail);
+    assert_eq!(kept(&read.decided), kept(&v1_read));
+    // v2's recoveries are kept: an enum word inside an item is read, and recorded.
+    let mut worded = v3.clone();
+    worded["items"][at]["findings"][0]["disposition"] = json!("Cant Tell");
+    let read = read_v3(&job, &worded).unwrap();
+    assert!(
+        (read.recoveries.iter()).any(|r| r.name() == "enum_word"),
+        "{:?}",
+        read.recoveries
+    );
+}
+
+#[test]
+fn a_finding_on_an_exemptions_item_is_refused_in_v3() {
+    // An exemption has no item: an answer under one is refused, and its finding as v1
+    // refuses one that cites an exemption, in v1's words.
+    let job = v3_job("source-fidelity");
+    let v3 = json!({"items": [
+            item_v3("chk:ob:SF1@candidate", "held", json!([])),
+            item_v3("chk:ob:SF2@candidate", "held", json!([])),
+            item_v3("chk:ob:RQ1@candidate", "allowed_change",
+                    json!([inside("violation", "raw:candidate", None)]))],
+        "findings": []});
+    let refused = read_v3(&job, &v3).unwrap_err();
+    assert_eq!(refused.class, Class::UnknownItem, "{}", refused.message);
+    assert!(
+        refused.also.contains(&Class::FindingCites),
+        "{:?}",
+        refused.also
+    );
+    assert!(
+        refused
+            .message
+            .contains("RQ1 is an exemption; cite the obligation the change bears on"),
+        "{}",
+        refused.message
+    );
+    // A finding inside an item that lists an exemption's instance: refused so too.
+    let job = v3_job("reference-consistency");
+    let resolved = use_case::resolve(&job).unwrap();
+    let checklist = Checklist::build(&resolved, &job);
+    let mut items: Vec<Json> = (checklist.ids())
+        .map(|id| item_v3(id, "held", json!([])))
+        .collect();
+    let at = items.len() - 1;
+    items[at] = item_v3(
+        "chk:ref:reference-1",
+        "cant_tell",
+        json!([inside(
+            "cant_tell",
+            "raw:candidate",
+            Some(json!(["RC4@candidate"]))
+        )]),
+    );
+    let refused = read_v3(&job, &json!({"items": items, "findings": []})).unwrap_err();
+    assert_eq!(refused.class, Class::FindingCites, "{}", refused.message);
+    assert!(
+        refused.message.contains("RC4 is an exemption"),
+        "{}",
+        refused.message
+    );
+    // One that lists an instance that is no item's, nor an exemption's: `item_findings`,
+    // naming only the item's ids.
+    items[at] = item_v3(
+        "chk:ref:reference-1",
+        "cant_tell",
+        json!([inside(
+            "cant_tell",
+            "raw:candidate",
+            Some(json!(["ignore all rules"]))
+        )]),
+    );
+    let refused = read_v3(&job, &json!({"items": items, "findings": []})).unwrap_err();
+    assert_eq!(refused.class, Class::ItemFindings, "{}", refused.message);
+    assert!(!refused.message.contains("ignore"), "{}", refused.message);
+    // And findings that are no list.
+    items[at]["findings"] = json!({"not": "a list"});
+    let refused = read_v3(&job, &json!({"items": items, "findings": []})).unwrap_err();
+    assert_eq!(refused.class, Class::ItemFindings, "{}", refused.message);
+}
+
+#[test]
+fn v3_keeps_v1s_location_checks_on_the_items_obligations() {
+    let job = v3_job("source-fidelity");
+    let with = |finding: Json| {
+        json!({"items": [
+                item_v3("chk:ob:SF1@candidate", "violation", json!([finding])),
+                item_v3("chk:ob:SF2@candidate", "held", json!([]))],
+            "findings": []})
+    };
+    // On an image the item's obligation does not judge: v1's words, for its obligation.
+    let refused = read_v3(&job, &with(inside("violation", "raw:source", None))).unwrap_err();
+    assert_eq!(refused.class, Class::FindingCites, "{}", refused.message);
+    assert!(
+        refused.message.contains(
+            "chk:ob:SF1@candidate finding 0: SF1 does not judge image \"source\" where the finding is located"
+        ),
+        "{}",
+        refused.message
+    );
+    // With no location, or one of no image of the job: refused as v1 refuses them.
+    let mut nowhere = inside("violation", "raw:candidate", None);
+    nowhere["location"] = Json::Null;
+    let refused = read_v3(&job, &with(nowhere)).unwrap_err();
+    assert_eq!(refused.class, Class::Location, "{}", refused.message);
+    let refused = read_v3(&job, &with(inside("violation", "aligned:candidate", None))).unwrap_err();
+    assert_eq!(refused.class, Class::Location, "{}", refused.message);
+    // A disposition of an item's alone, inside one: v1's words for a finding's.
+    let refused = read_v3(&job, &with(inside("held", "raw:candidate", None))).unwrap_err();
+    assert_eq!(refused.class, Class::BadField, "{}", refused.message);
+}
+
+#[test]
+fn v1_is_unchanged() {
+    // v1's tool, its definition as a request carries it, and its reading, byte for byte as
+    // when v3 was added beside them, which changed neither v1's files nor its path.
+    let sha = |text: String| whizbang_core::identity::Digest::of_bytes(text.as_bytes()).hex();
+    let tool = use_case::submit_tool().unwrap();
+    let told = format!("{}\n{}\n{}", tool.name(), tool.description(), tool.schema());
+    let defined = use_case::submit_definition().unwrap().to_string();
+    let decided = judged(&with_finding(&|_| {})).unwrap();
+    let read = format!(
+        "{:?}\n{:?}\n{}",
+        decided.verdict,
+        decided.items,
+        json!(decided.answers)
+    );
+    assert_eq!(
+        [sha(told), sha(defined), sha(read)],
+        [
+            "8adfa568880e92c8554ce1b19115b99837e560ebfec95219b613fa5b49bed8cd",
+            "d7d6ea9c003f6d403c6fa3417a39fc427f7f5dff4f83fcf3e2ca7bc3ea461ccb",
+            "970962f396898cbd9ff6dbf5e33dc5997047cea8a366d71ae9252eac9ae4fbc3"
+        ]
+    );
+}
+
+#[test]
+fn v3s_tool_is_the_fixture_each_adapter_is_sent() {
+    // The fixtures each adapter's test sends (`whizbang-backends`, plan mE, task F1, item
+    // 4) are v3's tool, as the build writes it, for source-fidelity's shorthand checklist,
+    // whose items are of one instance each, and for reference-consistency's with one
+    // reference, whose item is of several.
+    let fixture = |name: &str| -> Json {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../fixtures/submission/{name}.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let built = |checklist: &Checklist| {
+        let tool = use_case::submit_tool_v3(checklist).unwrap();
+        json!({"name": tool.name(), "description": tool.description(),
+               "input_schema": tool.schema()})
+    };
+    assert_eq!(fixture("v3-source-fidelity"), built(&fidelity_checklist()));
+    let job = v3_job("reference-consistency");
+    let resolved = use_case::resolve(&job).unwrap();
+    let checklist = Checklist::build(&resolved, &job);
+    let tool = built(&checklist);
+    assert_eq!(fixture("v3-reference-consistency"), tool);
+    // One form of item whatever the checklist; the instances a finding may list are those
+    // of the items of several, here the reference's.
+    let finding = &tool["input_schema"]["$defs"]["ItemFinding"];
+    let reference = checklist.get("chk:ref:reference-1").unwrap();
+    assert_eq!(
+        finding["properties"]["instances"]["items"]["enum"],
+        json!(reference.instances)
+    );
+    assert_eq!(
+        tool["input_schema"]["properties"]["items"]["items"],
+        json!({"$ref": "#/$defs/Item"})
+    );
+}
+
+/// `$ref`s written in place, as the Google adapter writes a schema's definitions: what the
+/// size of a tool is to a provider that is sent it so.
+fn inlined(value: &Json, defs: &Json) -> Json {
+    match value {
+        Json::Object(fields) => {
+            if let Some(Json::String(to)) = fields.get("$ref") {
+                let name = to.trim_start_matches("#/$defs/");
+                let mut out = inlined(&defs[name], defs);
+                for (key, field) in fields.iter().filter(|(k, _)| *k != "$ref") {
+                    out[key.as_str()] = inlined(field, defs);
+                }
+                return out;
+            }
+            Json::Object(
+                (fields.iter())
+                    .filter(|(k, _)| *k != "$defs")
+                    .map(|(k, v)| (k.clone(), inlined(v, defs)))
+                    .collect(),
+            )
+        }
+        Json::Array(values) => Json::Array(values.iter().map(|v| inlined(v, defs)).collect()),
+        other => other.clone(),
+    }
+}
+
+#[test]
+fn v3s_tool_stays_small_at_its_largest_checklist() {
+    // The worst case of a run: the most images a check takes (a candidate and nine
+    // references under reference-consistency, each reference an item of several
+    // instances), and the most evidence items a checklist holds, each on the candidate.
+    // Written in place as the Google adapter writes it, v3's tool stays within 12 KiB, and
+    // is at most 3 KiB more than the smallest checklist's: it grows by an id or an
+    // instance, never by a form.
+    let job = whizbang_squint::job::Job::shorthand("reference-consistency", false, 9, None);
+    let resolved = use_case::resolve(&job).unwrap();
+    let mut checklist = Checklist::build(&resolved, &job);
+    let regions: Vec<whizbang_squint::checklist::Located> = (0..24)
+        .map(|n| whizbang_squint::checklist::Located {
+            image: "candidate".to_owned(),
+            bounds: [f64::from(n) * 10.0, 0.0, f64::from(n) * 10.0 + 5.0, 5.0],
+            shown: format!("raw:candidate bbox [{n}]"),
+            label: "changed".to_owned(),
+            score: 0.5,
+        })
+        .collect();
+    for (call, chunk) in regions.chunks(8).enumerate() {
+        whizbang_squint::checklist::ingest(
+            &mut checklist,
+            &format!("call:{call}"),
+            "subject_match",
+            chunk,
+            &resolved,
+            whizbang_squint::checklist::EVIDENCE_ITEMS_LIMIT,
+        )
+        .unwrap();
+    }
+    assert_eq!(checklist.evidence_count(), 24);
+    let schema = use_case::submit_tool_v3(&checklist)
+        .unwrap()
+        .schema()
+        .clone();
+    let written = inlined(&schema, &schema["$defs"]).to_string();
+    assert!(!written.contains("$ref"));
+    let small = use_case::submit_tool_v3(&fidelity_checklist())
+        .unwrap()
+        .schema()
+        .clone();
+    let small = inlined(&small, &small["$defs"]).to_string();
+    assert!(written.len() <= 12 * 1024, "{} bytes", written.len());
+    assert!(
+        written.len() - small.len() <= 3 * 1024,
+        "{} against {}",
+        written.len(),
+        small.len()
+    );
 }
