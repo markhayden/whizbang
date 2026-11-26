@@ -15,6 +15,9 @@ use super::{digest_of, is_name};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Protocol {
+    /// 1, rascal's rules; or 2 (plan mE, task P0, item 3), where arm `a` is the recipe and
+    /// `b` the reference, a `neither` is a loss of the recipe, and `not_worse` is read over
+    /// every pair picked ([`super::decode::outcome`]).
     pub version: u32,
     /// The lab's name; a protocol changed after a run is a new name.
     pub name: String,
@@ -23,7 +26,8 @@ pub struct Protocol {
     /// The two arms compared, by the matrix's names: `[a, b]`; wins are a's. The matrix
     /// runs these two arms and no other.
     pub arms: [String; 2],
-    /// Fewer decided pairs than this in a group is `inconclusive`.
+    /// Fewer decided pairs than this in a group is `inconclusive`; under version 2, fewer
+    /// pairs picked.
     #[serde(default = "ten")]
     pub min_decided: u32,
     #[serde(default)]
@@ -65,7 +69,7 @@ fn ten() -> u32 {
 }
 
 impl Protocol {
-    /// A protocol's bytes, read strictly, with their digest: version 1, a plain name, two
+    /// A protocol's bytes, read strictly, with their digest: version 1 or 2, a plain name, two
     /// distinct arms, `min_decided` of at least 1, fractions between 0 and 1, groups with
     /// unique names, none empty, and a picture in one group at most.
     pub fn parse(bytes: &[u8]) -> Result<(Protocol, String), String> {
@@ -73,8 +77,8 @@ impl Protocol {
         let protocol: Protocol =
             toml::from_str(text).map_err(|e| super::unreadable("the protocol", text, &e))?;
         let refuse = |why: String| Err(format!("the protocol: {why}"));
-        if protocol.version != 1 {
-            return refuse(format!("version {} is not 1", protocol.version));
+        if !matches!(protocol.version, 1 | 2) {
+            return refuse(format!("version {} is not 1 or 2", protocol.version));
         }
         if !is_name(&protocol.name) {
             return refuse("its name is no plain name".to_owned());

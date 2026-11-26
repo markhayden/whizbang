@@ -1747,7 +1747,12 @@ fn the_decode_gives_rascals_outcomes_on_rascals_picks() {
     let (protocol, _) = decode_protocol(1, "");
     for wins in 0..=20_u32 {
         for losses in 0..=(20 - wins) {
-            let outcome = decode::outcome(&protocol, wins + losses, wins, losses);
+            let counts = decode::Counts {
+                wins,
+                losses,
+                ..Default::default()
+            };
+            let outcome = decode::outcome(&protocol, counts);
             assert_ne!(outcome, Outcome::NotWorse, "{wins} wins, {losses} losses");
         }
     }
