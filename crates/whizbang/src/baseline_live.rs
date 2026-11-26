@@ -58,11 +58,14 @@ pub fn matrix(set: &str, model: &str, judge: &str) -> Result<Matrix, String> {
                 backend: judge.to_owned(),
                 model: model.to_owned(),
                 repetitions: None,
+                arms: None,
             }],
             arms: vec!["C".parse()?],
             repetitions: 1,
             concurrency: 2,
+            set: std::collections::BTreeMap::new(),
         },
+        gates: std::collections::BTreeMap::new(),
     };
     built.checked()
 }

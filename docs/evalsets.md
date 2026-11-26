@@ -64,6 +64,83 @@ items are judged under.
   --mode judges|arms [--arm <arm>] [--rule judge-pick/1|submission/1] --out <file>` scores
   the runs matrices made ("Scoring judges", below).
 
+## Building a set
+
+`tools/sets/` is the set builder (plan mE, task B1; ADR 0050), ported from squint's
+`scripts/sets/` at the commit `docs/sources.toml` pins. It is a small Python program with one
+package, Pillow, pinned by hash in its `uv.lock`, run on the Python the pack pins, from its
+folder:
+
+```
+cd tools/sets
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets build \
+  --plan <plan.toml> --out <owner storage>/build/evalsets/<set id> --owner <owner storage> --fake
+# review <owner storage>/<set id>/contact-<family>.png and labels-draft.toml:
+# set each label's status to "confirmed" or "struck", and adjudicated_on to the date
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets promote \
+  --draft <owner storage>/<set id>/labels-draft.toml --set <the set folder> --attest "<attestation>"
+```
+
+A **plan** names the set and its families. Each family has one generator (`fal` for FLUX.2
+[klein] 4B, `openai` for gpt-image-2, `gemini` for Gemini 3.1 Flash Image, or `fake`) and is
+of one of three kinds:
+
+- A **scene** family has one generated source, its protected subjects (one requirement
+  each, under source fidelity), a brief, and items each made from the source by one op:
+  `grade` (a mild colour grade: a pass), `restyle` (the generator makes a permitted change,
+  such as the light or the season: a pass the owner confirms kept the structure), `mirror`,
+  `rotate`, `crop`, and the small camera changes `tilt`, `zoom` and `keystone`, each refilled
+  to the frame at the source's size (the structural rule, a fail over the whole picture), and
+  `edit` (the generator removes, adds or changes something named by `removes`, `adds` or
+  `alters`: the identity rule, a fail whose region is the densest patch of pixel difference;
+  any other dense patch is noted for the reviewer). Any op may carry delivery damage, `jpeg`
+  and `resample`, which changes no label. An item may name its own generator. Under reality
+  checks the job is the candidate alone: `as_is`, `restyle`, `edit` with a `defect`
+  (`anatomy`, `shadow`, `text` or `merge`, labelled RE1 to RE4) and `generate` with one.
+- A **subject** family has one to four generated references and three forms of item: a
+  `scene` composed from the references (a pass), an item made `from` an earlier one by an
+  `edit` that changes a marking (RC2; under product fidelity PF1, PF2 or PF3 by its `aspect`),
+  and a `scene` with a `lookalike` made without the references (RC3 and RC1; PF1 and PF2).
+- A **brief** family has a brief, what it `asks` for and `forbids` (one requirement each) and
+  the `text` it gives; each item is `generate` with a seed, from the brief or from one that
+  `violates` BC1, BC2 or BC3.
+
+The draft label comes from the construction alone: no judge or tool looks at an item to
+write it. `build` writes the set folder (manifest, families, one job per item with its
+pictures pinned) and, under `--owner`, the construction record, the draft labels and a contact
+sheet per family; `--owner` inside a repository is refused. A set's id is
+`<use case>/<name>`, and every id is lower-case letters, digits and hyphens, so none leads out
+of its folder. `rebuild` makes one item again from the pictures already built, with the plan
+as it now reads, and puts only its label back to draft:
+
+```
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets rebuild \
+  --plan <plan.toml> --out <the set folder> --owner <owner storage> --fake \
+  --item <id> [--seed-offset N]
+```
+
+`promote` publishes the confirmed labels, takes the struck items out, and writes the seal that
+`eval sets check` verifies; a label still a draft is refused.
+
+**Blind sets.** A blind plan lives in owner storage and is refused inside a repository, since
+an item's construction gives its label away; so is its `--draft`. Its item ids are public, so
+each is its family's id and its place, `<family>-<n>`, and any other is refused.
+`promote --labels-out <owner storage>` moves the labels there and leaves `labels_sha256` in
+the manifest; a blind set is refused without it.
+
+**The generators reach only approved recipients.** `--config <file>` names the whizbang config
+whose `[egress.recipients]` decide where a generator may send: a request goes only to an
+origin approved for every class it carries (`prompts`; with a picture to edit or compose
+from, `source_images` too), a downloaded picture only from an approved origin or an upstream
+of the recipient asked, and a redirect only where the same rule allows; a key never follows a
+redirect, and no proxy is used. The keys are read from `FAL_KEY`, `OPENAI_API_KEY` and
+`GEMINI_API_KEY`. Until the spend guard of B1's second pull request is built, only `--fake`
+builds.
+
+`scripts/tests/test-sets.sh` runs the builder's tests and the offline dry run: a set of each
+use case and a blind one from `tools/sets/tests/plans/`, built with the fake generator,
+confirmed, promoted, and read by `whizbang eval sets check`.
+
 ## Labels and corrections
 
 A label found wrong after a set was scored is not edited in place: `labels.toml` stays as
@@ -107,10 +184,73 @@ once. Run again over the same store, a matrix resumes: a cell that completed is 
 one whose last attempt failed is reported as failed and not run again, so no later success
 replaces a failure; one whose last attempt was interrupted is run as its next attempt.
 
+**Only the cells it names** (plan mE, task M1, item 1). A judge may list the arms it runs,
+each by the name the matrix gives it, with its own repetitions where they are not the
+judge's; a set's table may list the arms and the judges (by backend) it runs. A cell outside
+any list is not a cell: it is not forecast, run, resumed or counted complete. Each set, judge
+and arm keeps at least one cell, and a set's table lists arms or judges, or both. A set's
+table names judges by their backend alone, so a backend it names is that of one judge of the
+matrix. The lists and their order are part of the matrix's identity: the same cells listed in
+another order, or a list that names every arm, make another matrix. An arm listed as a table
+without `repetitions` is the arm's name alone. A matrix without lists names every cell, with
+the identity it had before.
+
+```toml
+[matrix.set."source-fidelity/confirm-plain-v1"]
+arms = ["C"]
+judges = ["haiku", "terra"]
+
+[[matrix.judges]]
+backend = "flash"
+model = "gemini-3.8-flash"
+arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]
+```
+
+Arm `C` may take the second look (`C;second_look=on`), which is one more turn after a
+submission that left an item tentative, forecast at three times arm C; details stay arm F's.
+
 `matrices/` holds squint's study matrices, ported, with the models of the Google and OpenAI
 judges named, the matrix of E1's evidence, and the matrix of plan e1's format round
 (`e-submission.toml`: v1 against v2 under arm C, each arm naming its format).
 `whizbang runs stats` and `runs export` report on the runs a matrix made (`--matrix <name>`).
+
+## Several gates on one matrix
+
+A gate file of version 2 names its matrix and the matrix's identity, and `eval run --gate`
+runs that matrix of exactly the gate's two arms, each run holding the gate's digest. A gate
+file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix instead:
+
+- **The binding runs one way.** The gate names its matrix by file alone (`[run] matrix`; a
+  `matrix_identity` is refused). The matrix names each gate frozen on it, beside it, by the
+  SHA-256 of the gate file's bytes, in `[gates]`:
+
+  ```toml
+  [gates]
+  "e-rung3-outline.toml" = "<64 hex digits>"
+  ```
+
+  The table is in the matrix's identity, which every run holds, so a gate named there was
+  frozen before the first cell. Gate files are written first, then the matrix.
+- **What a gate compares.** `[baseline]` names two arms of the matrix (`control`,
+  `treatment`), which may hold more arms; or two versions of a set of one use case under one
+  arm (`arm`, `control_set`, `treatment_set`). A judge is compared when it runs both sides:
+  both arms on a set, or the arm on both sets. Two versions must hold the same items in the
+  same families by id, or nothing is scored; they are paired item by item, and an item whose
+  label differs between them is counted in the receipt (`relabelled`) and scored under
+  neither version's truth.
+- **Hypotheses.** Each gate's `[confidence] hypotheses` is the count over every gate the
+  matrix names, one for each judge a gate compares. Its `[repetitions] count` is the most of
+  any cell it reads.
+- **Running and scoring.** `whizbang eval matrix` runs the cells, and refuses before anything
+  runs when a gate file the matrix names is missing, is not the bytes its digest names, does
+  not name the matrix back, or does not hold (its arms, its count, its repetitions).
+  `whizbang eval run --gate <file> --labels <dir> --receipt <file>` then runs nothing: it
+  scores the gate from the matrix's runs, only the cells of its two sides under the judges it
+  compares, refuses while one of them has not ended, and writes a receipt of version 2, which
+  adds `arm` and `relabelled` for two versions of a set. The receipt's `cells` counts every
+  cell the gate read, those of relabelled items among them. Run it once for each gate.
+  `eval matrix` also refuses, before any cell runs, two versions of a set whose items or
+  families differ by id.
 
 ## Scoring judges
 
