@@ -2529,8 +2529,8 @@ fn of_run_8() -> String {
 
 #[test]
 fn run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_they_did() {
-    use whizbang_core::contract::record::{Attempt, AttemptsEnded, Decision};
-    use whizbang_core::contract::{Context, Failure, Produced, RUN_8};
+    use whizbang_core::contract::RUN_8;
+    use whizbang_core::contract::record::AttemptsEnded;
     // The words are a closed set, the schema's and the type's alike, each written as the
     // type says it.
     let words: Vec<&str> = AttemptsEnded::ALL.iter().map(|word| word.word()).collect();
@@ -2583,53 +2583,9 @@ fn run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_th
     }
     assert!(validate(&schema, &as_json(&vector.replacen(word, "", 1))).is_err());
 
-    // A loop that says the word is written as `run/8`; one that does not, as before.
-    struct Says(ActionDescriptor, Option<AttemptsEnded>);
-    impl Action for Says {
-        fn descriptor(&self) -> &ActionDescriptor {
-            &self.0
-        }
-        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
-            let facts = context.facts();
-            assert!(facts.attempt(Attempt::judged(1, Decision::Pass)));
-            assert!(facts.attempts_ended(Some(1), "attempt 1 passed", self.1));
-            Ok(Produced::nothing())
-        }
-    }
-    let dir = Scratch::new("run-8");
-    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
-    let mut registry = Registry::new();
-    for (name, said) in [("says", Some(AttemptsEnded::Passed)), ("silent", None)] {
-        let draft = ActionDescriptor::draft(name, "1.0.0", Kind::Loop, "A test action.");
-        registry
-            .register(Arc::new(Says(draft.build().unwrap(), said)))
-            .unwrap();
-    }
-    let engine = Engine::over(
-        registry,
-        Arc::new(NoBackends),
-        store.clone(),
-        Digest::of_bytes(b""),
-    );
-    for (name, version, said) in [
-        ("says", RUN_8, Some(AttemptsEnded::Passed)),
-        ("silent", "run/6", None),
-    ] {
-        let finished = engine.submit(&Call::new(name)).unwrap();
-        let generation = store.snapshot().unwrap();
-        let id = finished.run().as_str();
-        let stored = record::stored(&generation, id, |entry| store.read(entry));
-        let stored = stored.unwrap().unwrap();
-        assert_eq!(stored.version(), version, "{name}");
-        assert_eq!(stored.attempts().unwrap().reason, said, "{name}");
-        let document: Json = serde_json::from_slice(&stored.to_bytes()).unwrap();
-        let schema = if said.is_some() {
-            schema_8()
-        } else {
-            schema_6()
-        };
-        validate(&schema, &document).unwrap();
-    }
+    // Writing it: a loop that says the word is `run/8`
+    // (`record::a_loops_record_lists_each_attempt…` of the binary's tests); one that
+    // does not is written as before (`run_6_holds_a_plan_a_start_findings_and_a_loops_attempts`).
 }
 
 // --- run/7: a model's card and the run replayed (plan m7, task B1, item 6; ADR 0048) -----------
