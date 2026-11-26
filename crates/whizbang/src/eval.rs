@@ -166,6 +166,30 @@ pub enum Command {
         #[command(subcommand)]
         command: LoopCommand,
     },
+    /// A clicked removal's mask on the pictures of segment-01 (plan mE, task C1, items 1
+    /// and 2): for each, segment at a point inside its truth mask, chosen the same way
+    /// every time, one instance, its mask as it is, against that mask shaped as remove
+    /// shapes a location's; each covering the truth mask as eval loop score reads it.
+    /// Prints, as counts only, how many pictures each leaves under-covered and what the
+    /// plan's frozen rule says. Each run is in the store under a request id of its own, so
+    /// it is run again as it was typed; the truth masks are never imported.
+    Clicked {
+        /// The loop's manifest, as labs/e-loop/segment-01.toml.
+        #[arg(long, value_name = "FILE")]
+        manifest: PathBuf,
+        /// A folder of the pictures, laid out as their repository is
+        /// (`<folder>/<set id>/<path>`).
+        #[arg(long, value_name = "DIR")]
+        set: PathBuf,
+        /// The segmenter, by its name in the config; the default for segment when not
+        /// given.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        at: Where,
+        #[command(flatten)]
+        under: Under,
+    },
     /// The baseline gate: each recorded decision of a baseline package replayed with a judge
     /// that answers its recorded turns, squint's loop on whizbang's tools and preparation,
     /// and compared with its recorded transcript. Writes the receipt and prints counts only.
@@ -612,6 +636,22 @@ fn run_command(command: &Command) -> Result<String, String> {
             command: EditsCommand::Gate { .. },
         } => edits_gate(command),
         Command::Loop { command } => eval_loop(command),
+        Command::Clicked {
+            manifest,
+            set,
+            backend,
+            at,
+            under,
+        } => {
+            use whizbang::clicked;
+            let (manifest, _) = whizbang::loop_score::Manifest::read(manifest)?;
+            let prepared = clicked::prepare(&manifest, set, at.root(), &recovery)?;
+            let uses = Uses::One(Capability::Segment, backend.as_deref());
+            let executor = executor(at, under, recovery, None, uses)?;
+            let ran = clicked::run(&executor, &prepared, backend.as_deref())?;
+            drop(executor);
+            clicked::score(at.root(), &prepared, &ran).map(|tally| tally.text())
+        }
         Command::Run {
             gate,
             labels,
