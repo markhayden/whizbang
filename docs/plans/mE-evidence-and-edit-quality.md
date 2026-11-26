@@ -1281,8 +1281,8 @@ How each kind is reached, as the code stands (`crates/whizbang/src/main.rs`, `ra
 | A use case of `check` | `whizbang squint check <use-case>` | Its task form: pictures, brief and judge only (`use_case_fields`); no setting of `check` can be given there |
 | `check` itself | No command of its own. `squint check <use-case>` calls it under one of the five use cases; its own default, the use case `general` (`check.rs`), where the job brings no checklist and the second look does not apply, is reached only by a one-step recipe file run by `whizbang rascal run <file>` | Its tool form, from its descriptor: `use_case` (`general` by default), `tools`, `details`, `detail`, `second_look`, `submission`, `projection`, a job and its images |
 | `align`, `view`, `details`, `resize` | No command of their own: a one-step recipe file of the walkthrough's, run by `whizbang rascal run <file>`, spends nothing; inside `squint check` they are the judge's calls or `--details first` | Their tool forms |
-| `change_map`, `edge_similarity` | `whizbang try <name> --source <id> --candidate <id>`; `whizbang eval tool <name> --set <set>` | Their tool forms |
-| A tool file | Listed under `[tools] paths` in the session's config, then: `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config: it is not among the actions, and its mark is among the marks (`wiring.rs`, `describe_text`) | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
+| `change_map`, `edge_similarity` | A record's example: a one-step recipe file with the example's inputs as given, run by `whizbang rascal run <file>`. Then, as cases of their own: `whizbang try <name> --source <id> --candidate <id>`, which registers the candidate by `align` before the tool runs (`trying.rs`); `whizbang eval tool <name> --set <set>` | Their tool forms; for `try`'s case, the frame `align` gave it as the input |
+| A tool file | Listed under `[tools] paths` in the session's config, then: a record's example by a one-step recipe file, as for `change_map`; as cases of their own, `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config: it is not among the actions, and its mark is among the marks (`wiring.rs`, `describe_text`) | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
 | A setting of `check` | `squint check`'s flags: `--details first --detail <tools>`, `--details first --detail tiles`, `--second-look off\|on\|strict`, `--submission v1\|v2`, and `v3` once F1 adds it (F1, item 3) | `check`'s tool form; not the use cases' forms |
 | The set builder | `uv run whizbang-sets build\|rebuild\|promote` in `tools/sets/`; it writes set folders, not runs of a store | None: it is not an action |
 
@@ -1386,13 +1386,26 @@ config:
 1. The palette finds the tool, or the row records that it does not (a setting, the set
    builder); its record opens and reads as the file does. `check` and `details` have no record
    file: the row reads `check`'s use-case records and `tiles.md` instead, and records the gap.
-2. Its form opens; the case's inputs go in from the library; Run. A setting is given in
+2. Its form opens with the case's inputs: from the command line's run of the case, its Run
+   again draft, which keeps that run's inputs and arguments (`play_result.rs`, `again`); a
+   picture from the library. The library lists a mask, a location, a profile or a series only
+   as an output of a run a person started (`Workspace.tsx`, `bindingsOf`), so an input made by
+   the inputs' writer reaches the form only through a run that took it; before O1.1, one case
+   of each of those types is shown to reach a form so. Where the command line's run is a
+   one-step recipe file's (`align`, `view`, `details`, `resize`, `change_map`,
+   `edge_similarity`, a tool file, `check`'s `general`), whose inputs are all pictures, the
+   action's own form takes the same pictures from the library. Run. A setting is given in
    `check`'s form. Where the form cannot take the case (a use case's form takes no setting of
    `check`), the row records that as a finding and runs it through `check`'s form.
 3. The result page: each output, the run's record, the spend meter.
 4. History lists the run. Copy command gives the command line of step 3, or says that none
-   does. Compare, with the command line's run of step 3 as the baseline, shows the two the
-   same or names what differs. Once a row: Run again makes the same call.
+   does. Compare takes two root runs of one action (`play_saved.rs`): with the command line's
+   run of step 3 as the baseline, it shows the two the same or names what differs. Where the
+   two are not of one action (a one-step recipe file's run against the playground's run of
+   `align`, `view`, `details`, `resize` or `check`'s `general`; a use case's run against
+   `check`'s run of a setting), the refusal is recorded, the two records' arguments and
+   outputs are read side by side by `runs show`, and Compare is walked on the playground's run
+   and its Run again. Once a row: Run again makes the same call.
 5. The same refusal as the command line's step 5, shown in the form before Run where the form
    can know it, or as the invalid run's result.
 6. For a recipe or the loop: Bundle this run; the bundle opens in Bundles; its replay
@@ -2262,3 +2275,20 @@ were right and taken.
    prescriptions). Taken: O1's first pull request adds a command that writes every record's
    example inputs as canonical artifacts from the constructors its tests use, the same inputs
    on both sides.
+
+### Review round O1-6
+
+Review round O1-6, on draft 6 of task O1. Verdict: revise. Round O1-5's fixes held but for its
+finding 2, completed here. Three findings, all majors. Each was checked against the code; all
+were right and taken.
+
+1. **Major: the playground's library lists only outputs of a person's runs.** Right
+   (`Workspace.tsx`, `bindingsOf`). Taken: the playground's case starts from the command line's
+   run by its Run again draft (`play_result.rs`, `again`), and each type is shown to reach a
+   form before O1.1.
+2. **Major: Compare takes only two root runs of one action.** Right (`play_saved.rs`). Taken:
+   where the two sides are of different actions, the refusal is recorded and the records are
+   read side by side; Compare is walked on a playground run and its Run again.
+3. **Major: `try` aligns before the tool runs.** Right (`trying.rs`). Taken: a record's example
+   of `change_map`, `edge_similarity` or a tool file runs by a one-step recipe file with its
+   inputs as given; `try` is a case of its own, the frame it aligned given to the playground.
