@@ -53,8 +53,10 @@ items are judged under.
   the pictures matched their pins.
 - `whizbang eval sets fetch --set <id> --store <dir> --config <file>` brings each picture of
   the set that the store does not hold into it, as a picture, from
-  `https://raw.githubusercontent.com/markhayden/wafflery-evalsets/<images_rev>/<set id>/<path>`;
-  a set that names another repository is not fetched. The config
+  `https://raw.githubusercontent.com/markhayden/whizbang-evalsets/<images_rev>/<set id>/<path>`;
+  a set that names another repository is not fetched. The repository was renamed: a set
+  sealed before names it `github.com/markhayden/wafflery-evalsets`, which is read as the
+  current name (`SETS_REPOSITORY_ALIASES`), and a new set names the current one. The config
   must approve that origin as a recipient (`[egress.recipients]`), or nothing is fetched; the
   request carries nothing but its address. What arrives is imported only when its SHA-256 is
   the job's pin. With `--from <dir>`, the pictures are read from a folder laid out as that
@@ -131,15 +133,57 @@ the manifest; a blind set is refused without it.
 **The generators reach only approved recipients.** `--config <file>` names the whizbang config
 whose `[egress.recipients]` decide where a generator may send: a request goes only to an
 origin approved for every class it carries (`prompts`; with a picture to edit or compose
-from, `source_images` too), a downloaded picture only from an approved origin or an upstream
-of the recipient asked, and a redirect only where the same rule allows; a key never follows a
-redirect, and no proxy is used. The keys are read from `FAL_KEY`, `OPENAI_API_KEY` and
-`GEMINI_API_KEY`. Until the spend guard of B1's second pull request is built, only `--fake`
-builds.
+from, `source_images` too), a downloaded picture only from the recipient asked or one of its
+upstreams, and a redirect only where the same rule allows; a key never follows a redirect, and
+no proxy is used. Addresses are read as whizbang reads them (`Origin::of`: plain ASCII,
+`scheme://host[:port]`), and a recipient's `account` is read and named in the ledger. The keys
+are read from `FAL_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY`.
+
+**The spend guard.** A live build or rebuild names a ledger in owner storage, `--ledger`, one
+for all of a milestone's generation, and sets its allowance once, at its first use
+(`--cap-usd 8`); every later build shares it, across interruptions. `tools/sets/prices.toml`
+holds a dated bound price per picture for each generator, read from the provider's page by the
+orchestrator before the first build; a generator with no row is never used live. Each request,
+each retry included, is charged at its bound and written to the ledger, synced, before it is
+sent, and one that would pass the allowance is not sent. The build prints what the ledger
+holds. This spend is outside every store's ledger.
+
+**Full requirements.** A protected subject of a scene family may be a table that states its
+`colour`, `count` and `lettering`: `{ subject = "the red door", colour = "red", count =
+"two", lettering = "OAK & ASH" }`. Each is a clause of the subject's requirement, after
+" keeps ", where `per_subject` reads the subject: "The red door keeps its identity, shape,
+position and extent relative to the source, and its colour (red), its count (two) and its
+lettering (OAK & ASH)." `requirements = "plain"` in `[set]` writes today's wording instead, so
+one plan builds both twins from the same pictures.
+
+**Two jobs on one picture.** A scene item may give its job its own `brief`, and a `cover` op
+(`prompt`, `covers`, `permitted`) lays a seasonal cover over a protected subject: a pass when
+`permitted`, else a fail of that subject's identity. An item with `same_as` an earlier cover
+item judges that item's picture again, under its own brief. `tools/sets/plans/
+seasonal-cover-v1.plan.toml` is the pair D1 builds.
+
+**What is printed of a blind set.** Counts and the set's id; never an item's id, a path, a
+prompt, a label, a plan's text or a provider's answer. A failure is printed by its kind, a
+provider's by its status, and its text is kept in `messages.log` in owner storage. A
+provider's answer is never printed for any set.
+
+**A blind plan is drawn.** The owner writes a pool in owner storage (the set, and each scene
+family with its source, protected subjects, `edits` and `restyles`); `draw --pool <pool>
+--seed N --out <plan>` chooses each item's construction, structural op, strength, generator
+and order from the seed, writes the plan beside the pool and prints counts alone. Each family
+gets a pass, an identity edit and a structural op at least; the ids are `<family>-<n>`.
+
+**Publishing.** `WHIZBANG_OWNER_DIR=<owner storage> WHIZBANG_EVALSETS_DIR=<clone>
+scripts/sets-publish.sh <set id> "<attestation>"` promotes the set built at `<owner
+storage>/build/evalsets/<set id>`, commits its pictures in the clone of the pictures'
+repository (whose `origin` must be the current name), pins that commit (`pin`), places the
+set without its pictures under `evalsets/` and checks it. It never writes over a published
+set. Pushing the clone, the row of `evalsets/README.md` and the commit here follow.
 
 `scripts/tests/test-sets.sh` runs the builder's tests and the offline dry run: a set of each
-use case and a blind one from `tools/sets/tests/plans/`, built with the fake generator,
-confirmed, promoted, and read by `whizbang eval sets check`.
+use case, a blind one and the seasonal cover pair, built with the fake generator, confirmed,
+promoted, and read by `whizbang eval sets check`; then the refusals, and a publish into a
+throwaway clone.
 
 ## Labels and corrections
 

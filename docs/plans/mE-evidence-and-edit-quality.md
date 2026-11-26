@@ -640,7 +640,7 @@ names the source path and commit.
    pictures: one whose brief permits a seasonal cover (a pass), one that does not (a fail).
    Built by D1 from fresh images, as a fixture of `check`'s use-case tests.
 
-- [ ] Done when: both pull requests are merged, the dry run passes in `just check`, and the
+- [x] Done when: both pull requests are merged, the dry run passes in `just check`, and the
   alias test and the blind-output tests pass. **Reviewer reads hardest:** that no plan, label or contact sheet of a
   blind set can be written inside the repo (`--owner` inside the work tree is refused).
 
