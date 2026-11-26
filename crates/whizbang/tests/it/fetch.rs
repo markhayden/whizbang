@@ -119,7 +119,8 @@ pub fn fetched_of(tiny: &Tiny, root: &Path, id: &str) {
 }
 
 fn address(path: &str) -> Address {
-    let text = format!("{RAW_ORIGIN}/markhayden/wafflery-evalsets/{REVISION}/{SET}/{path}");
+    // The set names the repository's old name; its pictures are asked for under the current.
+    let text = format!("{RAW_ORIGIN}/markhayden/whizbang-evalsets/{REVISION}/{SET}/{path}");
     Address::of(&text, &Secrets::none()).unwrap()
 }
 
@@ -345,7 +346,7 @@ fn from_a_folder_refuses_a_picture_that_is_a_link_and_a_set_of_another_repositor
     let (said, fake, _) = fetch_with(&world, &tiny, &raw(), |_, b| b.to_vec());
     assert!(
         said.unwrap_err()
-            .contains("images_repo is not github.com/markhayden/wafflery-evalsets")
+            .contains("images_repo is not github.com/markhayden/whizbang-evalsets")
     );
     assert!(fake.requests().is_empty());
 }

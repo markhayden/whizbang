@@ -81,12 +81,25 @@ pub fn judging() -> Judging<'static> {
     }
 }
 
-/// The repository the sets' pictures are in: a set that names any other is not fetched.
-pub const SETS_REPOSITORY: &str = "github.com/markhayden/wafflery-evalsets";
+/// The repository the sets' pictures are in, by its current name: a set that names any
+/// other is not fetched.
+pub const SETS_REPOSITORY: &str = "github.com/markhayden/whizbang-evalsets";
+
+/// The names the repository had before (plan mE, task B1, item 6): sets sealed before it
+/// was renamed name it so, and a sealed set is never edited. Each is read as
+/// [`SETS_REPOSITORY`], and the pictures are fetched under the current name.
+pub const SETS_REPOSITORY_ALIASES: [&str; 1] = ["github.com/markhayden/wafflery-evalsets"];
+
+/// The repository a set's `images_repo` names, by its current name: [`SETS_REPOSITORY`]
+/// for it or for one of its old names, and nothing for any other.
+pub fn sets_repository(images_repo: &str) -> Option<&'static str> {
+    (images_repo == SETS_REPOSITORY || SETS_REPOSITORY_ALIASES.contains(&images_repo))
+        .then_some(SETS_REPOSITORY)
+}
 
 /// The address of one picture of a set: `<base>/<owner>/<repo>/<revision>/<set id>/<path>`.
-/// The set must name [`SETS_REPOSITORY`] and a revision of 40 hex digits; the path is the
-/// job's, which the set's check holds to plain names.
+/// The set must name [`SETS_REPOSITORY`], or an old name of it, and a revision of 40 hex
+/// digits; the path is the job's, which the set's check holds to plain names.
 pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, String> {
     let meta = &set.manifest.set;
     let plain = |part: &str| {
@@ -98,12 +111,11 @@ pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, Stri
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
     // The one repository the sets' pictures are fetched from, whatever else a set names.
-    let Some(repo) = meta.images_repo.strip_prefix("github.com/") else {
+    let Some(repo) =
+        sets_repository(&meta.images_repo).and_then(|current| current.strip_prefix("github.com/"))
+    else {
         return Err(format!("{}: images_repo is not {SETS_REPOSITORY}", meta.id));
     };
-    if meta.images_repo != SETS_REPOSITORY {
-        return Err(format!("{}: images_repo is not {SETS_REPOSITORY}", meta.id));
-    }
     let rev = meta.images_rev.as_deref().unwrap_or_default();
     if rev.len() != 40 || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!(
