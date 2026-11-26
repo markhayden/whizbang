@@ -69,15 +69,18 @@ of crops that ends in it.
 **Locations.** A location is carried through this kind as its footprint (`carry`):
 
 - from the view onto the panorama, a box, a polygon or the whole view is sampled along its
-  boundary, a box at 60 points an edge and a polygon's edges divided evenly to at most 240
-  points, and each point mapped forward. When the shape holds a pole, the pole the view
+  boundary, a box at 60 points an edge and a polygon's edges divided evenly to at most 256
+  points, of which every fourth, a box's corners and a polygon's vertices among them, is
+  kept for the outline, and each point mapped forward. When the shape holds a pole, the pole the view
   sees mapped back into the shape, the footprint is a band the panorama's full width from
   that pole to the farthest point the boundary reaches, and the whole panorama when it
   holds both. Otherwise each point is taken round the seam to within half the width of
   the one before, and a step still over a quarter of the width is refused, since which
   way round it went is not known. The ring is then clipped to the panorama once for each
   whole turn of the width it reaches into, so a part on either side of the seam, or on
-  both, is kept. A part over 64 vertices is thinned evenly to 64;
+  both, is kept. Where the ring crosses a column, the pieces between the columns are joined
+  along it only to the next piece in the way the ring turns, so each part is a simple
+  polygon. A part over 64 vertices is thinned evenly to 64;
 - from the panorama into the view, a box is sampled as above and a polygon by its
   vertices, each made a direction; the ring of directions is clipped to what lies in
   front of the view (a depth of at least `1e-6`), so an edge that passes behind it ends

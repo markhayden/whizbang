@@ -15,9 +15,8 @@ use crate::identity::{Binding, Direction, Mapping, Perspective, Point, Space, pa
 
 use super::{Result, Shape};
 
-/// The most points a boundary is sampled at: four for each of a polygon's 64 vertices, a
-/// step of a sixtieth of a box's edge. A part made from them is thinned to a polygon's 64
-/// vertices ([`thinned`]), a box's corners among them.
+/// The most points a boundary is sampled at, to tell which way round the panorama each step
+/// goes: a box's edge at 60 points, a polygon's edges evenly at a multiple of [`KEEP`].
 const SAMPLES: usize = 240;
 
 fn refuse<T>(why: impl Into<String>) -> Result<T> {
@@ -63,7 +62,10 @@ fn ring(shape: &Shape, space: &Space, divide: bool) -> Option<Vec<Point>> {
             let (w, h) = (f64::from(space.width()), f64::from(space.height()));
             (corners(0.0, 0.0, w, h), SAMPLES / 4)
         }
-        Shape::Polygon { points } if divide => (points.clone(), (SAMPLES / points.len()).max(1)),
+        Shape::Polygon { points } if divide => (
+            points.clone(),
+            KEEP * (SAMPLES / KEEP / points.len()).max(1),
+        ),
         Shape::Polygon { points } => (points.clone(), 1),
         _ => return None,
     };
@@ -108,6 +110,17 @@ fn holds(shape: &Shape, space: &Space, p: Point) -> bool {
     }
 }
 
+/// One sample in this many of a ring taken round the seam is kept for the outline, a box's
+/// corners and a polygon's vertices among them: the dense samples tell which way round each
+/// step goes, and the outline of a sixtieth of the edge keeps the polygon simple and within
+/// its 64 vertices.
+const KEEP: usize = 4;
+
+/// Every [`KEEP`]th point of a ring, from its first.
+fn coarse(ring: &[Point]) -> Vec<Point> {
+    ring.iter().step_by(KEEP).copied().collect()
+}
+
 /// The most vertices a polygon holds (`Location`'s rule).
 const MAX_VERTICES: usize = 64;
 
@@ -146,6 +159,108 @@ fn unwrapped(ring: &[Point], w: f64) -> Result<Vec<Point>> {
     Ok(out)
 }
 
+/// The pieces of a simple ring that lie between the columns 0 and `w`, each a simple
+/// polygon. Sutherland and Hodgman would join the pieces into one polygon by edges along
+/// the two columns, which is not simple; here the ring is cut where it crosses either
+/// column into chains that lie between them, and the chains are joined along a column only
+/// to the next chain that starts there, in the way the ring turns, as Weiler and Atherton
+/// join them.
+fn strip(ring: &[Point], w: f64) -> Vec<Vec<Point>> {
+    let inside = |p: &Point| p.x >= 0.0 && p.x <= w;
+    if ring.iter().all(inside) {
+        return vec![ring.to_vec()];
+    }
+    // Which column a point outside is beyond, and where an edge crosses it.
+    let beyond = |p: &Point| if p.x < 0.0 { 0.0 } else { w };
+    let cross = |a: Point, b: Point, x: f64| {
+        let t = (x - a.x) / (b.x - a.x);
+        Point::new(x, a.y + t * (b.y - a.y))
+    };
+    // The chains inside, each from where it comes in to where it goes out.
+    let n = ring.len();
+    let Some(start) = (0..n).find(|i| !inside(&ring[*i])) else {
+        return vec![ring.to_vec()];
+    };
+    let mut chains: Vec<Vec<Point>> = Vec::new();
+    let mut current: Option<Vec<Point>> = None;
+    for step in 0..n {
+        let a = ring[(start + step) % n];
+        let b = ring[(start + step + 1) % n];
+        match (inside(&a), inside(&b)) {
+            (false, true) => current = Some(vec![cross(a, b, beyond(&a)), b]),
+            (true, true) => {
+                if let Some(chain) = current.as_mut() {
+                    chain.push(b);
+                }
+            }
+            (true, false) => {
+                if let Some(mut chain) = current.take() {
+                    chain.push(cross(a, b, beyond(&b)));
+                    chains.push(chain);
+                }
+            }
+            (false, false) => {
+                // An edge from beyond one column to beyond the other passes between them.
+                if beyond(&a) != beyond(&b) {
+                    let (p, q) = (cross(a, b, beyond(&a)), cross(a, b, beyond(&b)));
+                    chains.push(vec![p, q]);
+                }
+            }
+        }
+    }
+    // Along the right column the ring's inside lies one way and along the left the other,
+    // by the way the ring turns.
+    let turning: f64 = (0..n)
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum();
+    let along = |x: f64| -> f64 {
+        let on_right = x == w;
+        if (turning > 0.0) == on_right {
+            1.0
+        } else {
+            -1.0
+        }
+    };
+    let mut used = vec![false; chains.len()];
+    let mut pieces = Vec::new();
+    for first in 0..chains.len() {
+        if used[first] {
+            continue;
+        }
+        let mut piece: Vec<Point> = Vec::new();
+        let mut at = first;
+        loop {
+            used[at] = true;
+            piece.extend_from_slice(&chains[at]);
+            let Some(end) = chains[at].last().copied() else {
+                break;
+            };
+            let way = along(end.x);
+            // The nearest chain that starts on this column, ahead of where this one ends.
+            let next = (0..chains.len())
+                .filter(|i| !used[*i] || *i == first)
+                .filter(|i| chains[*i][0].x == end.x)
+                .map(|i| (i, (chains[i][0].y - end.y) * way))
+                .filter(|(_, ahead)| *ahead >= 0.0)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            match next {
+                Some((i, _)) if i != first => at = i,
+                _ => break,
+            }
+        }
+        let same = |a: &Point, b: &Point| (a.x - b.x).abs() < 1e-12 && (a.y - b.y).abs() < 1e-12;
+        piece.dedup_by(|a, b| same(a, b));
+        if piece.len() > 1 && same(&piece[0], &piece[piece.len() - 1]) {
+            piece.pop();
+        }
+        pieces.push(piece);
+    }
+    pieces
+}
+
 /// A closed ring of points on a complete panorama, as the parts of a location: the ring
 /// taken round the seam ([`unwrapped`]) and clipped to the panorama once for each whole
 /// turn it reaches into, so a part on either side of the seam, or on both, is kept; or a
@@ -180,7 +295,7 @@ fn on_panorama(
     }
     let unwrapped = match taken {
         Some(taken) => taken,
-        None => unwrapped(ring, w)?,
+        None => coarse(&unwrapped(ring, w)?),
     };
     let closing = match (unwrapped.first(), unwrapped.last()) {
         (Some(a), Some(b)) => (a.x - b.x).abs(),
@@ -194,12 +309,6 @@ fn on_panorama(
         .iter()
         .map(|p| p.x)
         .fold(f64::NEG_INFINITY, f64::max);
-    let whole = super::carry::Window {
-        lo: 0.0,
-        hi: w,
-        ylo: 0.0,
-        yhi: h,
-    };
     // Every whole turn `k` for which the ring, shifted by `k` widths, meets the panorama.
     let first = (-hi / w).floor() as i64;
     let last = (-lo / w).ceil() as i64;
@@ -213,11 +322,12 @@ fn on_panorama(
             .iter()
             .map(|p| Point::new(p.x + by, p.y))
             .collect();
-        let part = super::carry::clip_to(&shifted, &whole);
-        if part.len() >= 3 {
-            parts.push(Shape::Polygon {
-                points: thinned(part),
-            });
+        for part in strip(&shifted, w) {
+            if part.len() >= 3 {
+                parts.push(Shape::Polygon {
+                    points: thinned(part),
+                });
+            }
         }
     }
     if parts.is_empty() {
@@ -395,7 +505,7 @@ pub(super) fn through_rotation(
             let per_edge = dense.len() / points.len();
             (0..points.len()).map(|i| taken[i * per_edge]).collect()
         }
-        _ => taken,
+        _ => coarse(&taken),
     };
     let landed: Vec<Point> = taken
         .iter()

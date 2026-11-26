@@ -350,7 +350,7 @@ fn a_box_in_a_view_lands_on_its_panorama_as_the_polygon_around_where_it_looks() 
         Binding::root(picture("panorama"), Space::panorama(3600, 1800).unwrap())
     );
     let points = polygon_of(there.parts[0].shape());
-    assert_eq!(points.len(), 64);
+    assert_eq!(points.len(), 60);
     // Yaw 45 is column 2250. A fifth of the view across, at its middle, spans twice
     // atan(tan(30) / 5), 13.17 degrees: 131.7 pixels at ten a degree.
     let (x0, x1, y0, y1) = spread(points);
@@ -462,7 +462,7 @@ fn a_polygon_or_a_box_rotated_over_the_seam_is_cut_there() {
     let a_box = on(&turned, boxed(1.0, 3.0, 4.0, 6.0));
     let moved = carry(&a_box, &turn, Toward::Destination).unwrap();
     assert_eq!(moved.parts.len(), 1);
-    assert_eq!(polygon_of(moved.parts[0].shape()).len(), 64);
+    assert_eq!(polygon_of(moved.parts[0].shape()).len(), 60);
     // The same polygon, not crossing, is carried vertex by vertex as before.
     let inside = on(
         &turned,
@@ -558,8 +558,8 @@ fn a_band_round_the_panorama_rotated_and_tilted_keeps_all_it_covers() {
     // A band nearly the full width of a panorama 400 by 100, columns 10 to 390 and rows 40
     // to 60, under a tilt and eight turns about the vertical. Its footprint can reach past both edges of the
     // panorama once taken round, and every whole turn it reaches into is kept: the parts
-    // cover what the band covers, to within its edges' sampling and thinning to 64
-    // vertices, which moves an edge by a pixel or so. A part left out would be a share of
+    // cover what the band covers, to within its outline of 15 points an edge, which moves
+    // an edge by a pixel or so. A part left out would be a share of
     // the band, far more.
     let (c, s) = (5.0 / 13.0, 12.0 / 13.0);
     let tilt = [1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c];
@@ -614,7 +614,7 @@ fn a_band_round_the_panorama_rotated_and_tilted_keeps_all_it_covers() {
             }
         }
         assert!(
-            f64::from(wrong) < 0.15 * f64::from(truth),
+            f64::from(wrong) < 0.12 * f64::from(truth),
             "turn {step}: {wrong} of {truth} points wrong, {} parts",
             carried.parts.len()
         );
