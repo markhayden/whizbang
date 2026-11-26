@@ -1279,6 +1279,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "jsonschema",
+ "libm",
  "serde",
  "serde_json",
  "toml",

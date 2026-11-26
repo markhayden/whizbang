@@ -477,10 +477,18 @@ pub fn linked() -> &'static [&'static str] {
     &LINKED
 }
 
-/// What a judge is told of a tool this build links.
+/// What a judge is told of a tool this build links, in a run of flat images.
 pub fn definition(name: &str) -> Result<ToolDefinition, String> {
+    definition_for(name, false)
+}
+
+/// What a judge is told of a tool this build links, in a run that shows a panorama
+/// among its images when `panorama` is set: only `view` is told otherwise then.
+pub fn definition_for(name: &str, panorama: bool) -> Result<ToolDefinition, String> {
     match name {
-        view::NAME => view_tool().map_err(|_| "the tool view cannot be described".to_owned()),
+        view::NAME => {
+            view_tool(panorama).map_err(|_| "the tool view cannot be described".to_owned())
+        }
         align::NAME => details::align_tool(),
         resize::NAME => details::resize_tool(),
         compare::CHANGE_MAP | compare::EDGE_SIMILARITY => details::compare_tool(name),
@@ -488,20 +496,47 @@ pub fn definition(name: &str) -> Result<ToolDefinition, String> {
     }
 }
 
-/// The tool `view` as a judge is told of it.
-fn view_tool() -> Result<ToolDefinition, Failure> {
-    let schema = json!({
-        "type": "object",
-        "required": ["image", "bbox"],
-        "properties": {
-            "image": { "type": "string" },
-            "also": { "type": "string" },
-            "bbox": { "type": "array", "items": { "type": "number" } },
-        },
-    });
-    let description = "Shows a region of an image closer. image is the name of an image you \
-        were shown; bbox is left, top, right and bottom as fractions of the image; also is a \
-        second image to show the same region of.";
+/// The tool `view` as a judge is told of it. A run of flat images is told of a box
+/// alone, in the very words it was told before the panorama side (plan mE, task P1), so
+/// its request is unchanged; a run that shows a panorama is told of the three angles of
+/// a perspective view beside the box.
+fn view_tool(panorama: bool) -> Result<ToolDefinition, Failure> {
+    let (schema, description) = if panorama {
+        let schema = json!({
+            "type": "object",
+            "required": ["image"],
+            "properties": {
+                "image": { "type": "string" },
+                "also": { "type": "string" },
+                "bbox": { "type": "array", "items": { "type": "number" } },
+                "yaw": { "type": "number" },
+                "pitch": { "type": "number" },
+                "fov": { "type": "number" },
+            },
+        });
+        let description = "Shows a region of an image closer. image is the name of an image \
+            you were shown; bbox is left, top, right and bottom as fractions of the image, for \
+            a crop; or, for a panorama, yaw, pitch and fov together ask for a square \
+            perspective view instead: yaw in degrees from the middle column, growing to the \
+            right, from -180 to 180; pitch in degrees above the horizon, from -90 to 90; \
+            fov the field of view in degrees, from 10 to 120. also is a second image of the \
+            same projection to show the same region of.";
+        (schema, description)
+    } else {
+        let schema = json!({
+            "type": "object",
+            "required": ["image", "bbox"],
+            "properties": {
+                "image": { "type": "string" },
+                "also": { "type": "string" },
+                "bbox": { "type": "array", "items": { "type": "number" } },
+            },
+        });
+        let description = "Shows a region of an image closer. image is the name of an image \
+            you were shown; bbox is left, top, right and bottom as fractions of the image; \
+            also is a second image to show the same region of.";
+        (schema, description)
+    };
     ToolDefinition::new(view::NAME, description, schema).map_err(|why| failed("tools", &why))
 }
 
@@ -512,13 +547,26 @@ fn view_tool() -> Result<ToolDefinition, Failure> {
 /// 230 of its 998 calls of `view` in the gate run of the details first, each a turn
 /// spent on a refusal. Whether the run may read it is not looked at here: the executor
 /// holds the call to that.
-fn view_call(arguments: &Json, names: &details::Names) -> Result<Call, String> {
+///
+/// In a run of flat images the judge was told of a box alone, and its arguments are read
+/// as they were before the panorama side, refusals and all; in a run that shows a
+/// panorama, the three angles are read too.
+fn view_call(arguments: &Json, names: &details::Names, panorama: bool) -> Result<Call, String> {
     let Some(arguments) = arguments.as_object() else {
         return Err("the arguments are not an object".to_owned());
     };
-    let known = ["image", "also", "bbox"];
+    let known: &[&str] = if panorama {
+        &["image", "also", "bbox", "yaw", "pitch", "fov"]
+    } else {
+        &["image", "also", "bbox"]
+    };
     if arguments.keys().any(|key| !known.contains(&key.as_str())) {
-        return Err("the arguments are image, bbox and also, and no other".to_owned());
+        return Err(if panorama {
+            "the arguments are image, also, and bbox or yaw, pitch and fov, and no other"
+        } else {
+            "the arguments are image, bbox and also, and no other"
+        }
+        .to_owned());
     }
     let named = |key: &str| match arguments.get(key) {
         None => Ok(None),
@@ -531,19 +579,54 @@ fn view_call(arguments: &Json, names: &details::Names) -> Result<Call, String> {
     let Some(image) = named("image")? else {
         return Err("image is required".to_owned());
     };
-    // Four entries, each a number: an entry that is none is not skipped, or five
-    // entries of which four are numbers would be a box.
-    let sides = arguments.get("bbox").and_then(Json::as_array);
-    let sides: Option<Vec<f64>> = sides.and_then(|sides| sides.iter().map(Json::as_f64).collect());
-    let Some(sides) = sides.filter(|sides| sides.len() == 4) else {
-        return Err("bbox is four numbers: left, top, right and bottom".to_owned());
+    // In a flat run no angle got past the names above.
+    let angles: Vec<(&str, &Json)> = view::ANGLES
+        .into_iter()
+        .filter_map(|name| arguments.get(name).map(|value| (name, value)))
+        .collect();
+    let bbox = arguments.get("bbox");
+    let asked: Vec<(&str, f64)> = match (bbox, angles.len()) {
+        (Some(_), 1..) => {
+            return Err("give either bbox or yaw, pitch and fov, not both".to_owned());
+        }
+        (None, 0) if panorama => {
+            return Err(
+                "give bbox for a crop, or yaw, pitch and fov for a perspective view".to_owned(),
+            );
+        }
+        (None, 3) => {
+            let mut asked = Vec::new();
+            for (name, value) in angles {
+                let Some(number) = value.as_f64() else {
+                    return Err(format!("{name} must be a number"));
+                };
+                asked.push((name, number));
+            }
+            asked
+        }
+        (None, 1..) => {
+            return Err(
+                "yaw, pitch and fov go together: send all three for a perspective view".to_owned(),
+            );
+        }
+        (bbox, _) => {
+            // Four entries, each a number: an entry that is none is not skipped, or
+            // five entries of which four are numbers would be a box.
+            let sides = bbox.and_then(Json::as_array);
+            let sides: Option<Vec<f64>> =
+                sides.and_then(|sides| sides.iter().map(Json::as_f64).collect());
+            let Some(sides) = sides.filter(|sides| sides.len() == 4) else {
+                return Err("bbox is four numbers: left, top, right and bottom".to_owned());
+            };
+            view::SIDES.into_iter().zip(sides).collect()
+        }
     };
     let mut call = Call::new(view::NAME).input("image", image);
     if let Some(also) = named("also")? {
         call = call.input("also", also);
     }
-    for (name, side) in view::SIDES.into_iter().zip(sides) {
-        call = call.argument(name, Value::Number(side));
+    for (name, value) in asked {
+        call = call.argument(name, Value::Number(value));
     }
     Ok(call)
 }
@@ -604,6 +687,9 @@ struct Run<'a> {
     names: Names,
     /// How a call of `align` is answered.
     projection: Projection,
+    /// Whether a panorama is among the images the judge is shown: only then is it told of
+    /// a perspective view.
+    panorama: bool,
     /// The tool files the run named, and what runs them.
     files: Vec<FileTool>,
     file_tools: Option<Arc<dyn FileTools>>,
@@ -643,7 +729,7 @@ impl Run<'_> {
         let mut resized: Option<String> = None;
         let mut compared: Option<details::CompareAsked> = None;
         let asked = match (listed, call.name()) {
-            (true, view::NAME) => view_call(call.arguments(), &self.names),
+            (true, view::NAME) => view_call(call.arguments(), &self.names, self.panorama),
             (true, align::NAME) => {
                 details::align_call(call.arguments(), &self.names).map(|asked| {
                     let call = asked.call.clone();
@@ -1134,12 +1220,23 @@ impl Action for Check {
                 "{shown:?} is no evidence tool on offer"
             )));
         }
+        // Whether a panorama is among the images the judge is shown: only then is it
+        // told of `view`'s perspective view, so a run of flat images asks as before.
+        let limits = DecodeLimits::default();
+        let panorama = images.iter().any(|input| {
+            matches!(
+                artifact::get(context.store(), ArtifactType::Image, input.id(), &limits),
+                Ok(Artifact::Image(image))
+                    if image.space().projection() != whizbang_core::identity::Projection::Flat
+            )
+        });
         let mut tools = Vec::new();
         let mut named_files: Vec<FileTool> = Vec::new();
         for name in &named {
             match *name {
                 linked if LINKED.contains(&linked) => {
-                    tools.push(definition(linked).map_err(|why| failed("tools", &why))?);
+                    let told = definition_for(linked, panorama);
+                    tools.push(told.map_err(|why| failed("tools", &why))?);
                 }
                 other => {
                     if let Some(tool) = self.toolbox.file(other) {
@@ -1368,6 +1465,7 @@ impl Action for Check {
                 crops: 0,
                 names: Names::default(),
                 projection,
+                panorama,
                 files: named_files,
                 file_tools: self.toolbox.files.clone(),
                 revisions,

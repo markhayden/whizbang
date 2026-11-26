@@ -44,6 +44,8 @@ baseline-replay = ["dep:jsonschema"]
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
+# The scene the perspective view is held against, evaluated alike on every machine.
+libm = "=0.2.16"
 # This crate itself, with the replay, for its own tests.
 whizbang-squint = { path = ".", features = ["baseline-replay"] }
 

@@ -14,6 +14,7 @@ mod edge_similarity;
 mod findings;
 mod job;
 mod locate;
+mod panorama;
 mod record;
 mod replay;
 mod resize;

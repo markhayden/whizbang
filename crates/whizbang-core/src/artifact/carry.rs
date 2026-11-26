@@ -30,6 +30,8 @@
 //! seam once rotated, and every shape whose width or edges have no one image there (a box
 //! or a column through a rotation, a line or a stroke through either).
 //!
+//! **A perspective view** (ADR 0051) carries nothing yet: it is refused, naming the mapping.
+//!
 //! An absent thing is absent on the other image too.
 
 use crate::identity::{Binding, Destination, Direction, Mapping, Point, Space, Topology};
@@ -90,6 +92,12 @@ pub fn carry(location: &Location, binding: &Binding, toward: Toward) -> Result<C
             on.source(),
             on.source_space()
         ));
+    }
+    // The footprint of a shape in a perspective view is no shape of the same kind on the
+    // panorama, and may cross its seam or hold a pole: plan mE, task P1, carries one
+    // (ADR 0051). Until then it is refused, before anything is mapped.
+    if matches!(binding.mapping(), Mapping::Perspective { .. }) {
+        return refuse("a location is not carried through a perspective view yet");
     }
     // Whether the mapping's parameters run the way the location is carried.
     let forward = matches!(
