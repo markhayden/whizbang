@@ -78,9 +78,9 @@ Beside the rows: `SPEC.md` section 8 asks that the playground show each tool's r
 pictures decoded and its styles applied` (with `play::the_embedded_records_are_the_reference_folder`);
 a third kit appears with no change to the interface, `home.spec.ts: a third kit of fake
 actions shows on home, in the switcher and in search`; the page loads only from its host,
-`shell.spec.ts: the page loads with the token, removes it from the address and shows Home`,
-`shell.spec.ts: a request from the page without the token is refused and the page says to run
-whizbang play again`, `shell.spec.ts: the page loads nothing from any origin but its host`;
+`home.spec.ts: the page loads with the token, removes it from the address and shows Home`,
+`home.spec.ts: a request from the page without the token is refused and the page says to run
+whizbang play again`, `home.spec.ts: the page loads nothing from any origin but its host`;
 the top bar's allowance, `run.spec.ts: the top bar says what is spent of the allowance, and
 says it again once a paid run ends`; a prompt that finds nothing, `run.spec.ts: a prompt that
 matches nothing says so plainly, shows the original, and the run keeps its outcome`; and two

@@ -58,6 +58,7 @@ fn decoded(outcome: &str, picked: u32) -> Option<(u32, Vec<GroupRead>)> {
             losses: 0,
             same: 0,
             neither: 0,
+            losses_with_neither: 0,
             outcome: outcome.to_owned(),
         }],
     ))

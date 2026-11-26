@@ -119,7 +119,8 @@ outside the mask and blinded quality) are not `eval run --gate`, which gates a j
 balanced accuracy.
 
 1. **`edit-gate/1`**, frozen before its round, pins its cases (`edit-cases/1`: each case's
-   family and the request id of its run) and the lab protocol of its pairs by digest, and
+   family and the request id of its run) and the lab protocol of its pairs by digest (of
+   version 2, plan mE task P0; one of version 1 is refused), and
    states its rung, the round's hypotheses, its level and seed, its minimum of families,
    and a bar for each measure: task success (a share of every case, from the checks of the
    finished edits on rung 3, from a person's marks on rung 4 and only there); preservation

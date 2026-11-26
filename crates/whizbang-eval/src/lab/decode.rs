@@ -5,7 +5,18 @@
 //! and `neither` count toward neither side. A group is `inconclusive` below the
 //! protocol's `min_decided` decided pairs, else `preferred` when wins over decided pairs
 //! reach the protocol's fraction (inclusive), else `not_worse` when losses over decided
-//! pairs stay below its fraction, else `worse`.
+//! pairs stay below its fraction, else `worse`. Under those rules `not_worse` cannot be
+//! reached at the default fractions: losses under a third of the decided pairs is wins
+//! over two thirds.
+//!
+//! A protocol of version 2 (plan mE, task P0, item 3), for rounds where arm `a` is the
+//! recipe and `b` the reference, reads the page's words: `neither` is both failing, so it
+//! is a loss of the recipe, and only `same` counts toward neither side. A group is
+//! `inconclusive` below `min_decided` pairs picked, so a `same` never makes it so; else
+//! `preferred` when it has at least one decided pair (a win, a loss or a `neither`) and
+//! wins reach the fraction of the decided pairs; else `not_worse` when losses, with every
+//! `neither`, stay below its fraction of every pair picked; else `worse`. A version 1
+//! protocol decodes as it always did, so a page drawn under one is read by its frozen rules.
 //!
 //! The assignment is L3's to write (`whizbang lab pairs`); the picks are the owner's, and
 //! what is read of them is said only as counts: a refusal names a pair by its id, which is
@@ -126,7 +137,8 @@ impl Outcome {
     }
 }
 
-/// One group's decode.
+/// One group's decode. `decided`, `wins` and `losses` count the pairs picked by side;
+/// under a version 2 protocol the outcome also counts each `neither` as a loss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
     pub group: String,
@@ -136,6 +148,8 @@ pub struct Group {
     pub losses: u32,
     pub same: u32,
     pub neither: u32,
+    /// The losses the outcome counted: `losses`, and under version 2 every `neither` too.
+    pub counted_losses: u32,
     pub outcome: Outcome,
 }
 
@@ -146,6 +160,17 @@ pub struct Decode {
     pub groups: Vec<Group>,
     pub subset: Option<Subset>,
     pub min_decided: u32,
+    /// The protocol's version, whose rules decoded it.
+    pub version: u32,
+}
+
+/// What a group's pairs were picked: wins and losses by side, `same` and `neither`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Counts {
+    pub wins: u32,
+    pub losses: u32,
+    pub same: u32,
+    pub neither: u32,
 }
 
 /// A JSON file of the lab read as its form, in fixed words and the place when the reader
@@ -189,19 +214,39 @@ impl Picks {
     }
 }
 
-/// The outcome of a group's counts under the protocol's rules.
-pub fn outcome(protocol: &Protocol, decided: u32, wins: u32, losses: u32) -> Outcome {
+/// The outcome of a group's counts under the protocol's rules and version (the module's
+/// description says how each version reads them).
+pub fn outcome(protocol: &Protocol, counts: Counts) -> Outcome {
     let [pn, pd] = protocol.rules.preferred;
     let [nn, nd] = protocol.rules.not_worse;
-    let (decided, wins, losses) = (u64::from(decided), u64::from(wins), u64::from(losses));
-    if decided < u64::from(protocol.min_decided) {
-        Outcome::Inconclusive
-    } else if wins * u64::from(pd) >= u64::from(pn) * decided {
-        Outcome::Preferred
-    } else if losses * u64::from(nd) < u64::from(nn) * decided {
-        Outcome::NotWorse
+    let (pn, pd, nn, nd) = (u64::from(pn), u64::from(pd), u64::from(nn), u64::from(nd));
+    let [wins, losses, same, neither] =
+        [counts.wins, counts.losses, counts.same, counts.neither].map(u64::from);
+    let min = u64::from(protocol.min_decided);
+    if protocol.version >= 2 {
+        let losses = losses + neither;
+        let decided = wins + losses;
+        let picked = decided + same;
+        if picked < min {
+            Outcome::Inconclusive
+        } else if decided > 0 && wins * pd >= pn * decided {
+            Outcome::Preferred
+        } else if losses * nd < nn * picked {
+            Outcome::NotWorse
+        } else {
+            Outcome::Worse
+        }
     } else {
-        Outcome::Worse
+        let decided = wins + losses;
+        if decided < min {
+            Outcome::Inconclusive
+        } else if wins * pd >= pn * decided {
+            Outcome::Preferred
+        } else if losses * nd < nn * decided {
+            Outcome::NotWorse
+        } else {
+            Outcome::Worse
+        }
     }
 }
 
@@ -307,7 +352,20 @@ pub fn decode(
             losses,
             same,
             neither,
-            outcome: outcome(protocol, decided, wins, losses),
+            counted_losses: if protocol.version >= 2 {
+                losses + neither
+            } else {
+                losses
+            },
+            outcome: outcome(
+                protocol,
+                Counts {
+                    wins,
+                    losses,
+                    same,
+                    neither,
+                },
+            ),
         });
     }
     Ok(Decode {
@@ -315,6 +373,7 @@ pub fn decode(
         groups,
         subset,
         min_decided: protocol.min_decided,
+        version: protocol.version,
     })
 }
 
@@ -322,17 +381,32 @@ impl Decode {
     /// The decode as `whizbang lab decode` prints it: counts and an outcome a group.
     pub fn text(&self) -> String {
         let mut out = format!("arms: {} against {}\n", self.arms[0], self.arms[1]);
+        let counted = if self.version >= 2 {
+            out.push_str(
+                "protocol version 2: a neither is a loss of the first arm, a same counts \
+                 toward neither side, and not_worse is read over every pair picked\n",
+            );
+            "pairs picked"
+        } else {
+            "decided pairs"
+        };
         if let Some(Subset { limit, of }) = self.subset {
             out.push_str(&format!(
                 "a subset of the round: {limit} of its {of} pairs, drawn by group from the \
-                 protocol's seed; a group with fewer than {} decided pairs is inconclusive, \
+                 protocol's seed; a group with fewer than {} {counted} is inconclusive, \
                  never a win\n",
                 self.min_decided
             ));
         }
         for g in &self.groups {
+            let counted = if self.version >= 2 {
+                format!(", losses with neither {}", g.counted_losses)
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "group {}: pairs {}, decided {}, wins {}, losses {}, same {}, neither {}: {}\n",
+                "group {}: pairs {}, decided {}, wins {}, losses {}, same {}, neither {}{counted}: \
+                 {}\n",
                 g.group,
                 g.pairs,
                 g.decided,

@@ -69,8 +69,8 @@ as the playground runs. The token is never written to a log, a run's record or a
 
 Held by `play::the_token_is_never_on_the_command_line_that_opens_chrome` and
 `play_guard::the_token_is_in_no_log_event_record_or_error` (fast tier);
-`shell.spec.ts: the page loads with the token, removes it from the address and shows Home`
-and `shell.spec.ts: a request from the page without the token is refused and the page says
+`home.spec.ts: the page loads with the token, removes it from the address and shows Home`
+and `home.spec.ts: a request from the page without the token is refused and the page says
 to run whizbang play again` (Chrome tier).
 
 ## Reopening the page
@@ -151,7 +151,7 @@ Held by `play::a_run_past_its_stated_time_is_cancelled_with_its_children` and
   those characters and never as markup, and every control character is shown escaped.
 
 The page loads nothing from anywhere but its own host: its fonts and its art are in the
-binary. Held by `shell.spec.ts: the page loads nothing from any origin but its host`,
+binary. Held by `home.spec.ts: the page loads nothing from any origin but its host`,
 `home.spec.ts: a third kit of fake actions shows on home, in the switcher and in search`
 (Chrome tier) and `play::an_event_message_with_an_escape_sequence_is_answered_escaped`
 (fast tier).
