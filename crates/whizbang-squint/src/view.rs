@@ -1,10 +1,10 @@
-//! `view`: shows a region of an image closer. A crop of a flat image by box, and the same
-//! region of a second image when asked. Each crop is a new image, bound onto the image it
-//! was cut from (ADR 0001), so a location on the crop maps back.
+//! `view`: shows a region of an image closer. A crop of an image by box, or a square
+//! perspective view into a panorama by yaw, pitch and field of view; and the same of a
+//! second image when asked. Each crop is a new image, bound onto the image it was cut from
+//! (ADR 0001; ADR 0051 for the perspective view), so a location on the crop maps back.
 //!
 //! Ported from squint, `crates/squint-tools/src/builtin/view.rs` and `raster.rs`. The
-//! perspective view into a panorama is not here yet (`docs/carry-over.md`). The tool's
-//! record is `docs/reference/tools/view.md`.
+//! tool's record is `docs/reference/tools/view.md`.
 
 use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactType, Image, ImageRole};
 use whizbang_core::artifact::{Origin, Step};
@@ -13,14 +13,17 @@ use whizbang_core::contract::{
     OutputPort, PreparedCall, Produced, ResultKind, Value, ValueType,
 };
 use whizbang_core::identity::{
-    Binding, CanonicalPixels, DecodeLimits, Direction, IdentityError, Mapping, Projection, Topology,
+    Binding, CanonicalPixels, DecodeLimits, Direction, IdentityError, Mapping, Perspective,
+    Projection, Topology,
 };
 
 mod locate;
+mod perspective;
 mod scale;
 
 pub use locate::{Located, Traced, box_through_homography, box_to_root, points_into_homography};
-use scale::Region;
+pub use perspective::{MIN_VIEW, looked, side};
+use scale::Region as Cut;
 
 /// The action's name, as an artifact's origin records it.
 pub const NAME: &str = "view";
@@ -31,16 +34,33 @@ pub const MAX_SIDE: u32 = 1024;
 /// A cut smaller than this on either side is refused as too small to show anything.
 pub const MIN_CROP: u32 = 8;
 
+/// The least field of view a perspective view is asked with, in degrees.
+pub const MIN_FOV: f64 = 10.0;
+/// The greatest field of view a perspective view is asked with, in degrees.
+pub const MAX_FOV: f64 = 120.0;
+
 /// What to show.
 #[derive(Debug, Clone, Copy)]
 pub struct Request<'a> {
     /// The image to look into. It may itself be a crop that `view` returned.
     pub image: &'a Image,
-    /// A second image to show the same region of, for comparison.
+    /// A second image to show the same region of, for comparison. It has the image's
+    /// projection.
     pub also: Option<&'a Image>,
-    /// The region: left, top, right and bottom, as fractions of each image, so the same
-    /// box names the same region of two images of different sizes.
-    pub bbox: [f64; 4],
+    /// The region.
+    pub region: Region,
+}
+
+/// The region a request shows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Region {
+    /// Left, top, right and bottom, as fractions of each image, so the same box names the
+    /// same region of two images of different sizes. Of a flat image or of a panorama.
+    Box([f64; 4]),
+    /// A square perspective view into a complete panorama: yaw from -180 to 180, 180 taken
+    /// as -180, pitch from -90 to 90, and a field of view from [`MIN_FOV`] to [`MAX_FOV`],
+    /// in degrees.
+    Perspective(Perspective),
 }
 
 /// One crop: the image, and how it sits on the image it was cut from.
@@ -102,27 +122,63 @@ fn invalid<T>(why: String) -> Result<T, ViewError> {
     Err(ViewError::Invalid(why))
 }
 
-/// Cuts the request's box out of its image, and out of its second image when it names
+/// The refusal of angles for a flat image. It says what to send instead, because a model
+/// told only that the angles do not apply sends the same call again (squint's
+/// `FLAT_FRAME`).
+const FLAT: &str = "is flat: send bbox [left, top, right, bottom] as fractions of it; yaw, \
+                    pitch and fov are for panoramas";
+
+/// Cuts the request's region out of its image, and out of its second image when it names
 /// one, in that order. Either both crops are returned or none is.
 ///
-/// The box snaps outward to whole pixels, so a crop never shows part of a pixel. A cut
+/// A box snaps outward to whole pixels, so a crop never shows part of a pixel. A cut
 /// whose longer side is over [`MAX_SIDE`] is scaled down to it; a smaller one is returned
-/// pixel for pixel and never enlarged.
+/// pixel for pixel and never enlarged. A perspective view is square, its side worked out
+/// from the panorama's width and the field of view ([`side`]).
 pub fn view(request: &Request<'_>, limits: &DecodeLimits) -> Result<Vec<Crop>, ViewError> {
-    let bbox = request.bbox;
-    let fractions = bbox.iter().all(|v| (0.0..=1.0).contains(v));
-    if !fractions || bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
+    // Yaw 180 is yaw -180, the panorama's seam, which is how the mapping states it.
+    let region = match request.region {
+        Region::Perspective(asked) if asked.yaw == 180.0 => Region::Perspective(Perspective {
+            yaw: -180.0,
+            ..asked
+        }),
+        region => region,
+    };
+    let request = &Request { region, ..*request };
+    let images = [Some(request.image), request.also];
+    if let Some(also) = request.also
+        && also.space().projection() != request.image.space().projection()
+    {
         return invalid(format!(
-            "bbox {bbox:?} must be fractions with left < right and top < bottom"
+            "also is {} and image is {}: the two have one projection",
+            projection(also),
+            projection(request.image)
         ));
     }
-    let images = [Some(request.image), request.also];
-    for (image, name) in images.iter().zip(["image", "also"]) {
-        let Some(image) = image else { continue };
-        if image.space().projection() != Projection::Flat {
-            return invalid(format!(
-                "{name} is a panorama: view shows flat images only, so far"
-            ));
+    match request.region {
+        Region::Box(bbox) => {
+            let fractions = bbox.iter().all(|v| (0.0..=1.0).contains(v));
+            if !fractions || bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
+                return invalid(format!(
+                    "bbox {bbox:?} must be fractions with left < right and top < bottom"
+                ));
+            }
+        }
+        Region::Perspective(asked) => {
+            for (image, name) in images.iter().zip(["image", "also"]) {
+                let Some(image) = image else { continue };
+                let space = image.space();
+                if space.projection() == Projection::Flat {
+                    return invalid(format!("{name} {FLAT}"));
+                }
+                if space.topology() != Topology::Wrap {
+                    return invalid(format!(
+                        "{name} is part of a panorama, and a perspective view looks into a \
+                         whole one: send bbox [left, top, right, bottom] as fractions of it"
+                    ));
+                }
+            }
+            angles(asked)?;
         }
     }
     if let Some(also) = request.also
@@ -133,16 +189,114 @@ pub fn view(request: &Request<'_>, limits: &DecodeLimits) -> Result<Vec<Crop>, V
     images
         .into_iter()
         .flatten()
-        .map(|image| crop(image, &bbox, limits))
+        .map(|image| match request.region {
+            Region::Box(bbox) => crop(image, &bbox, limits),
+            Region::Perspective(asked) => perspective(image, asked, limits),
+        })
         .collect()
 }
 
-/// One image's crop.
+/// What a refusal calls an image's projection.
+fn projection(image: &Image) -> &'static str {
+    match image.space().projection() {
+        Projection::Flat => "flat",
+        Projection::Equirectangular => "a panorama",
+    }
+}
+
+/// Refuses angles out of their bounds, in squint's words.
+fn angles(asked: Perspective) -> Result<(), ViewError> {
+    let Perspective { yaw, pitch, fov } = asked;
+    if !(-180.0..180.0).contains(&yaw) {
+        return invalid(format!("yaw {yaw} outside [-180, 180]"));
+    }
+    if !(-90.0..=90.0).contains(&pitch) {
+        return invalid(format!("pitch {pitch} outside [-90, 90]"));
+    }
+    if !(MIN_FOV..=MAX_FOV).contains(&fov) {
+        return invalid(format!("fov {fov} outside [{MIN_FOV}, {MAX_FOV}]"));
+    }
+    Ok(())
+}
+
+/// One image's perspective view: a picture, bound onto the panorama by ADR 0051's mapping.
+fn perspective(
+    image: &Image,
+    asked: Perspective,
+    limits: &DecodeLimits,
+) -> Result<Crop, ViewError> {
+    let space = image.space();
+    let pixels = image.pixels(limits)?;
+    let shown = looked(&pixels, asked, side(space.width(), asked.fov))?;
+    let origin = Origin::new(
+        Step::new(NAME, VERSION)
+            .argument("yaw", &asked.yaw.to_string())
+            .argument("pitch", &asked.pitch.to_string())
+            .argument("fov", &asked.fov.to_string())
+            .input("image", image.id().0),
+    )?;
+    let mapping = Mapping::Perspective {
+        yaw: asked.yaw,
+        pitch: asked.pitch,
+        fov: asked.fov,
+    };
+    made(
+        image,
+        &shown,
+        Projection::Flat,
+        Topology::Bounded,
+        origin,
+        mapping,
+        limits,
+    )
+}
+
+/// The crop's image, read back and held to its pixels, and its binding onto `image`.
+fn made(
+    image: &Image,
+    shown: &CanonicalPixels,
+    projection: Projection,
+    topology: Topology,
+    origin: Origin,
+    mapping: Mapping,
+    limits: &DecodeLimits,
+) -> Result<Crop, ViewError> {
+    let crop = Image::new(
+        png(shown)?,
+        projection,
+        topology,
+        ImageRole::Picture,
+        origin,
+        limits,
+    )?;
+    // The file is read back through the one decoder every image is read through, and
+    // must hold the pixels that were put in it.
+    if crop.identity().pixels != shown.digest() {
+        return Err(ViewError::Failed(
+            "the crop's file does not read back as its pixels".to_owned(),
+        ));
+    }
+    let binding = Binding::new(
+        crop.identity().pixels,
+        crop.space(),
+        image.identity().pixels,
+        image.space(),
+        Direction::SourceToDestination,
+        mapping,
+    )?;
+    Ok(Crop {
+        image: crop,
+        binding,
+    })
+}
+
+/// One image's crop by box. A cut of the whole image keeps its projection and topology,
+/// so the whole of a panorama is still a panorama; any other cut is flat.
 fn crop(image: &Image, bbox: &[f64; 4], limits: &DecodeLimits) -> Result<Crop, ViewError> {
     let space = image.space();
     let (left, right) = snap(bbox[0], bbox[2], space.width());
     let (top, bottom) = snap(bbox[1], bbox[3], space.height());
-    let region = Region {
+    let region = Cut {
         left,
         top,
         right,
@@ -168,38 +322,19 @@ fn crop(image: &Image, bbox: &[f64; 4], limits: &DecodeLimits) -> Result<Crop, V
             .argument("bottom", &bbox[3].to_string())
             .input("image", image.id().0),
     )?;
-    let crop = Image::new(
-        png(&shown)?,
-        Projection::Flat,
-        Topology::Bounded,
-        ImageRole::Picture,
-        origin,
-        limits,
-    )?;
-    // The file is read back through the one decoder every image is read through, and
-    // must hold the pixels that were put in it.
-    if crop.identity().pixels != shown.digest() {
-        return Err(ViewError::Failed(
-            "the crop's file does not read back as its pixels".to_owned(),
-        ));
-    }
-    let binding = Binding::new(
-        crop.identity().pixels,
-        crop.space(),
-        image.identity().pixels,
-        space,
-        Direction::SourceToDestination,
-        Mapping::Crop {
-            left: f64::from(left),
-            top: f64::from(top),
-            right: f64::from(right),
-            bottom: f64::from(bottom),
-        },
-    )?;
-    Ok(Crop {
-        image: crop,
-        binding,
-    })
+    let whole = (left, top, right, bottom) == (0, 0, space.width(), space.height());
+    let (projection, topology) = if whole {
+        (space.projection(), space.topology())
+    } else {
+        (Projection::Flat, Topology::Bounded)
+    };
+    let mapping = Mapping::Crop {
+        left: f64::from(left),
+        top: f64::from(top),
+        right: f64::from(right),
+        bottom: f64::from(bottom),
+    };
+    made(image, &shown, projection, topology, origin, mapping, limits)
 }
 
 /// The whole pixels a box of fractions covers on a picture of `width` by `height`, snapped
@@ -215,7 +350,7 @@ pub fn snapped(bbox: &[f64; 4], width: u32, height: u32) -> [u32; 4] {
 /// shows it: pixel for pixel, or scaled down to [`MAX_SIDE`] on its longer side when it is
 /// longer. The one method `view` has, for the action and for the replay of the baseline.
 pub fn shown(pixels: &CanonicalPixels, cut: [u32; 4]) -> Result<CanonicalPixels, ViewError> {
-    let region = Region {
+    let region = Cut {
         left: cut[0],
         top: cut[1],
         right: cut[2],
@@ -263,9 +398,10 @@ pub(crate) fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, ViewError> {
 }
 
 /// `view` as an action (ADR 0009): it takes the image at `image`, and a second at
-/// `also` when one is given, and the box as four numbers, and returns the crops at
-/// `crops`, the first image's first. A request the function refuses as the caller's
-/// mistake ends the run as invalid, with the function's sentence.
+/// `also` when one is given, and either the box as four numbers or the three angles of a
+/// perspective view, and returns the crops at `crops`, the first image's first. A request
+/// the function refuses as the caller's mistake ends the run as invalid, with the
+/// function's sentence.
 ///
 /// The binding of a crop onto its source is not returned: a port returns artifacts,
 /// and a binding is none (`docs/carry-over.md`). The crop's origin names the box and
@@ -274,21 +410,26 @@ pub struct View(ActionDescriptor);
 
 /// The version of the action's descriptor. [`VERSION`] is what a crop's origin records,
 /// and is part of every crop's file.
-pub const ACTION_VERSION: &str = "1.0.0";
+pub const ACTION_VERSION: &str = "1.1.0";
 
-/// The names of the four arguments that are the box, in the order of [`Request::bbox`].
+/// The names of the four arguments that are the box, in the order of [`Region::Box`].
 pub const SIDES: [&str; 4] = ["left", "top", "right", "bottom"];
+/// The names of the three arguments of a perspective view: yaw, pitch and fov.
+pub const ANGLES: [&str; 3] = ["yaw", "pitch", "fov"];
 
 impl View {
     pub fn new() -> Result<View, DescriptorError> {
         let side = |name: &str, purpose: &str| {
-            Argument::required(name, purpose, ValueType::number(Some(0.0), Some(1.0)))
+            Argument::optional(name, purpose, ValueType::number(Some(0.0), Some(1.0)))
+        };
+        let angle = |name: &str, purpose: &str, low: f64, high: f64| {
+            Argument::optional(name, purpose, ValueType::number(Some(low), Some(high)))
         };
         let draft = ActionDescriptor::draft(
             NAME,
             ACTION_VERSION,
             Kind::Primitive,
-            "Shows a region of an image closer, and the same region of a second image when one is given.",
+            "Shows a region of an image closer, by box or as a perspective view into a panorama, and the same of a second image when one is given.",
         )
         .input(InputPort::required(
             "image",
@@ -304,6 +445,24 @@ impl View {
         .argument(side("top", "The top edge of the region, as a fraction of the height."))
         .argument(side("right", "The right edge of the region, as a fraction of the width."))
         .argument(side("bottom", "The bottom edge of the region, as a fraction of the height."))
+        .argument(angle(
+            "yaw",
+            "A perspective view's degrees from the panorama's middle column, growing to the right; with pitch and fov, not with a box.",
+            -180.0,
+            180.0,
+        ))
+        .argument(angle(
+            "pitch",
+            "A perspective view's degrees above the horizon.",
+            -90.0,
+            90.0,
+        ))
+        .argument(angle(
+            "fov",
+            "A perspective view's field of view across and down, in degrees.",
+            MIN_FOV,
+            MAX_FOV,
+        ))
         .output(OutputPort::counted(
             "crops",
             ArtifactType::Image,
@@ -340,21 +499,67 @@ impl Action for View {
             return Err(failed(&"the call gives no image"));
         };
         let also = at("also")?;
-        let mut bbox = [0.0; 4];
-        for (side, name) in bbox.iter_mut().zip(SIDES) {
+        let number = |name: &str| {
             let given = call
                 .arguments()
                 .iter()
                 .find(|(argument, _)| argument == name);
-            let Some((_, Value::Number(number))) = given else {
-                return Err(failed(&format!("the call gives no number for {name}")));
-            };
-            *side = *number;
+            match given {
+                Some((_, Value::Number(number))) => Ok(Some(*number)),
+                Some(_) => Err(failed(&format!("the call's {name} is not a number"))),
+                None => Ok(None),
+            }
+        };
+        let sides = SIDES.map(&number);
+        let angles = ANGLES.map(&number);
+        let mut bbox = [0.0; 4];
+        let mut given = (0, 0);
+        for (slot, side) in bbox.iter_mut().zip(sides) {
+            if let Some(side) = side? {
+                *slot = side;
+                given.0 += 1;
+            }
         }
+        let mut turned = [0.0; 3];
+        for (slot, angle) in turned.iter_mut().zip(angles) {
+            if let Some(angle) = angle? {
+                *slot = angle;
+                given.1 += 1;
+            }
+        }
+        let region = match given {
+            (4, 0) => Region::Box(bbox),
+            (0, 3) => Region::Perspective(Perspective {
+                yaw: turned[0],
+                pitch: turned[1],
+                fov: turned[2],
+            }),
+            (0, 0) => {
+                return Err(Failure::invalid(
+                    "give left, top, right and bottom for a crop, or yaw, pitch and fov for a \
+                     perspective view",
+                ));
+            }
+            (_, 0) => {
+                return Err(Failure::invalid(
+                    "left, top, right and bottom go together: give all four for a crop",
+                ));
+            }
+            (0, _) => {
+                return Err(Failure::invalid(
+                    "yaw, pitch and fov go together: give all three for a perspective view",
+                ));
+            }
+            _ => {
+                return Err(Failure::invalid(
+                    "give either a box or yaw, pitch and fov, not both",
+                ));
+            }
+        };
         let request = Request {
             image: &image,
             also: also.as_ref(),
-            bbox,
+            region,
         };
         let crops = view(&request, &limits).map_err(|error| match error {
             ViewError::Invalid(why) => Failure::invalid(&why),

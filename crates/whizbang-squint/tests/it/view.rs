@@ -4,7 +4,7 @@
 
 use whizbang_core::artifact::ImageRole;
 use whizbang_core::identity::{Destination, Direction, Projection, Space, Topology};
-use whizbang_squint::view::{MAX_SIDE, MIN_CROP, Request, ViewError, view};
+use whizbang_squint::view::{MAX_SIDE, MIN_CROP, Region, Request, ViewError, view};
 
 use super::support::*;
 
@@ -130,7 +130,7 @@ fn the_same_region_is_shown_in_a_second_image() {
         &Request {
             image: &first,
             also: Some(&second),
-            bbox: [0.5, 0.5, 1.0, 1.0],
+            region: Region::Box([0.5, 0.5, 1.0, 1.0]),
         },
         &limits(),
     )
@@ -166,7 +166,7 @@ fn a_second_image_of_another_shape_is_cut_to_another_shape() {
         &Request {
             image: &wide,
             also: Some(&tall),
-            bbox: [0.25, 0.25, 0.75, 0.75],
+            region: Region::Box([0.25, 0.25, 0.75, 0.75]),
         },
         &limits(),
     )
@@ -185,7 +185,7 @@ fn a_bad_request_is_the_callers_mistake() {
     let alone = |bbox| Request {
         image: &image,
         also: None,
-        bbox,
+        region: Region::Box(bbox),
     };
     let cases = [
         (alone([0.5, 0.5, 0.4, 0.9]), "left < right"),
@@ -202,7 +202,7 @@ fn a_bad_request_is_the_callers_mistake() {
             Request {
                 image: &image,
                 also: Some(&image),
-                bbox: [0.1, 0.1, 0.5, 0.5],
+                region: Region::Box([0.1, 0.1, 0.5, 0.5]),
             },
             "a different image",
         ),
@@ -211,7 +211,7 @@ fn a_bad_request_is_the_callers_mistake() {
             Request {
                 image: &other,
                 also: Some(&tiny),
-                bbox: [0.0, 0.0, 1.0, 1.0],
+                region: Region::Box([0.0, 0.0, 1.0, 1.0]),
             },
             "covers only 64x4 pixels",
         ),
@@ -221,7 +221,7 @@ fn a_bad_request_is_the_callers_mistake() {
         assert!(
             why.contains(needle),
             "{:?}: {why:?} should mention {needle:?}",
-            request.bbox
+            request.region
         );
     }
     assert_eq!(MIN_CROP, 8);
@@ -254,31 +254,9 @@ fn the_same_picture_in_another_file_is_not_a_second_image() {
     let why = refused(&Request {
         image: &one,
         also: Some(&two),
-        bbox: [0.0, 0.0, 1.0, 1.0],
+        region: Region::Box([0.0, 0.0, 1.0, 1.0]),
     });
     assert!(why.contains("a different image"), "{why}");
-}
-
-#[test]
-fn a_panorama_is_not_viewed_yet() {
-    let rgba = paint(128, 64, noisy(11, false));
-    let flat = image_in(png(128, 64, &rgba), Projection::Flat, Topology::Bounded);
-    let other = paint(128, 64, noisy(12, false));
-    for topology in [Topology::Wrap, Topology::Bounded] {
-        let panorama = image_in(png(128, 64, &other), Projection::Equirectangular, topology);
-        let why = refused(&Request {
-            image: &panorama,
-            also: None,
-            bbox: [0.0, 0.25, 0.25, 0.75],
-        });
-        assert!(why.contains("image is a panorama"), "{why}");
-        let why = refused(&Request {
-            image: &flat,
-            also: Some(&panorama),
-            bbox: [0.0, 0.25, 0.25, 0.75],
-        });
-        assert!(why.contains("also is a panorama"), "{why}");
-    }
 }
 
 #[test]

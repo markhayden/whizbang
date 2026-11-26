@@ -5,7 +5,7 @@ use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 use whizbang_core::artifact::{Image, ImageRole, Origin, Step};
 use whizbang_core::identity::{Binding, DecodeLimits, Mapping, Projection, Topology};
-use whizbang_squint::view::{Crop, Request, view};
+use whizbang_squint::view::{Crop, Region, Request, view};
 
 pub fn limits() -> DecodeLimits {
     DecodeLimits::default()
@@ -88,7 +88,7 @@ pub fn look(image: &Image, bbox: [f64; 4]) -> Crop {
         &Request {
             image,
             also: None,
-            bbox,
+            region: Region::Box(bbox),
         },
         &limits(),
     )

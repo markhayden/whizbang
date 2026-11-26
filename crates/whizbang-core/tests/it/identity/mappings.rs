@@ -453,3 +453,141 @@ fn a_wrapped_cut_needs_a_wrapped_parent_and_a_strip_that_fits() {
         )
         .unwrap();
 }
+
+// --- the perspective view (ADR 0051) ------------------------------------------------------
+
+fn perspective(yaw: f64, pitch: f64, fov: f64) -> Mapping {
+    Mapping::Perspective { yaw, pitch, fov }
+}
+
+#[test]
+fn a_perspective_view_looks_along_its_yaw_and_pitch() {
+    // Squint's `the_view_centre_looks_along_yaw_and_pitch`, in pixels.
+    let view = Space::flat(512, 512).unwrap();
+    let panorama = Space::panorama(3600, 1800).unwrap();
+    let mapping = perspective(30.0, 10.0, 60.0);
+    mapping.check(&view, &panorama).unwrap();
+    let centre = mapping
+        .forward(&view, &panorama, Point::new(256.0, 256.0))
+        .unwrap();
+    // Yaw 30 is 30 degrees right of the middle column, at 10 pixels a degree; pitch 10
+    // is 10 degrees above the horizon.
+    assert!(close(centre, Point::new(2100.0, 800.0), 1e-9), "{centre:?}");
+    // Right of the centre is further right; up is higher.
+    let right = mapping
+        .forward(&view, &panorama, Point::new(460.0, 256.0))
+        .unwrap();
+    let up = mapping
+        .forward(&view, &panorama, Point::new(256.0, 50.0))
+        .unwrap();
+    assert!(right.x > centre.x && up.y < centre.y, "{right:?} {up:?}");
+    // The view's left and right edges are half the field of view either side.
+    let left_edge = mapping
+        .forward(&view, &panorama, Point::new(0.0, 256.0))
+        .unwrap();
+    assert!((left_edge.x - 1800.0).abs() < 30.0, "{left_edge:?}");
+}
+
+#[test]
+fn a_perspective_view_maps_to_its_panorama_and_back() {
+    // Squint's `view_to_raw_and_back_round_trips_within_half_a_pixel_at_2048`, held here
+    // to a millionth of a pixel.
+    let view = Space::flat(1024, 1024).unwrap();
+    let panorama = Space::panorama(2048, 1024).unwrap();
+    for (yaw, pitch, fov) in [(0.0, 0.0, 60.0), (120.0, -35.0, 90.0), (-170.0, 60.0, 30.0)] {
+        let mapping = perspective(yaw, pitch, fov);
+        mapping.check(&view, &panorama).unwrap();
+        for i in 0..=8 {
+            for j in 0..=8 {
+                let point = Point::new(f64::from(i) * 128.0, f64::from(j) * 128.0);
+                let there = mapping.forward(&view, &panorama, point).unwrap();
+                let back = mapping.backward(&view, &panorama, there).unwrap();
+                assert!(
+                    close(back, point, 1e-6),
+                    "{point:?} -> {there:?} -> {back:?}"
+                );
+            }
+        }
+    }
+    // A view at yaw -170 reaches across the seam: its left edge is on the panorama's
+    // right, and comes back to the view's left.
+    let mapping = perspective(-170.0, 0.0, 60.0);
+    let left = mapping
+        .forward(&view, &panorama, Point::new(0.0, 512.0))
+        .unwrap();
+    assert!(left.x > 1900.0, "{left:?}");
+    let back = mapping.backward(&view, &panorama, left).unwrap();
+    assert!(close(back, Point::new(0.0, 512.0), 1e-6), "{back:?}");
+}
+
+#[test]
+fn a_point_behind_or_beside_a_perspective_view_has_no_place_in_it() {
+    let view = Space::flat(256, 256).unwrap();
+    let panorama = Space::panorama(2048, 1024).unwrap();
+    let mapping = perspective(0.0, 0.0, 90.0);
+    // Yaw 0 looks at the middle column; its opposite, column 0, is behind the view.
+    assert!(outside(mapping.backward(
+        &view,
+        &panorama,
+        Point::new(0.0, 512.0)
+    )));
+    // A quarter turn to the right is at the edge of a 90 degree view's depth, past it.
+    assert!(outside(mapping.backward(
+        &view,
+        &panorama,
+        Point::new(1536.0, 512.0)
+    )));
+    // Sixty degrees to the right is in front of the view and outside it.
+    assert!(outside(mapping.backward(
+        &view,
+        &panorama,
+        Point::new(1024.0 + 60.0 * 2048.0 / 360.0, 512.0)
+    )));
+    // And a point outside the view is refused going forward.
+    assert!(outside(mapping.forward(
+        &view,
+        &panorama,
+        Point::new(256.5, 10.0)
+    )));
+}
+
+#[test]
+fn a_perspective_view_is_square_flat_and_in_a_whole_panorama_with_its_angles_in_bounds() {
+    let view = Space::flat(256, 256).unwrap();
+    let panorama = Space::panorama(2048, 1024).unwrap();
+    perspective(0.0, 0.0, 60.0).check(&view, &panorama).unwrap();
+    // The bounds' ends: yaw -180 is in and 180 out; pitch reaches either pole.
+    for (yaw, pitch, fov) in [(-180.0, 0.0, 60.0), (179.9, 90.0, 0.5), (0.0, -90.0, 179.5)] {
+        perspective(yaw, pitch, fov)
+            .check(&view, &panorama)
+            .unwrap();
+    }
+    for (yaw, pitch, fov) in [
+        (180.0, 0.0, 60.0),
+        (-180.5, 0.0, 60.0),
+        (0.0, 90.5, 60.0),
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 180.0),
+        (f64::NAN, 0.0, 60.0),
+        (0.0, 0.0, f64::INFINITY),
+    ] {
+        assert!(
+            refused(perspective(yaw, pitch, fov).check(&view, &panorama)),
+            "{yaw} {pitch} {fov}"
+        );
+    }
+    let good = perspective(0.0, 0.0, 60.0);
+    // The view is square and flat.
+    assert!(refused(
+        good.check(&Space::flat(256, 255).unwrap(), &panorama)
+    ));
+    assert!(refused(
+        good.check(&Space::panorama(256, 256).unwrap(), &panorama)
+    ));
+    // The panorama is whole: equirectangular and wrapped.
+    assert!(refused(
+        good.check(&view, &Space::flat(2048, 1024).unwrap())
+    ));
+    let part = Space::new(2048, 1024, Projection::Equirectangular, Topology::Bounded).unwrap();
+    assert!(refused(good.check(&view, &part)));
+}

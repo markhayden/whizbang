@@ -196,12 +196,17 @@ pub fn opening(image: &crate::job::JobImage, width: u32, height: u32, named: &st
     )
 }
 
-/// One item of the checklist: its id and the instances it depends on, each mandatory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One item of the checklist: its id and the instances it depends on, each mandatory; and,
+/// for an evidence item a tool's region added (`crate::checklist::ingest`), the region's
+/// label, where it is, and the evidence items on the same image it overlaps.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Item {
-    /// `chk:ob:<instance>` or `chk:ref:<image>`.
+    /// `chk:ob:<instance>`, `chk:ref:<image>` or `chk:ev:<call>:<n>`.
     pub id: String,
     pub instances: Vec<String>,
+    pub label: Option<String>,
+    pub location: Option<String>,
+    pub overlaps: Vec<String>,
 }
 
 /// What the judge must answer, item by item: one item for each mandatory instance, then
@@ -219,6 +224,7 @@ impl Checklist {
             .map(|inst| Item {
                 id: format!("chk:ob:{}", inst.id()),
                 instances: vec![inst.id()],
+                ..Item::default()
             })
             .collect();
         for image in job.images.iter().filter(|i| i.role == Role::Reference) {
@@ -232,6 +238,7 @@ impl Checklist {
             items.push(Item {
                 id: format!("chk:ref:{}", image.id),
                 instances,
+                ..Item::default()
             });
         }
         Checklist { items }
@@ -245,7 +252,8 @@ impl Checklist {
         self.items.iter().find(|item| item.id == id)
     }
 
-    /// The checklist as the judge sees it.
+    /// The checklist as the judge sees it: an evidence item with its label and where it
+    /// is, and the items it overlaps (squint's `render`).
     pub fn render(&self, resolved: &Resolved) -> String {
         let mut out = String::from("Checklist. Give every item below exactly one disposition.\n");
         for item in &self.items {
@@ -255,7 +263,19 @@ impl Checklist {
                 .filter(|i| item.instances.contains(&i.id()))
                 .map(|i| i.text.as_str())
                 .collect();
-            out.push_str(&format!("- {}: {}\n", item.id, texts.join(" ")));
+            let mut line = format!("- {}", item.id);
+            if let Some(label) = &item.label {
+                line.push_str(&format!(" [{}]", clean(label)));
+            }
+            if let Some(location) = &item.location {
+                line.push_str(&format!(" at {}", clean(location)));
+            }
+            line.push_str(&format!(": {}", texts.join(" ")));
+            if !item.overlaps.is_empty() {
+                line.push_str(&format!(" (overlaps {})", item.overlaps.join(", ")));
+            }
+            out.push_str(&line);
+            out.push('\n');
         }
         out
     }
