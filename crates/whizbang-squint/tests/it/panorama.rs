@@ -332,7 +332,10 @@ fn a_perspective_view_is_bound_onto_its_panorama_and_says_what_made_it() {
         }
     }
     let step = &crop.image.origin().steps()[0];
-    assert_eq!((step.action.as_str(), step.version.as_str()), ("view", "1"));
+    assert_eq!(
+        (step.action.as_str(), step.version.as_str()),
+        ("view", whizbang_squint::view::VERSION)
+    );
     let arguments: Vec<(&str, &str)> = step
         .arguments
         .iter()
@@ -504,4 +507,71 @@ fn angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake() {
             fov: 60.0
         }
     );
+}
+
+#[test]
+fn a_perspective_view_shows_no_colour_hidden_under_transparency() {
+    // The left half of this panorama is opaque white, the right half black at alpha 0.
+    // A view across the edge between them blends white with nothing: every pixel that
+    // shows anything is white, at the alpha of the blend (plan mE, task P1, item 6).
+    let pano = panorama(1024, 512, |x, _| {
+        if x < 512 {
+            [255, 255, 255, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
+    let crop = seen(&pano, 0.0, 0.0, 30.0);
+    let shown = rgba_of(&crop.image);
+    let pixels = shown.as_chunks::<4>().0;
+    assert!(pixels.iter().any(|p| p[3] > 0 && p[3] < 255), "a blend");
+    assert!(pixels.iter().any(|p| p[3] == 0));
+    for p in pixels {
+        if p[3] > 0 {
+            assert_eq!(p[..3], [255, 255, 255], "{p:?}");
+        }
+    }
+}
+
+#[test]
+fn a_box_on_a_view_or_on_a_crop_of_one_lands_on_the_panorama() {
+    let pano = panorama(1440, 720, |x, y| [(x / 6) as u8, (y / 3) as u8, 0, 255]);
+    // A view of 360 pixels at yaw -90 and pitch 0: column 360, row 360 of the panorama
+    // is its middle. At the middle of a 90 degree view a pixel is 2 tan(45) / 360
+    // radians, 0.318 degrees, so a box 20 pixels square around it is about 6.4 degrees,
+    // 25.5 pixels of a panorama of four a degree.
+    let look = seen(&pano, -90.0, 0.0, 90.0);
+    let middle = whizbang_squint::view::box_onto_panorama(
+        [170.0, 170.0, 190.0, 190.0],
+        std::slice::from_ref(&look.binding),
+    )
+    .unwrap();
+    assert!(!middle.partial);
+    let [whizbang_core::artifact::Shape::Polygon { points }] = &middle.parts[..] else {
+        panic!("{:?}", middle.parts);
+    };
+    assert!(
+        points
+            .iter()
+            .all(|p| (p.x - 360.0).abs() < 13.0 && (p.y - 360.0).abs() < 13.0),
+        "{points:?}"
+    );
+    // The same box on a crop of the right half of the view lands where it would on the
+    // view itself, shifted by the crop.
+    let half = look_into(&look.image, [0.5, 0.0, 1.0, 1.0]);
+    let chain = [half.binding.clone(), look.binding.clone()];
+    let through =
+        whizbang_squint::view::box_onto_panorama([0.0, 170.0, 10.0, 190.0], &chain).unwrap();
+    let direct = whizbang_squint::view::box_onto_panorama(
+        [180.0, 170.0, 190.0, 190.0],
+        std::slice::from_ref(&look.binding),
+    )
+    .unwrap();
+    assert_eq!(through, direct);
+    // `box_to_root` takes crops alone, and names the mapping it will not take.
+    assert!(whizbang_squint::view::box_to_root([0.0, 0.0, 10.0, 10.0], &chain).is_err());
+}
+
+fn look_into(image: &Image, bbox: [f64; 4]) -> Crop {
+    look(image, bbox)
 }
