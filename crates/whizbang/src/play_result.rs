@@ -718,7 +718,9 @@ fn attempts_json(store: &Store, record: &RunRecord) -> Json {
             })
         })
         .collect();
-    json!({"list": list, "kept": attempted.kept, "ended": escaped(&attempted.ended)})
+    // Why they ended as a word of a closed set, where the record holds one (`run/8`).
+    let reason = attempted.reason.map(|reason| reason.word());
+    json!({"list": list, "kept": attempted.kept, "ended": escaped(&attempted.ended), "reason": reason})
 }
 
 /// What `GET /api/runs/{id}/record` answers: the run's record as the result screen reads
