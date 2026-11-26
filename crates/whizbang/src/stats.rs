@@ -559,7 +559,9 @@ pub struct Loops {
     pub kept_checked: usize,
     pub kept_unchecked: usize,
     pub kept_none: usize,
-    /// The runs by why their attempts ended, the attempt's number as `N`, most first.
+    /// The runs by why their attempts ended, most first: by the record's word of a closed
+    /// set (`run/8`), or, in an older record, by the word its sentence reads as, or by
+    /// the sentence itself, the attempt's number as `N`, where it reads as none.
     pub ended: Vec<(String, usize)>,
 }
 
@@ -813,9 +815,13 @@ pub fn stats(root: &Path, filter: &Filter) -> Result<String, String> {
 /// `SPEC.md` section 3, "retries and repairs"): how many runs listed attempts; the
 /// attempts they made, and how many of those were retries, each attempt after a run's
 /// first; how many kept an attempt that was checked, and how many one that was not;
-/// and the runs by why their attempts ended, in the record's own words with each
-/// attempt's number left out, most first. None where no run is a loop's.
-fn loops(found: &[(String, RunRecord)]) -> Option<Loops> {
+/// and the runs by why their attempts ended, most first: by the word of a closed set the
+/// record holds (`run/8`; plan mE, task L1, item 1), and in an older record by the word
+/// its sentence reads as ([`crate::loop_score::reason_of`]), so old and new count
+/// together; a sentence that reads as none is counted as itself, with each attempt's
+/// number left out. None where no run is a loop's. Public for the tests, which hand it
+/// records of a version this build no longer writes for a loop.
+pub fn loops(found: &[(String, RunRecord)]) -> Option<Loops> {
     let looped: Vec<&record::Attempted> = (found.iter())
         .filter_map(|(_, record)| record.attempts())
         .collect();
@@ -834,10 +840,19 @@ fn loops(found: &[(String, RunRecord)]) -> Option<Loops> {
     };
     let checked = looped.iter().filter(|a| kept(a) == Some(true)).count();
     let unchecked = looped.iter().filter(|a| kept(a) == Some(false)).count();
-    // Why the attempts ended, with the number of the attempt taken out so that runs
-    // that ended the same way count together.
+    // Why the attempts ended: the record's word, or the word its sentence reads as, or
+    // else the sentence with the number of the attempt taken out so that runs that
+    // ended the same way count together.
     let mut ended: BTreeMap<String, usize> = BTreeMap::new();
     for attempts in &looped {
+        let word = match attempts.reason {
+            Some(reason) => reason.word(),
+            None => crate::loop_score::reason_of(&attempts.ended),
+        };
+        if word != "other" {
+            *ended.entry(word.to_owned()).or_default() += 1;
+            continue;
+        }
         let words = attempts.ended.split(' ');
         let plain: Vec<&str> = words
             .map(|word| match word.parse::<u32>() {

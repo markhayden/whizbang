@@ -32,6 +32,7 @@
 mod call;
 mod context;
 mod descriptor;
+mod eighth;
 mod engine;
 mod facts;
 mod findings;
@@ -105,8 +106,9 @@ pub use prepare::{
 pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECIPE_ARGUMENTS_LIMIT, RECIPE_STEPS_LIMIT,
     RECIPE_TEXT_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, RUN_2, RUN_2_SCHEMA,
-    RUN_3, RUN_3_SCHEMA, RUN_5, RUN_5_SCHEMA, RUN_6, RUN_6_SCHEMA, RUN_7, RUN_7_SCHEMA, RUN_RECORD,
-    RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT, is_diagnostic_name,
+    RUN_3, RUN_3_SCHEMA, RUN_5, RUN_5_SCHEMA, RUN_6, RUN_6_SCHEMA, RUN_7, RUN_7_SCHEMA, RUN_8,
+    RUN_8_SCHEMA, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT,
+    is_diagnostic_name,
 };
 pub use recover::{
     NoWriter, Opening, RECOVERY_WHY_LIMIT, Recovering, Recovery, RecoveryFailed, RecoveryPart,

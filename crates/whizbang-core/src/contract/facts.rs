@@ -12,7 +12,9 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use super::record::{Attempt, Facts, Handed, Paid, Refused, Replayed, Setting, Started, Went};
+use super::record::{
+    Attempt, AttemptsEnded, Facts, Handed, Paid, Refused, Replayed, Setting, Started, Went,
+};
 use super::{RefusalKind, Secrets, Value};
 use crate::egress::{Account, Classes, DataClass, Origin};
 
@@ -212,7 +214,14 @@ impl RunFacts {
     /// and when the run's end has begun.
     pub fn attempts_ended(&self, kept: Option<u32>, why: &str) -> bool {
         let why = self.shared.secrets.redact(why);
-        self.note(|facts| facts.attempts_ended(kept, why))
+        self.note(|facts| facts.attempts_ended(kept, why, None))
+    }
+
+    /// The same, with why the attempts ended also as a word of a closed set, which makes
+    /// the record `run/8` (ADR 0005, "run/8").
+    pub fn attempts_ended_as(&self, kept: Option<u32>, why: &str, reason: AttemptsEnded) -> bool {
+        let why = self.shared.secrets.redact(why);
+        self.note(|facts| facts.attempts_ended(kept, why, Some(reason)))
     }
 
     /// Notes what one paid request of the run cost, in whatever order requests are

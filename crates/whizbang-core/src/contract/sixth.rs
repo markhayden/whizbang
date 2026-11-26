@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::artifact::ArtifactType;
 use crate::identity::Digest;
 
+use super::eighth::AttemptsEnded;
 use super::findings::{
     FINDING_OBLIGATIONS_LIMIT, FINDING_PLACES_LIMIT, FINDINGS_LIMIT, FindingCount, Findings,
     FoundAt, LeftOut, is_obligation_id,
@@ -203,13 +204,17 @@ impl Attempt {
 }
 
 /// A loop's attempts: each, in order; which was kept, by its number, or null when
-/// none was; and why the attempts ended, in one line.
+/// none was; why the attempts ended, in one line; and, in `run/8` alone, the same as
+/// one word of a closed set ([`AttemptsEnded`]), which a record of an older version
+/// does not hold.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Attempted {
     pub list: Vec<Attempt>,
     pub kept: Option<u32>,
     pub ended: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<AttemptsEnded>,
 }
 
 /// What is said of attempts whose loop never said why they ended.

@@ -69,6 +69,8 @@ that said something was still to come; no decision changed.
 Amended: 2026-11-19, with task K1 of plan m4. Added: "run/6": the plan of a call, where a
 recipe's run started, what is kept of findings, and a loop's attempts, each a group after
 the diagnostics, written only where the run has it.
+Amended: 2026-11-26, with task L1 of plan mE. Added: "run/8": why a loop's attempts
+ended, as one word of a closed set beside the sentence, in the group `attempts`.
 
 ## Context
 
@@ -641,6 +643,37 @@ the same store.
 
 Tests: `record::run_6_holds_a_plan_a_start_findings_and_a_loops_attempts`,
 `record::run_6_reads_a_record_of_run_5`.
+
+### run/8
+
+Added with plan mE (`docs/plans/mE-evidence-and-edit-quality.md`), task L1, item 1. A
+loop's attempts said why they ended in a sentence alone, and `runs stats` counted the
+sentences with each number taken out: a sentence reworded split a count, and one that
+carried a backend's words made a row of its own. `run/8` is `run/7` (ADR 0048) whose
+`attempts` hold one more field after `ended`: `reason`, why the attempts ended as one word
+of a closed set, `passed`, `findings_cut_short`, `damaged_something_preserved`,
+`nothing_says_it_remains`, `last_attempt_of_the_plan`, `wider_mask_already_used`,
+`mask_is_the_one_before`, `one_unchecked_pass`, `check_could_not_run`, `budget_ran_out`,
+`deadline_passed` or `retry_could_not_be_made` (`record::AttemptsEnded`). The sentence is
+kept beside it. The words are those `whizbang eval loop score` and
+`scripts/loop-evidence.py` read an older record's sentences as, so a count by word and a
+count by sentence agree. Its schema is `crates/whizbang-core/schemas/run-8.json`.
+
+A loop says the word with its sentence (`RunFacts::attempts_ended_as`), and only a loop that
+said it has one: a record holds `reason` in `run/8` alone, and a `run/8` record holds it.
+A loop stopped before it said why its attempts ended has no word, and its record is
+written as before, with the sentence of `ATTEMPTS_NOT_ENDED`. The rule of the versions
+before it holds: a record without the word is written in the oldest version that holds
+all of it, byte for byte as before, so this build reads `run/8` and every version before
+it, and a store written before it reads as it did. A build before this one refuses a
+`run/8` record as another version, and reads every other run of the same store.
+`runs stats` counts a `run/8` record by its word and an older one by the word its sentence
+reads as (`loop_score::reason_of`), or by the sentence where it reads as none. An offline
+replay compares the word only where the original holds one, so a loop run recorded
+before `run/8` replays as reproduced
+(`record::a_loop_run_recorded_before_run_8_replays_as_reproduced`; ADR 0049).
+
+Test: `record::run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_they_did`.
 
 ## Consequences
 

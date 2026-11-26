@@ -232,12 +232,20 @@ is in what the loop reads or records of its attempts.
 
 `whizbang runs stats --action remove_checked` counts the loops of a store: their attempts
 and retries, how many kept an attempt that was checked, and the runs by why their
-attempts ended.
+attempts ended. A loop's record says why in a sentence and as one word of a closed set
+beside it (`run/8`; ADR 0005, "run/8"), and the runs are counted by the word: `passed`,
+`findings_cut_short`, `damaged_something_preserved`, `nothing_says_it_remains`,
+`last_attempt_of_the_plan`, `wider_mask_already_used`, `mask_is_the_one_before`,
+`one_unchecked_pass`, `check_could_not_run`, `budget_ran_out`, `deadline_passed` or
+`retry_could_not_be_made`. A record written before the word is counted under the word its
+sentence reads as, so old and new runs count together; a loop stopped before it said why
+counts as `never_said`, and a sentence that reads as no word is counted as itself, each
+attempt's number as `N`.
 
 ```
 loops: 3 runs, 4 attempts, 1 retries; kept an attempt that was checked 2, not checked 1, none 0
-  attempts ended	2	attempt N passed
-  attempts ended	1	one unchecked pass: the check is off
+  attempts ended	2	passed
+  attempts ended	1	one_unchecked_pass
 ```
 
 **A loop that is cancelled** commits nothing. The attempts that completed before it are

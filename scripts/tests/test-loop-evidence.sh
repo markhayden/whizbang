@@ -591,6 +591,95 @@ grep -F "started 0 runs of 20" "$tmp/out" >/dev/null || fail "segment-01: a seco
 # A repetition given for the edit set is refused.
 expect_fail "a repetition for the edit set" "--repetition is for a manifest of the kind segment-01" evidence --set "$set_dir" --manifest "$manifest" --judge terra --out "$tmp/x.toml" --repetition 1
 
+# --- The tally again over kept runs (plan mE, task L1): an export written here, read by
+# the tally alone, as the orchestrator runs it over a store's kept runs. Why the attempts
+# ended is the record's word where it holds one, its sentence's where not; each place
+# looked into is counted against the verdict of the attempt it was looked into for; and a
+# located retry that added nothing is counted with what the widening after it did.
+python3 -B - "$tmp/kept.jsonl" <<'PY2'
+import json, sys
+
+made = []
+digest = lambda c: "sha256:" + c * 64
+SAME = "its shaped mask is the one before it, and nothing was filled"
+
+
+def record(run, action, parent=None, version="run/6", **more):
+    base = {
+        "record": version,
+        "identity": {"run": run, "request": None, "parent": parent, "whizbang": "0.1.0"},
+        "asked": {"action": action, "version": "1.0.0", "arguments": [], "settings": [], "config": digest("c")},
+        "inputs": [], "outputs": [],
+        "outcome": {"status": "completed", "error": None, "invalid": None, "refusals": [], "refusals_omitted": 0, "lost": []},
+        "time": {"start_ms": 1000, "end_ms": 2000, "durations": []},
+        "models": [], "spend": {"reserved_micros": None, "requests": []},
+        "egress": [], "steps": [], "judge": [], "diagnostics": [],
+    }
+    base.update(more)
+    made.append(base)
+    return base
+
+
+def loop(n, attempts, ended, reason=None):
+    top = "%d-1" % (3000 + n)
+    listed = []
+    for number, (verdict, change, crops, views, unchecked) in enumerate(attempts, 1):
+        runs = []
+        for view in range(views):
+            runs.append("%s-a%d-view%d" % (top, number, view))
+            record(runs[-1], "view", top)
+        changed = None
+        if change == "located":
+            changed = {"change": "located", "crops": [{"crop": digest("1"), "mask": mask} for mask in crops]}
+        elif change == "wider":
+            changed = {"change": "wider", "px": 8.0}
+        listed.append({"attempt": number, "runs": runs, "verdict": verdict, "unchecked": unchecked,
+                       "changed": changed, "settled_micros": 0})
+    attempted = {"list": listed, "kept": 1, "ended": ended}
+    if reason:
+        attempted["reason"] = reason
+    one = record(top, "remove_checked", None, version="run/8" if reason else "run/6", attempts=attempted)
+    one["identity"]["request"] = "e-loop-terra-3-whole-%02d" % n
+    one["asked"]["arguments"] = [{"name": "judge", "value": {"text": "terra"}}]
+
+
+fail = ("fail", None, [], 0, None)
+# A located retry that found something in one place, joined another as itself, and left
+# a third out over a tenth, then passed; its record says why in a word.
+loop(1, [fail, ("pass", "located", [digest("2"), None], 3, None)], "attempt 2 passed", "passed")
+# A located retry that added nothing, then the widening, which passed: a sentence alone.
+loop(2, [fail, (None, "located", [digest("2")], 1, SAME), ("pass", "wider", [], 0, None)], "attempt 3 passed")
+# The same, the widening failed.
+loop(3, [fail, (None, "located", [None], 1, SAME), ("fail", "wider", [], 0, None)],
+     "the last attempt the plan allows", "last_attempt_of_the_plan")
+# Places that gave nothing, so the retry widened; the check after it was unsure.
+loop(4, [fail, ("unsure", "wider", [], 2, None)],
+     "no finding of attempt 2 says with confidence that the named thing is still there")
+# A word the record holds is read before its sentence, whatever the sentence says.
+loop(5, [fail], "a sentence no set reads", "deadline_passed")
+with open(sys.argv[1], "w") as f:
+    for one in made:
+        f.write(json.dumps(one, separators=(",", ":")) + "\n")
+PY2
+out="$tmp/kept.toml"
+expect_pass "the tally over kept runs" python3 -B scripts/loop-evidence.py tally --records "$tmp/kept.jsonl" \
+  --manifest "$seg_manifest" --judge terra --repetition 3 --commit "$commit" --whizbang 0.1.0 --out "$out"
+table_of() { awk -v t="[$1]" '$0 == t { on = 1; next } /^\[/ { on = 0 } on && NF' "$out" | tr '\n' ' '; }
+[ "$(table_of stopped_by_reason)" = "passed = 2 findings_cut_short = 0 damaged_something_preserved = 0 nothing_says_it_remains = 1 last_attempt_of_the_plan = 1 wider_mask_already_used = 0 mask_is_the_one_before = 0 one_unchecked_pass = 0 check_could_not_run = 0 budget_ran_out = 0 deadline_passed = 1 retry_could_not_be_made = 0 never_said = 0 other = 0 no_attempt = 0 " ] ||
+  fail "kept runs: why the attempts ended is not the record's word, or its sentence's: $(table_of stopped_by_reason)"
+[ "$(table_of places_by_verdict)" = "found_something_pass = 1 found_something_fail = 0 found_something_unsure = 0 found_something_unchecked = 1 joined_as_itself_pass = 1 joined_as_itself_fail = 0 joined_as_itself_unsure = 0 joined_as_itself_unchecked = 1 left_out_over_a_tenth_pass = 1 left_out_over_a_tenth_fail = 0 left_out_over_a_tenth_unsure = 2 left_out_over_a_tenth_unchecked = 0 " ] ||
+  fail "kept runs: the places are not counted against the verdict after them: $(table_of places_by_verdict)"
+[ "$(table_of located_added_nothing)" = "retries = 2 widened_after = 2 widened_after_pass = 1 widened_after_fail = 1 widened_after_unsure = 0 widened_after_unchecked = 0 " ] ||
+  fail "kept runs: the located retries that added nothing are not counted: $(table_of located_added_nothing)"
+# A word no record of the loop holds is refused, never read as a sentence: one of no set,
+# and `never_said`, which only an older record's sentence reads as.
+for word in gave_up never_said; do
+  sed "s/\"reason\":\"deadline_passed\"/\"reason\":\"$word\"/" "$tmp/kept.jsonl" >"$tmp/odd.jsonl"
+  grep -F "\"reason\":\"$word\"" "$tmp/odd.jsonl" >/dev/null || fail "kept runs: the word $word was not written"
+  expect_fail "kept runs: the word $word" "in a word that is none of the loop's" python3 -B scripts/loop-evidence.py tally \
+    --records "$tmp/odd.jsonl" --manifest "$seg_manifest" --judge terra --repetition 3 --commit "$commit" --whizbang 0.1.0 --out "$tmp/odd.toml"
+done
+
 # --- Once through the real lock and the real guards: the command that loads a model has
 # the watch on memory and the thread guard above it, and the guard's limit is 200.
 real="$tmp/real"
