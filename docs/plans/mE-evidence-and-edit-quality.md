@@ -1156,7 +1156,7 @@ Mac is the orchestrator's, and the box is ticked once it has passed there.
 6. **The segmenter's threshold inside a crop** (the "Not ported" row on the located retry):
    none is added; plan e1's tallies show what crops found, and the line says so.
 
-- [ ] Done when: the tests pass; `remove_checked`'s record is updated and stays experimental
+- [x] Done when: the tests pass; `remove_checked`'s record is updated and stays experimental
   until R5. Nothing paid.
 
 ## C1. The clicked removal (medium if built)
@@ -1360,7 +1360,7 @@ The 58 rows, by session. A session's config lists only the tool files that have 
 | O1.4 | 9 rows, and P1's steps walked again. `check`; `source-fidelity`, `reference-consistency`, `reality-checks`, `brief-compliance`, `product-fidelity`, each under v1 and v2; details first (with `align`, `change_map`, `edge_similarity`), `tiles`, the second look (`off`, `on`, `strict`); again: `view`'s panorama side, `line`, `rect`, `stroke`, `rasterize` through every binding, `fan`, `ramp`, `measure` | P1 | R2, R3, F2, R4, R5 |
 | O1.5 | 5 rows. `per_subject`, `outline`, `regions`, `classes`, each method; `labels` on the fixed-class entry (T2), beside it, again: `segment` on the fixed-class entry. `outline` and `regions` each under `--method sam3` and `--method eomt` of `eval tool`, `try --arg method=eomt`, and as `C+regions@eomt` under `check` once F1 lets a tool ask `labels` there; `classes` by `try` with `--arg bbox=...` and by `eval tool`, which gives it the whole frame (T2). A config with a segment backend of the model `eomt-ade20k` beside the default | T2 | R2, K1, R3, R4 |
 | O1.6 | 1 row. The submission format: v3 under `check` and each use case | F1 | F2, R4 |
-| O1.7 | Steps walked again. `remove_checked`, `select`, `carry` (L2); `seam` (P1's records) | L2 and P1 | R5 |
+| O1.7 | Steps walked again. `remove_checked`, `select`, `carry` and `rect`'s polygon case (L2); `seam` (P1's records). What L2 changed in them: `remove_checked`'s job marks the phrase (template version 2), a located retry cuts a large place in tiles, joins a polygon as its pixels and keeps `located-a<n>.txt`, and its record gains a run's times; `select` joins one mask at a time, its pixels and examples as they were; `carry` looks at its run's signal row by row, its examples as they were; `rect` takes a polygon in place of a box, a third example and the refusal of both or neither; `seam` calls none of these, and its record is unchanged by L2 | L2 and P1 | R5 |
 | O1.8 | 1 row, if C1 builds it. The clicked removal | C1, item 3 | C1, item 4; R5 |
 | O1.9 | 1 row a variant. Each `source-fidelity-<name>` R4 admits | R4 | N1 |
 
