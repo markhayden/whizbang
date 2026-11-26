@@ -55,6 +55,24 @@ What to look for:
   large blob's. With one sigma for the whole mask, a thin object gets a halo far wider than
   itself: 1,700 blend pixels for a core of 80.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| blob | mask | mask | `sha256:f6a4e289d5ba2aef035acbbad5397ce495ee8f8ee03a38f03e6c609ac7b5f417` |
+| blob | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| wire | mask | mask | `sha256:39abb6028860fcc8a73ef69847e3439b0443f486538c0aca0817a0bf5bb05585` |
+| wire | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

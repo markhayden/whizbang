@@ -31,6 +31,10 @@
 #   scripts/tool-record.sh segment   the same, from SAM 3's answers, which the model tier's
 #                                    segment_answers_the_records_examples_on_the_mac wrote
 #                                    into target/tmp/model-tier/out/ first
+#   scripts/tool-record.sh inputs    the list of its examples' inputs in each record that
+#                                    `whizbang store record-inputs` writes, between its
+#                                    `inputs` marks (plan E, task O1); nothing in it is timed
+#                                    (crates/whizbang/tests/it/record_inputs.rs)
 #
 # It builds in release mode and times real work, so it is heavy: run it through
 # scripts/heavy.sh when another agent may be building. The fast tests then hold the record
@@ -46,6 +50,7 @@ main() {
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+wrote=""
 case "${1:-}" in
   view)
     scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
@@ -73,15 +78,20 @@ case "${1:-}" in
     scripts/thread-guard.sh cargo test -p whizbang --test it -- \
       --ignored --exact tool_records::writes::remove_checked
     ;;
+  inputs)
+    scripts/thread-guard.sh cargo test -p whizbang --test it -- \
+      --ignored --exact record_inputs::write_the_records_inputs
+    wrote="the inputs of the records in docs/reference/tools/"
+    ;;
   source-fidelity | reference-consistency | product-fidelity | brief-compliance | reality-checks)
     scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact use_case_records::write_the_records
     ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|carry|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure|remove|remove_prompt|repair|repair_area|seam|remove_checked|source-fidelity|reference-consistency|product-fidelity|brief-compliance|reality-checks" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|carry|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure|remove|remove_prompt|repair|repair_area|seam|remove_checked|inputs|source-fidelity|reference-consistency|product-fidelity|brief-compliance|reality-checks" >&2
     exit 2
     ;;
 esac
-echo "tool-record: wrote docs/reference/tools/$1.md and docs/reference/tools/$1/"
+echo "tool-record: wrote ${wrote:-docs/reference/tools/$1.md and docs/reference/tools/$1/}"
 }
 main "$@"; exit

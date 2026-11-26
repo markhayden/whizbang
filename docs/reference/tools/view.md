@@ -184,6 +184,26 @@ What to look for:
 - A box of a panorama is a flat crop, cut and bound as a box of a flat image is: columns
   409 to 615 and rows 153 to 359, pixel for pixel.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| detail | image | image | `sha256:12fd667be5653acc6cd79e9ac8d97fed6ff0fe3ccc57d154f40ef0079a0a160e` |
+| detail | also | image | `sha256:4c28258e01161440bffb6866ca4a41f88501e5554c1ef1b20a2720fb47b93ab3` |
+| whole | image | image | `sha256:12fd667be5653acc6cd79e9ac8d97fed6ff0fe3ccc57d154f40ef0079a0a160e` |
+| across | image | image | `sha256:597248b3c45cbc0ce4e47881b8833710e8c6066040443a228113d3779ebf649d` |
+| up | image | image | `sha256:597248b3c45cbc0ce4e47881b8833710e8c6066040443a228113d3779ebf649d` |
+| strip | image | image | `sha256:597248b3c45cbc0ce4e47881b8833710e8c6066040443a228113d3779ebf649d` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Scored alone, for a control, means exact against an analytic or reference result, and timed

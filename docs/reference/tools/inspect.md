@@ -43,6 +43,24 @@ What to look for: the white edge runs round the outside of each core and round t
 protected hole as well, since a protected pixel is outside the core; the feather is a
 tint that fades out, and the protected patch and hole are the image untouched.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| feathered | mask | mask | `sha256:2a80f9215a7f976a4e8a3072c26dfeaf72f98b3fdd3bebfba89d083d8d463edc` |
+| feathered | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| holed | mask | mask | `sha256:7209fd78806545503b8c70b75cb8a1df5f525b6f0826a33986413b941f8aea7c` |
+| holed | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

@@ -48,6 +48,25 @@ other 5,248. After `remove`, whose mask was grown, extended 12 rows down and fea
 protect is 3,944 pixels: the 1,888 of the core and all 2,056 of the blend, to its faintest
 pixel, so the second pass cannot touch a wide soft ring the eye hardly sees as edited.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. `protect` itself
+is given a first pass's composite and mask, which only a fill makes: what is written is what
+that first pass takes, the scene and, for `remove`, the box. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| block | image of the first pass | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| feathered | image of the first pass | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| feathered | location of the first pass | location | `sha256:f91d20c2928483d8def20ab172334c5c6eeff87186242364516b354ec13f1a82` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19. The task's

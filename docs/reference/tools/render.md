@@ -48,6 +48,24 @@ What to look for: in `plain` the core is white, the feather grey and the bar bla
 bar. The two renderings have the same counts, since an opaque image's alpha is the
 weight itself.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| plain | mask | mask | `sha256:083846b355990842f3cb8a7ba0ee595ff320e0f3a2b2de04183ae1bbf7d92556` |
+| plain | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| alpha | mask | mask | `sha256:083846b355990842f3cb8a7ba0ee595ff320e0f3a2b2de04183ae1bbf7d92556` |
+| alpha | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

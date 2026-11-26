@@ -1340,6 +1340,23 @@ identity; the record names the command and the identities. The same inputs go to
 no rendered picture of a record stands in for a mask. Pictures of the dev sets and corpora are
 brought in by `whizbang store import`.
 
+As built (O1's first pull request): `whizbang store record-inputs --store <dir>` writes them,
+into a store that is there, in one publication, and prints a line for each: its record, its
+example, its port, its type and its identity. Rascal's records take their inputs' constructors
+from `whizbang_rascal::examples`, which the command uses; squint's inputs are all pictures, the
+files beside their records that the records' tests hold to their constructors byte for byte,
+and `whizbang_squint::examples` gives the images of those files, which its test holds to the
+constructors' images by identity. Each of O1.1's 34 rows of a tool has its record's list
+between `inputs` marks (`scripts/tool-record.sh inputs` writes them; `details`' is `tiles.md`).
+Every mask and location is on an image that is written with it: the masks of `grow`, `close`,
+`subtract`, `select`, `plug` and `feather` were on an image named by no picture until then, and
+are on the scene now, and the band of `profile`'s examples names its real line. One row's own
+inputs are not made: `protect` is given a first pass's composite and mask, which only a fill
+makes, so what is written for it is what that first pass takes (the scene, and the box for
+`remove`). Its case so needs one fill first, which O1.1 does not pay for: whether it is walked
+in O1.2, after a first pass under Bria, is the owner's to say. The set builder's row has no
+store inputs.
+
 **Each row's cases.** Before its session, each row lists in the record the cases it walks:
 for `check`, the use case `general` as it is (its pictures under a fixed prompt, a verdict in
 plain text; a job given to it is not read, and no checklist setting applies to it, `check.rs`),

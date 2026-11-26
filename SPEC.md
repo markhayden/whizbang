@@ -870,6 +870,10 @@ whizbang store delete --example <id> --store <dir>
 whizbang store import <file> --store <dir> [--create]
                                        # for developers: bring a canonical artifact file
                                        # (ADR 0002) into a store
+whizbang store record-inputs --store <dir>
+                                       # every tool record's example inputs, from its
+                                       # tests' constructors, written as canonical
+                                       # artifacts, each identity printed (plan E, O1)
 whizbang runs list|show|stats|export
 whizbang runs bundle <run>... --to <file> [--overwrite] --store <dir>
                                        # one run that ended, or a chain of at most 16, as

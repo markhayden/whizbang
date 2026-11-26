@@ -48,6 +48,22 @@ second the scene has a dark scratch about two pixels wide, 120 pixels; the strok
 covers every one of them and 840 pixels in all, seven times the defect: a fill through it
 repaints the scene around the scratch too.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| path | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| scratch | image | image | `sha256:8f8351d46029ad08296e3321cf1817de54f67f8413b97ff048193cbf98f04c9f` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.
