@@ -16,7 +16,9 @@
 //! handed the tool, by its binding (ADR 0032, "Amended: regions"), which the caller names
 //! the image of; squint mapped a region through its frame registry to its root frame first,
 //! and compared boxes there. Here the overlap of two items is read on one image in its own
-//! pixels, and a polygon by its bounds, as squint's was.
+//! pixels, and a polygon by its bounds, as squint's was. What is lost: squint took a region
+//! on an aligned frame or a crop as evidence on the image it was cut from; `check` takes no
+//! such region (its `located`), and says each is not taken.
 
 use crate::use_case::{Checklist, Instance, Item, Resolved};
 

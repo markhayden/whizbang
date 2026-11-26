@@ -1332,7 +1332,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.8.0", "settings": [],
+            json!({"action": "check", "version": "1.9.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "details", "value": {"text": "none"}},
@@ -2881,6 +2881,10 @@ pub struct Probe {
     /// Whether it returns regions, of the kind `change_region`, and takes the rules'
     /// `preserve` hint (plan mE, task F1): its output then holds `regions`.
     pub regions: bool,
+    /// The actions it asks of its context as it runs, each with no input, and how each
+    /// call came out: `ran`, or the kind of its refusal.
+    pub asks: Vec<&'static str>,
+    pub asked: std::sync::Mutex<Vec<(String, String)>>,
 }
 
 pub type Probed = (Vec<(String, ArtifactId)>, Json);
@@ -2932,8 +2936,16 @@ impl whizbang_squint::files::FileTools for Probe {
         _: &str,
         images: &[(String, ArtifactId)],
         arguments: &serde_json::Map<String, Json>,
-        _: &whizbang_core::contract::Context,
+        context: &whizbang_core::contract::Context,
     ) -> Result<whizbang_squint::files::FileRan, String> {
+        for name in &self.asks {
+            let came = match context.executor().submit(&Call::new(name)) {
+                Ok(_) => "ran".to_owned(),
+                Err(CallError::Refused(refusal)) => format!("{:?}", refusal.kind()),
+                Err(other) => format!("{other:?}"),
+            };
+            self.asked.lock().unwrap().push(((*name).to_owned(), came));
+        }
         let mut ran = self.ran.lock().unwrap();
         ran.push((images.to_vec(), Json::Object(arguments.clone())));
         if self.fails {
@@ -4287,7 +4299,7 @@ fn a_tool_keyed_by_the_checklist_is_made_again_for_the_items_a_call_added() {
         finished.outcome()
     );
     assert_eq!(
-        submit_sent(&judge, 1)["properties"]["items"]["items"]["properties"]["id"]["enum"],
+        submit_sent(&judge, 1)["$defs"]["Item"]["properties"]["id"]["enum"],
         json!([
             "chk:ob:SF1@candidate",
             "chk:ob:SF2@candidate",
@@ -4390,7 +4402,90 @@ fn v3_under_check_records_its_form_and_its_new_class() {
     // v3's tool, its one form for the job's two items of one instance.
     let sent = submit_sent(&judge, 0);
     assert_eq!(
-        sent["properties"]["items"]["items"]["properties"]["id"]["enum"],
+        sent["$defs"]["Item"]["properties"]["id"]["enum"],
         json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
     );
+}
+
+#[test]
+fn a_tool_file_may_ask_segment_and_labels_under_check_and_nothing_else() {
+    // Plan mE, task F1 (from the review of T2): `segment` and `labels` are frozen with a
+    // run that names a tool file, so a call of either is not refused as off the run's
+    // list (this world registers neither, so each is refused as unknown); any other is.
+    let (mut world, source, candidate, _) = paired();
+    let probe = Arc::new(Probe {
+        asks: vec!["segment", "labels", "fill"],
+        ..Probe::default()
+    });
+    world.toolbox = whizbang_squint::check::Toolbox::with_files(probe.clone());
+    let asked = json!({"tool_call": {"id": "p1", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door"}}});
+    let judge = judge(&submitting(&[asked]), &[]);
+    let executor = world.engine(judge, Secrets::none());
+    let call = of_pair(&source, &candidate, &[("tools", "view,probe")]);
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let asked = probe.asked.lock().unwrap().clone();
+    let not_offered = format!("{:?}", RefusalKind::NotOffered);
+    assert_eq!(asked.len(), 3, "{asked:?}");
+    assert_ne!(asked[0].1, not_offered, "{asked:?}");
+    assert_ne!(asked[1].1, not_offered, "{asked:?}");
+    assert_eq!(asked[2].1, not_offered, "{asked:?}");
+}
+
+#[test]
+fn a_call_whose_regions_would_pass_the_budget_is_an_error_and_adds_nothing() {
+    // The probe's two regions on the candidate are two items a call: twelve calls (the
+    // first in its own turn) make the checklist's 24 evidence items, and the thirteenth,
+    // which would make 26, is answered as an error and adds none. The submission answers
+    // the 24 and is a verdict.
+    let calls: Vec<Json> = (0..13)
+        .map(|n| {
+            json!({"tool_call": {"id": format!("q{n}"), "name": "probe", "arguments":
+                {"source": "source", "candidate": "candidate", "phrase": "door"}}})
+        })
+        .collect();
+    let mut items = vec![
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+    ];
+    for call in 0..12 {
+        for n in 0..2 {
+            items.push(item(&format!("chk:ev:{call}:{n}"), "held", "confident"));
+        }
+    }
+    let (finished, left, judge, _) = regions_run(
+        "v1",
+        &[
+            (Json::Array(calls[1..].to_vec()), "tool_use"),
+            (json!([submission(Json::Array(items))]), "tool_use"),
+        ],
+    );
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let said = results(&judge, 2);
+    assert_eq!(said.len(), 12);
+    assert!(said[..11].iter().all(|result| !result.is_error()));
+    assert!(said[11].is_error());
+    assert!(
+        said[11]
+            .text()
+            .starts_with("not presented: evidence items would reach 26 of a budget of 24"),
+        "{}",
+        said[11].text()
+    );
+    let judged: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    assert_eq!(judged["checklist"].as_array().unwrap().len(), 2 + 24);
+    assert!(!judged["checklist"].to_string().contains("chk:ev:12:"));
 }

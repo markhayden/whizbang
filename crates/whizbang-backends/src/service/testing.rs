@@ -187,13 +187,17 @@ pub(crate) fn words() -> JudgeRequest {
     .unwrap()
 }
 
-/// A small request of words that offers submission v3's tool for source-fidelity's
-/// shorthand checklist, as the build writes it (plan mE, task F1): the fixture
-/// `fixtures/submission/v3-source-fidelity.json`, which squint's tests hold to
-/// `use_case::submit_tool_v3`. With the tool's schema, as written.
-pub(crate) fn v3_request() -> (JudgeRequest, Value) {
+/// The fixtures of submission v3's tool, as the build writes it (plan mE, task F1), which
+/// squint's tests hold to `use_case::submit_tool_v3`: for source-fidelity's shorthand
+/// checklist, whose items are of one instance each, and for reference-consistency's with
+/// one reference, whose item is of several.
+pub(crate) const V3_FIXTURES: [&str; 2] = ["v3-source-fidelity", "v3-reference-consistency"];
+
+/// A small request of words that offers the v3 tool of this fixture
+/// (`fixtures/submission/<name>.json`). With the tool's schema, as written.
+pub(crate) fn v3_request(name: &str) -> (JudgeRequest, Value) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/submission/v3-source-fidelity.json");
+        .join(format!("../../fixtures/submission/{name}.json"));
     let tool: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let schema = tool["input_schema"].clone();
     let description = tool["description"].as_str().unwrap();

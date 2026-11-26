@@ -9,6 +9,72 @@
         ],
         "type": "string"
       },
+      "Item": {
+        "additionalProperties": false,
+        "description": "What the model said about one checklist item, and the findings on it. Items carry no obligation ids: the checklist owns them.",
+        "properties": {
+          "allowed_by": {
+            "description": "Exemption id; required when `disposition = allowed_change`, null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "$ref": "#/$defs/Confidence"
+          },
+          "disposition": {
+            "$ref": "#/$defs/ItemDisposition"
+          },
+          "evidence": {
+            "description": "Tool call ids from this run used as evidence.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "findings": {
+            "description": "Findings on this item, each where it is: give them when the item is a violation, cant_tell or allowed_change; otherwise an empty list.",
+            "items": {
+              "$ref": "#/$defs/ItemFinding"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "The checklist item id exactly as listed, for example `chk:ob:SF1@candidate`.",
+            "enum": [
+              "chk:ob:SF1@candidate",
+              "chk:ob:SF2@candidate"
+            ],
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Location"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "description": "One to a few sentences; at most 600 characters.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allowed_by",
+          "confidence",
+          "disposition",
+          "evidence",
+          "findings",
+          "id",
+          "location",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ItemDisposition": {
         "description": "Dispositions an item may carry. `observed` belongs to observed findings only.",
         "enum": [
@@ -19,6 +85,49 @@
           "cant_tell"
         ],
         "type": "string"
+      },
+      "ItemFinding": {
+        "additionalProperties": false,
+        "description": "A finding on this item: a violation, a change it may allow, or what cannot be told, where it is. It bears on the item's own obligations, so it cites none.",
+        "properties": {
+          "allowed_by": {
+            "description": "Exemption id when `disposition = allowed_change`, null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "$ref": "#/$defs/Confidence"
+          },
+          "disposition": {
+            "$ref": "#/$defs/ItemFindingDisposition"
+          },
+          "evidence": {
+            "description": "Tool call ids from this run used as evidence.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/$defs/Location",
+            "description": "Where it is; findings always have a location."
+          },
+          "reason": {
+            "description": "One to a few sentences; at most 600 characters.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allowed_by",
+          "confidence",
+          "disposition",
+          "evidence",
+          "location",
+          "reason"
+        ],
+        "type": "object"
       },
       "ItemFindingDisposition": {
         "description": "Dispositions a finding inside an item may carry.",
@@ -195,110 +304,7 @@
       "items": {
         "description": "One answer for each checklist item, each naming its id as the checklist lists it.",
         "items": {
-          "additionalProperties": false,
-          "description": "What the model said about one checklist item, and the findings on it. Items carry no obligation ids: the checklist owns them.",
-          "properties": {
-            "allowed_by": {
-              "description": "Exemption id; required when `disposition = allowed_change`, null otherwise.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "confidence": {
-              "$ref": "#/$defs/Confidence"
-            },
-            "disposition": {
-              "$ref": "#/$defs/ItemDisposition"
-            },
-            "evidence": {
-              "description": "Tool call ids from this run used as evidence.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "findings": {
-              "description": "Findings on this item, each where it is: give them when the item is a violation, cant_tell or allowed_change; otherwise an empty list.",
-              "items": {
-                "additionalProperties": false,
-                "description": "A finding on this item: a violation, a change it may allow, or what cannot be told, where it is. It bears on the item's own obligations, so it cites none.",
-                "properties": {
-                  "allowed_by": {
-                    "description": "Exemption id when `disposition = allowed_change`, null otherwise.",
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "confidence": {
-                    "$ref": "#/$defs/Confidence"
-                  },
-                  "disposition": {
-                    "$ref": "#/$defs/ItemFindingDisposition"
-                  },
-                  "evidence": {
-                    "description": "Tool call ids from this run used as evidence.",
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "location": {
-                    "$ref": "#/$defs/Location",
-                    "description": "Where it is; findings always have a location."
-                  },
-                  "reason": {
-                    "description": "One to a few sentences; at most 600 characters.",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "allowed_by",
-                  "confidence",
-                  "disposition",
-                  "evidence",
-                  "location",
-                  "reason"
-                ],
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "id": {
-              "description": "The checklist item id exactly as listed, for example `chk:ob:SF1@candidate`.",
-              "enum": [
-                "chk:ob:SF1@candidate",
-                "chk:ob:SF2@candidate"
-              ],
-              "type": "string"
-            },
-            "location": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Location"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "reason": {
-              "description": "One to a few sentences; at most 600 characters.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "allowed_by",
-            "confidence",
-            "disposition",
-            "evidence",
-            "findings",
-            "id",
-            "location",
-            "reason"
-          ],
-          "type": "object"
+          "$ref": "#/$defs/Item"
         },
         "type": "array"
       },

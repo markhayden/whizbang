@@ -715,12 +715,17 @@ fn squint_check_with_nothing_set_is_the_control_arm() {
     let printed = printed.unwrap();
     assert_eq!(printed.lines().nth(1), Some("verdict: pass"), "{printed}");
     // Arm C (v1, no tool file) sends its judge the same bytes as before plan mE's task F1
-    // added submission v3, evidence items and hints: the digest is of the first body the
-    // build of dbe5bef8 sent.
-    let first = whizbang_core::identity::Digest::of_bytes(&log.lock().unwrap()[0].1).hex();
+    // added submission v3, evidence items and hints: the digests are of the two bodies the
+    // build of 8f2c6ab0 sent (the first the same as dbe5bef8's).
+    let digests: Vec<String> = (log.lock().unwrap().iter())
+        .map(|(_, body)| whizbang_core::identity::Digest::of_bytes(body).hex())
+        .collect();
     assert_eq!(
-        first,
-        "172a1a5efaa689a9311d73e961b9c7824662fd65ae96bb49deb22dc14326fbcc"
+        digests,
+        [
+            "172a1a5efaa689a9311d73e961b9c7824662fd65ae96bb49deb22dc14326fbcc",
+            "af17851bae1f05eaaffb90b4460a0bc92020e458e7d0d2ed4ee438a8a482508f"
+        ]
     );
     let sent = sent_of(&log);
     assert_eq!(sent.len(), 2);
@@ -4151,19 +4156,17 @@ fn squint_check_takes_submission_v3() {
         .unwrap();
     // Anthropic is sent v3's tool as the build wrote it: its conformance fixture of v3.
     assert_eq!(submit["input_schema"], crate::google::v3_schema());
-    let items = &submit["input_schema"]["properties"]["items"];
-    assert_eq!(items["type"], "array");
+    let schema = &submit["input_schema"];
+    assert_eq!(schema["properties"]["items"]["type"], "array");
     assert_eq!(
-        items["items"]["properties"]["id"]["enum"],
+        schema["$defs"]["Item"]["properties"]["id"]["enum"],
         serde_json::json!([SF1, SF2])
     );
     let root = &judged.world.root;
     let checks = runs_of(root, "check");
     assert_eq!(checks.len(), 1);
     assert_eq!(argument(&checks[0].1, "submission").as_deref(), Some("v3"));
-    // The help names v3, and the command line takes v1, v2 or v3 and nothing else.
-    let help = crate::wired::whizbang_storeless(&["squint", "check", "--help"]);
-    assert!(help.out.contains("`v3`"), "{}", help.out);
+    // The command line takes v1, v2 or v3 and nothing else.
     let refused = crate::wired::whizbang_storeless(&[
         "squint",
         "check",

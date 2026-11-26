@@ -75,19 +75,21 @@ fn a_key_written_twice_in_a_calls_arguments_is_kept_beside_the_call() {
 
 #[test]
 fn submission_v3_is_sent_as_the_build_wrote_it_not_strict() {
-    // Plan mE, task F1, item 4: the conformance fixture of v3 for this adapter.
-    use crate::service::testing::{body_of, v3_request};
-    let (request, schema) = v3_request();
+    // Plan mE, task F1, item 4: the conformance fixtures of v3 for this adapter.
+    use crate::service::testing::{V3_FIXTURES, body_of, v3_request};
     let backend = responses(1, "gpt-6.1-terra", None);
     let Wire::Responses(settings) = &backend.wire else {
         unreachable!()
     };
-    let sent = body_of(&wire::request(&request, settings).unwrap().pieces);
-    let tools = sent["tools"].as_array().unwrap();
-    let submit = tools
-        .iter()
-        .find(|t| t["name"] == "submit_verdict")
-        .unwrap();
-    assert_eq!(submit["parameters"], schema);
-    assert_eq!(submit["strict"], false);
+    for name in V3_FIXTURES {
+        let (request, schema) = v3_request(name);
+        let sent = body_of(&wire::request(&request, settings).unwrap().pieces);
+        let tools = sent["tools"].as_array().unwrap();
+        let submit = tools
+            .iter()
+            .find(|t| t["name"] == "submit_verdict")
+            .unwrap();
+        assert_eq!(submit["parameters"], schema, "{name}");
+        assert_eq!(submit["strict"], false);
+    }
 }

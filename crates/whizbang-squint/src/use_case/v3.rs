@@ -11,7 +11,8 @@
 //! - **A finding on an item** is in the item's `findings`, and cites nothing: it bears on the
 //!   item's instances. An item of one instance names it; an item of more than one (a
 //!   reference's, an evidence item's) lets a finding list which of them it bears on, from an
-//!   enum the schema writes for that item ([`submit_tool_v3`]), none listed meaning all.
+//!   enum of the instances of such items ([`submit_tool_v3`]), none listed meaning all; one
+//!   of another item's is refused when read.
 //! - **An observed finding** is v1's, in the separate list `findings`, citing observe rules.
 //! - **v2's one repair and its recoveries** are kept ([`super::v2`]), but `array_form`, which
 //!   is v3's own form.
@@ -35,67 +36,46 @@ use crate::job::Job;
 /// v3's tool, before its checklist's ids are written into it.
 const SUBMIT_TOOL_V3: &str = include_str!("submit_verdict_v3.json");
 
-/// The items of a checklist by what a finding inside one may name: every item of one
-/// instance together, first, then each item of more than one on its own, with its
-/// instances; in the checklist's order.
-fn groups(checklist: &Checklist) -> Vec<(Vec<String>, Option<Vec<String>>)> {
-    let mut single = Vec::new();
-    let mut several = Vec::new();
-    for item in &checklist.items {
-        if item.instances.len() > 1 {
-            several.push((vec![item.id.clone()], Some(item.instances.clone())));
-        } else {
-            single.push(item.id.clone());
-        }
-    }
-    let mut groups = Vec::new();
-    if !single.is_empty() {
-        groups.push((single, None));
-    }
-    groups.extend(several);
-    groups
-}
-
-/// The tool the judge answers with under v3, for this checklist: `items` a list whose
-/// entries are of one form for the items of one instance, their `id` one of those ids, and
-/// of one form for each item of several, its `id` that item's and its findings' `instances`
-/// an enum of its instances. One form alone is given as it is, more as `anyOf`.
+/// The tool the judge answers with under v3, for this checklist: one form of item, its `id`
+/// an enum of the checklist's ids; and, when an item holds more than one instance (a
+/// reference's, an evidence item's), its findings' `instances` an enum of every instance of
+/// such an item, each once, in the checklist's order. One form whatever the checklist, so
+/// that the tool grows by an id or an instance at a time and never by a form (the review of
+/// #326: Flash's input ceiling ended 14 runs of v2's larger tool). An instance of another
+/// item than the finding's is refused when read, as `item_findings` ([`read_back`]).
 pub fn submit_tool_v3(checklist: &Checklist) -> Option<ToolDefinition> {
     let mut tool: Json = serde_json::from_str(SUBMIT_TOOL_V3).ok()?;
-    let item = tool.pointer("/input_schema/$defs/Item")?.clone();
-    let finding = tool.pointer("/input_schema/$defs/ItemFinding")?.clone();
-    let mut forms = Vec::new();
-    for (ids, instances) in groups(checklist) {
-        let mut form = item.clone();
-        form["properties"]["id"] = json!({
-            "description": "The checklist item id exactly as listed, for example `chk:ob:SF1@candidate`.",
-            "enum": ids,
-            "type": "string",
-        });
-        let mut finding = finding.clone();
-        if let Some(instances) = instances {
-            finding["properties"]["instances"] = json!({
-                "description": "Which of this item's instances the finding bears on, by id; an empty list means all of them.",
-                "items": {"enum": instances, "type": "string"},
-                "type": "array",
-            });
-            let required = finding["required"].as_array_mut()?;
-            required.push(json!("instances"));
-            required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    let ids: Vec<&str> = checklist.ids().collect();
+    let mut instances: Vec<&str> = Vec::new();
+    for item in checklist
+        .items
+        .iter()
+        .filter(|item| item.instances.len() > 1)
+    {
+        for instance in &item.instances {
+            if !instances.contains(&instance.as_str()) {
+                instances.push(instance);
+            }
         }
-        form["properties"]["findings"]["items"] = finding;
-        forms.push(form);
     }
-    let items = tool.pointer_mut("/input_schema/properties/items")?;
-    items["items"] = match forms.len() {
-        1 => forms.remove(0),
-        _ => json!({"anyOf": forms}),
-    };
-    let defs = tool
-        .pointer_mut("/input_schema/$defs")
-        .and_then(Json::as_object_mut)?;
-    defs.remove("Item");
-    defs.remove("ItemFinding");
+    let item = tool.pointer_mut("/input_schema/$defs/Item/properties")?;
+    item["id"] = json!({
+        "description": "The checklist item id exactly as listed, for example `chk:ob:SF1@candidate`.",
+        "enum": ids,
+        "type": "string",
+    });
+    if !instances.is_empty() {
+        let finding = tool.pointer_mut("/input_schema/$defs/ItemFinding")?;
+        finding["properties"]["instances"] = json!({
+            "description": "Only for an item that lists several instances: which of that item's \
+                instances the finding bears on, by id; an empty list means all of them.",
+            "items": {"enum": instances, "type": "string"},
+            "type": "array",
+        });
+        let required = finding["required"].as_array_mut()?;
+        required.push(json!("instances"));
+        required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    }
     let description = tool.get("description")?.as_str()?.to_owned();
     ToolDefinition::new(SUBMIT, &description, tool.get("input_schema")?.clone()).ok()
 }

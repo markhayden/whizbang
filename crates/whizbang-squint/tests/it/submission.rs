@@ -1129,32 +1129,113 @@ fn v1_is_unchanged() {
 
 #[test]
 fn v3s_tool_is_the_fixture_each_adapter_is_sent() {
-    // The fixture each adapter's test sends (`whizbang-backends`, plan mE, task F1, item
-    // 4) is v3's tool for source-fidelity's shorthand checklist, as the build writes it.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/submission/v3-source-fidelity.json");
-    let fixture: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-    let tool = use_case::submit_tool_v3(&fidelity_checklist()).unwrap();
-    assert_eq!(
-        fixture,
+    // The fixtures each adapter's test sends (`whizbang-backends`, plan mE, task F1, item
+    // 4) are v3's tool, as the build writes it, for source-fidelity's shorthand checklist,
+    // whose items are of one instance each, and for reference-consistency's with one
+    // reference, whose item is of several.
+    let fixture = |name: &str| -> Json {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../fixtures/submission/{name}.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let built = |checklist: &Checklist| {
+        let tool = use_case::submit_tool_v3(checklist).unwrap();
         json!({"name": tool.name(), "description": tool.description(),
                "input_schema": tool.schema()})
-    );
-    // A checklist with an item of several instances is given a form for it, as `anyOf`,
-    // whose findings' instances are an enum of that item's.
+    };
+    assert_eq!(fixture("v3-source-fidelity"), built(&fidelity_checklist()));
     let job = v3_job("reference-consistency");
     let resolved = use_case::resolve(&job).unwrap();
     let checklist = Checklist::build(&resolved, &job);
-    let tool = use_case::submit_tool_v3(&checklist).unwrap();
-    let forms = tool.schema()["properties"]["items"]["items"]["anyOf"]
-        .as_array()
-        .unwrap()
-        .clone();
-    assert_eq!(forms.len(), 2);
+    let tool = built(&checklist);
+    assert_eq!(fixture("v3-reference-consistency"), tool);
+    // One form of item whatever the checklist; the instances a finding may list are those
+    // of the items of several, here the reference's.
+    let finding = &tool["input_schema"]["$defs"]["ItemFinding"];
     let reference = checklist.get("chk:ref:reference-1").unwrap();
     assert_eq!(
-        forms[1]["properties"]["findings"]["items"]["properties"]["instances"]["items"]["enum"],
+        finding["properties"]["instances"]["items"]["enum"],
         json!(reference.instances)
     );
-    assert!(forms[0]["properties"]["findings"]["items"]["properties"]["instances"].is_null());
+    assert_eq!(
+        tool["input_schema"]["properties"]["items"]["items"],
+        json!({"$ref": "#/$defs/Item"})
+    );
+}
+
+/// `$ref`s written in place, as the Google adapter writes a schema's definitions: what the
+/// size of a tool is to a provider that is sent it so.
+fn inlined(value: &Json, defs: &Json) -> Json {
+    match value {
+        Json::Object(fields) => {
+            if let Some(Json::String(to)) = fields.get("$ref") {
+                let name = to.trim_start_matches("#/$defs/");
+                let mut out = inlined(&defs[name], defs);
+                for (key, field) in fields.iter().filter(|(k, _)| *k != "$ref") {
+                    out[key.as_str()] = inlined(field, defs);
+                }
+                return out;
+            }
+            Json::Object(
+                (fields.iter())
+                    .filter(|(k, _)| *k != "$defs")
+                    .map(|(k, v)| (k.clone(), inlined(v, defs)))
+                    .collect(),
+            )
+        }
+        Json::Array(values) => Json::Array(values.iter().map(|v| inlined(v, defs)).collect()),
+        other => other.clone(),
+    }
+}
+
+#[test]
+fn v3s_tool_stays_small_at_its_largest_checklist() {
+    // The worst case of a run: the most images a check takes (a candidate and nine
+    // references under reference-consistency, each reference an item of several
+    // instances), and the most evidence items a checklist holds, each on the candidate.
+    // Written in place as the Google adapter writes it, v3's tool stays within 12 KiB, and
+    // is at most 3 KiB more than the smallest checklist's: it grows by an id or an
+    // instance, never by a form.
+    let job = whizbang_squint::job::Job::shorthand("reference-consistency", false, 9, None);
+    let resolved = use_case::resolve(&job).unwrap();
+    let mut checklist = Checklist::build(&resolved, &job);
+    let regions: Vec<whizbang_squint::checklist::Located> = (0..24)
+        .map(|n| whizbang_squint::checklist::Located {
+            image: "candidate".to_owned(),
+            bounds: [f64::from(n) * 10.0, 0.0, f64::from(n) * 10.0 + 5.0, 5.0],
+            shown: format!("raw:candidate bbox [{n}]"),
+            label: "changed".to_owned(),
+            score: 0.5,
+        })
+        .collect();
+    for (call, chunk) in regions.chunks(8).enumerate() {
+        whizbang_squint::checklist::ingest(
+            &mut checklist,
+            &format!("call:{call}"),
+            "subject_match",
+            chunk,
+            &resolved,
+            whizbang_squint::checklist::EVIDENCE_ITEMS_LIMIT,
+        )
+        .unwrap();
+    }
+    assert_eq!(checklist.evidence_count(), 24);
+    let schema = use_case::submit_tool_v3(&checklist)
+        .unwrap()
+        .schema()
+        .clone();
+    let written = inlined(&schema, &schema["$defs"]).to_string();
+    assert!(!written.contains("$ref"));
+    let small = use_case::submit_tool_v3(&fidelity_checklist())
+        .unwrap()
+        .schema()
+        .clone();
+    let small = inlined(&small, &small["$defs"]).to_string();
+    assert!(written.len() <= 12 * 1024, "{} bytes", written.len());
+    assert!(
+        written.len() - small.len() <= 3 * 1024,
+        "{} against {}",
+        written.len(),
+        small.len()
+    );
 }

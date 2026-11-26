@@ -76,10 +76,12 @@ pub const USE_CASES: [&str; 6] = [
 
 /// The action's name.
 pub const NAME: &str = "check";
-/// The action a tool file's capability is asked through (`whizbang_rascal::segment`).
+/// The actions a tool file's capabilities are asked through: `segment`
+/// (`whizbang_rascal::segment`) and `labels` (`whizbang_rascal::labels`, plan mE, task T2).
 const SEGMENT: &str = "segment";
+const LABELS: &str = "labels";
 /// The action's version.
-pub const VERSION: &str = "1.8.0";
+pub const VERSION: &str = "1.9.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -674,22 +676,33 @@ fn run_tools_submit(
     Ok(())
 }
 
+/// What [`located`] makes of a tool file's regions: each region on the raw frame of an image
+/// of the job, by its place in the output; and the place of each that is on another frame.
+type Placed = (Vec<(usize, crate::checklist::Located)>, Vec<usize>);
+
 /// The regions of a tool file's output, as the checklist takes them: each on the image of
-/// the job whose raw frame its binding was handed (a region on any other frame, an aligned
-/// one or a crop, is on no image of the job, named by the frame's artifact, and binds to
-/// nothing), its bounds in that image's pixels (a polygon's, for a polygon), and where it
-/// is said as fractions of that image, as a submission locates things.
+/// the job whose raw frame its binding was handed, its bounds in that image's pixels (a
+/// polygon's, for a polygon), and where it is said as fractions of that image, as a
+/// submission locates things. A region on any other frame, an aligned one or a crop, is
+/// never an item (squint mapped such a region to its root frame first; whizbang does not
+/// yet), and is given apart, by its place.
 fn located(
     context: &Context,
     output: &Json,
     images: &[(String, ArtifactId)],
     names: &Names,
     job: &Job,
-) -> Vec<crate::checklist::Located> {
+) -> Placed {
     let limits = DecodeLimits::default();
-    let mut out = Vec::new();
+    let mut on_images = Vec::new();
+    let mut elsewhere = Vec::new();
     let regions = output.get("regions").and_then(Json::as_array);
-    for region in regions.into_iter().flatten() {
+    for (at, region) in regions.into_iter().flatten().enumerate() {
+        // The output was held to the tool's declaration before `check` sees it (the
+        // binary's `tool_file::region`): every region is on a binding the run handed the
+        // tool, with a box of four numbers or a polygon of points of two. The `continue`s
+        // on those below are not reached; they keep a region that is not so out of the
+        // checklist rather than guess at it.
         let frame = region
             .get("frame")
             .and_then(Json::as_str)
@@ -697,13 +710,15 @@ fn located(
         let Some((_, artifact)) = images.iter().find(|(binding, _)| binding == frame) else {
             continue;
         };
-        let image = (job.images.iter())
-            .find(|image| {
-                names
-                    .resolve(&format!("raw:{}", image.id))
-                    .is_some_and(|(id, _)| id == *artifact)
-            })
-            .map_or_else(|| artifact.to_string(), |image| image.id.clone());
+        let image = job.images.iter().find(|image| {
+            names
+                .resolve(&format!("raw:{}", image.id))
+                .is_some_and(|(id, _)| id == *artifact)
+        });
+        let Some(image) = image.map(|image| image.id.clone()) else {
+            elsewhere.push(at);
+            continue;
+        };
         let numbers = |value: Option<&Json>| -> Vec<f64> {
             (value.and_then(Json::as_array).into_iter().flatten())
                 .filter_map(Json::as_f64)
@@ -745,19 +760,63 @@ fn located(
                 bounds[0], bounds[1], bounds[2], bounds[3]
             ),
         };
-        out.push(crate::checklist::Located {
-            image,
-            bounds,
-            shown,
-            label: region
-                .get("label")
-                .and_then(Json::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            score: region.get("score").and_then(Json::as_f64).unwrap_or(0.0),
-        });
+        let label = region
+            .get("label")
+            .and_then(Json::as_str)
+            .unwrap_or_default();
+        on_images.push((
+            at,
+            crate::checklist::Located {
+                image,
+                bounds,
+                shown,
+                label: label.to_owned(),
+                score: region.get("score").and_then(Json::as_f64).unwrap_or(0.0),
+            },
+        ));
     }
-    out
+    (on_images, elsewhere)
+}
+
+/// Takes a tool file's regions into the checklist ([`located`], `checklist::ingest`): what
+/// was added and dropped, each dropped region by its place in the output; or why the result
+/// is not presented.
+fn evidence_of(
+    context: &Context,
+    output: &Json,
+    images: &[(String, ArtifactId)],
+    names: &Names,
+    judging: &mut Judging,
+    call: &str,
+    kind: &str,
+) -> Result<crate::checklist::Ingest, String> {
+    let (on_images, elsewhere) = located(context, output, images, names, &judging.job);
+    let mut took = crate::checklist::Ingest::default();
+    if !on_images.is_empty() {
+        let regions: Vec<crate::checklist::Located> =
+            on_images.iter().map(|(_, region)| region.clone()).collect();
+        took = crate::checklist::ingest(
+            &mut judging.checklist,
+            call,
+            kind,
+            &regions,
+            &judging.resolved,
+            crate::checklist::EVIDENCE_ITEMS_LIMIT,
+        )?;
+        for dropped in &mut took.dropped {
+            dropped.region = on_images[dropped.region].0;
+        }
+    }
+    took.dropped.extend(
+        elsewhere
+            .into_iter()
+            .map(|region| crate::checklist::Dropped {
+                region,
+                reason: "it is on a frame that is not an image's raw frame".to_owned(),
+            }),
+    );
+    took.dropped.sort_by_key(|dropped| dropped.region);
+    Ok(took)
 }
 
 /// The argument of a tool file that names its method.
@@ -1015,26 +1074,11 @@ impl Run<'_> {
                 // items of the checklist the judge must then answer (plan mE, task F1;
                 // squint's `run.rs`): a result past the budget is not presented.
                 if let (Some(judging), Some(kind)) = (judging, tool.region_kind.as_deref()) {
-                    let regions = located(
-                        self.context,
-                        &ran.output,
-                        &images,
-                        &self.names,
-                        &judging.job,
-                    );
-                    if !regions.is_empty() {
-                        let took = crate::checklist::ingest(
-                            &mut judging.checklist,
-                            id,
-                            kind,
-                            &regions,
-                            &judging.resolved,
-                            crate::checklist::EVIDENCE_ITEMS_LIMIT,
-                        );
-                        match took {
-                            Ok(took) => said.push_str(&evidence_said(&took, judging)),
-                            Err(why) => return answer(&format!("not presented: {why}"), true),
-                        }
+                    let output = &ran.output;
+                    let names = &self.names;
+                    match evidence_of(self.context, output, &images, names, judging, id, kind) {
+                        Ok(took) => said.push_str(&evidence_said(&took, judging)),
+                        Err(why) => return answer(&format!("not presented: {why}"), true),
                     }
                 }
                 answer(&said, false)
@@ -1466,12 +1510,13 @@ impl Action for Check {
             .filter(|input| input.port() == MEASURED_IMAGES)
             .map(|input| input.id())
             .collect();
-        // A tool file's capabilities are nested calls of this run: `segment` is frozen
-        // with the tools when the run names one, and is never offered to the judge.
+        // A tool file's capabilities are nested calls of this run: `segment` and `labels`
+        // are frozen with the tools when the run names one, and are never offered to the
+        // judge.
         let asks: &[&str] = if named_files.is_empty() {
             &[]
         } else {
-            &[SEGMENT]
+            &[SEGMENT, LABELS]
         };
         let frozen = named
             .iter()

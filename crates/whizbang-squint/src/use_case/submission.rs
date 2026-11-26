@@ -84,11 +84,11 @@ pub enum Class {
     Evidence,
     /// `submit_verdict` called with other calls, or more than once in a turn.
     NotAlone,
+    /// A turn of the judge that ended without calling `submit_verdict`.
+    NoSubmission,
     /// Under submission v3: an item's findings that are not a list, or a finding inside an
     /// item that lists an instance the item does not hold (plan mE, task F1).
     ItemFindings,
-    /// A turn of the judge that ended without calling `submit_verdict`.
-    NoSubmission,
 }
 
 impl Class {
