@@ -22,7 +22,7 @@ from typing import Any
 
 from . import plan as plan_mod
 from . import toml_out
-from .build import outside_every_repository, write_text
+from .build import outside_every_repository
 
 STRUCTURAL = ("mirror", "rotate", "crop", "tilt", "zoom", "keystone")
 POOL_SET_KEYS = {"id", "use_case", "licence", "rules", "requirements"}
@@ -51,7 +51,7 @@ def _pass(rng: random.Random, restyles: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _edit(rng: random.Random, edits: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"kind": "edit", **rng.choice(edits)}
+    return {**rng.choice(edits), "kind": "edit"}
 
 
 def draw(pool: dict[str, Any], seed: int) -> str:
@@ -78,6 +78,10 @@ def draw(pool: dict[str, Any], seed: int) -> str:
         restyles = list(f.get("restyles", []))
         if not edits:
             raise ValueError("each pool family has at least one edit")
+        if any(not isinstance(e, dict) or "kind" in e or "prompt" not in e for e in edits):
+            raise ValueError("a pool edit has a prompt and no kind: it is an edit")
+        if any(not isinstance(r, dict) or set(r) != {"prompt"} for r in restyles):
+            raise ValueError("a pool restyle has a prompt and nothing else")
         kinds = ["pass", "edit", "structural"] + [rng.choice(("pass", "edit", "structural")) for _ in range(per - 3)]
         rng.shuffle(kinds)
         family = {k: v for k, v in f.items() if k not in ("edits", "restyles")}
@@ -101,12 +105,14 @@ def run(pool_path: Path, seed: int, out: Path) -> tuple[int, int]:
     returns (families, items)."""
     pool_path = outside_every_repository(pool_path, "--pool")
     out = outside_every_repository(out, "--out")
-    if out.exists():
-        raise ValueError("--out is there already; a drawn plan is never written over")
     with open(pool_path, "rb") as f:
         pool = tomllib.load(f)
     text = draw(pool, seed)
     parsed = plan_mod.parse(text)
     out.parent.mkdir(parents=True, exist_ok=True)
-    write_text(out, text)
+    try:
+        with open(out, "x", encoding="utf-8", newline="") as f:
+            f.write(text)
+    except FileExistsError:
+        raise ValueError("--out is there already; a drawn plan is never written over") from None
     return len(parsed.families), sum(len(f.items) for f in parsed.families)

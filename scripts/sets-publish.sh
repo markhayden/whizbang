@@ -12,7 +12,9 @@
 # set's labels move to <owner storage>/<set id>/labels/); the pictures copied into the clone
 # and committed there; that commit pinned as the set's images_rev; the set, without its
 # pictures, placed under evalsets/; `whizbang eval sets check`. Pushing the clone, the row of
-# evalsets/README.md and the commit here are the owner's steps after it.
+# evalsets/README.md and the commit here are the owner's steps after it. A publish that
+# failed part-way is begun again from the start, after the clone's commit of the set (if
+# one was made) is taken back and evalsets/<set id> removed: docs/evalsets.md says how.
 #
 # The clone's remote `origin` must be the pictures' repository by its current name
 # (github.com/markhayden/whizbang-evalsets). Neither folder may be inside this repository.
@@ -28,20 +30,26 @@ die() { echo "sets-publish: $*" >&2; exit 1; }
 set_id=${1:-}
 attest=${2:-}
 [ $# -eq 2 ] && [ -n "$attest" ] || die "usage: sets-publish.sh <use-case>/<set> \"<attestation>\""
-printf '%s\n' "$set_id" | grep -E '^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$' >/dev/null ||
-  die "a set's id is <use-case>/<set>, of lower-case letters, digits and hyphens"
+id_form='^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$'
+[[ "$set_id" =~ $id_form ]] || die "a set's id is <use-case>/<set>, of lower-case letters, digits and hyphens"
 owner=${WHIZBANG_OWNER_DIR:?sets-publish: name owner storage in WHIZBANG_OWNER_DIR}
 clone=${WHIZBANG_EVALSETS_DIR:?sets-publish: name the clone of the pictures repository in WHIZBANG_EVALSETS_DIR}
 sets_root=${WHIZBANG_SETS_ROOT:-$root/evalsets}
 [ -d "$owner" ] || die "owner storage is not a folder"
 if git -C "$owner" rev-parse --git-dir >/dev/null 2>&1; then die "owner storage is inside a repository"; fi
 [ -d "$clone/.git" ] || die "WHIZBANG_EVALSETS_DIR is not a clone"
-[ "$(cd "$clone" && pwd -P)" != "$root" ] || die "WHIZBANG_EVALSETS_DIR is this repository"
+clone=$(cd "$clone" && pwd -P)
+case "$clone/" in "$root"/*) die "WHIZBANG_EVALSETS_DIR is inside this repository" ;; esac
+[ "$(git -C "$clone" rev-parse --show-toplevel)" = "$clone" ] || die "WHIZBANG_EVALSETS_DIR is not the top of its clone"
 url=$(git -C "$clone" remote get-url origin 2>/dev/null) || die "the clone has no remote origin"
 case "$url" in
-  *github.com[:/]markhayden/whizbang-evalsets | *github.com[:/]markhayden/whizbang-evalsets.git) ;;
+  https://github.com/markhayden/whizbang-evalsets | https://github.com/markhayden/whizbang-evalsets.git \
+  | git@github.com:markhayden/whizbang-evalsets | git@github.com:markhayden/whizbang-evalsets.git \
+  | ssh://git@github.com/markhayden/whizbang-evalsets | ssh://git@github.com/markhayden/whizbang-evalsets.git) ;;
   *) die "the clone's origin is not github.com/markhayden/whizbang-evalsets" ;;
 esac
+[ ! -e "$clone/$set_id" ] || die "the clone holds $set_id already; its pictures are never written over"
+git -C "$clone" diff --cached --quiet || die "the clone has changes staged; commit or clear them first"
 build=$owner/build/evalsets/$set_id
 draft=$owner/$set_id/labels-draft.toml
 [ -f "$build/set.toml" ] || die "no set is built at <owner storage>/build/evalsets/$set_id"

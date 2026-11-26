@@ -22,7 +22,10 @@ def prices_file(folder, rows):
     path = os.path.join(folder, "prices.toml")
     with open(path, "w") as f:
         for name, usd in rows.items():
-            f.write(f"[generator.{name}]\nusd_per_picture = {usd}\nchecked_on = 2026-11-25\n")
+            f.write(
+                f"[generator.{name}]\nusd_per_request = {usd}\nlargest_side = 1024\n"
+                "pictures_sent = 4\nchecked_on = 2026-11-25\n"
+            )
     return path
 
 
@@ -66,7 +69,7 @@ class Ledger(unittest.TestCase):
     def test_every_attempt_a_retry_included_is_charged_before_it_is_sent_and_none_past_the_allowance(self):
         with kit.Scratch() as s:
             ledger = spend.Ledger(Path(s) / "ledger.jsonl", 0.03)
-            guard = spend.Guard(ledger, {"fal": 10_000})
+            guard = spend.Guard(ledger, {"fal": (10_000, 1024, 4)})
             sent = []
             opener, calls = scripted([http_error(503), http_error(503), b"ok", b"ok"])
 
@@ -80,7 +83,7 @@ class Ledger(unittest.TestCase):
 
             a = approved(("https://fal.run", (), ("prompts",)))
             sender = egress.Sender(a, sleep=lambda w: None, opener=counting)
-            charge = lambda r: guard.charge("fal", r)  # noqa: E731
+            charge = lambda r: guard.charge("fal", r, 1024, 1)  # noqa: E731
             self.assertEqual(sender.post("https://fal.run/m", b"", {}, {}, ("prompts",), "m", charge)[0], b"ok")
             self.assertEqual(sent, [10_000, 20_000, 30_000], "each attempt was written before it went")
             with self.assertRaises(spend.SpendRefused):
@@ -91,13 +94,43 @@ class Ledger(unittest.TestCase):
         with kit.Scratch() as s:
             guard = spend.Guard(spend.Ledger(Path(s) / "l.jsonl", 1), {})
             with self.assertRaisesRegex(spend.SpendRefused, "prices.toml"):
-                guard.charge("gemini", egress.Recipient("g", "https://g", frozenset(), frozenset()))
+                guard.charge("gemini", egress.Recipient("g", "https://g", frozenset(), frozenset()), 64, 0)
             self.assertEqual(spend.prices(spend.PRICES_FILE), {}, "no price is written before the orchestrator reads one")
             with open(os.path.join(s, "bad.toml"), "w") as f:
                 f.write("[generator.fal]\nusd_per_picture = 0.01\n")
             with self.assertRaisesRegex(ValueError, "checked_on"):
                 spend.prices(os.path.join(s, "bad.toml"))
-            self.assertEqual(spend.prices(prices_file(s, {"fal": 0.0125})), {"fal": 12_500})
+            self.assertEqual(spend.prices(prices_file(s, {"fal": 0.0125})), {"fal": (12_500, 1024, 4)})
+
+    def test_a_request_larger_than_its_bound_was_priced_for_is_not_sent(self):
+        with kit.Scratch() as s:
+            ledger = spend.Ledger(Path(s) / "l.jsonl", 1)
+            guard = spend.Guard(ledger, {"fal": (10_000, 512, 1)})
+            r = egress.Recipient("f", "https://fal.run", frozenset(), frozenset())
+            for side, sent in ((1024, 1), (512, 2)):
+                with self.assertRaisesRegex(spend.SpendRefused, "larger than its bound"):
+                    guard.charge("fal", r, side, sent)
+            guard.charge("fal", r, 512, 1)
+            self.assertEqual(ledger.held(), 10_000)
+
+    def test_four_processes_share_one_ledger_and_none_passes_its_allowance(self):
+        import subprocess
+        import sys
+
+        with kit.Scratch() as s:
+            path = Path(s) / "ledger.jsonl"
+            spend.Ledger(path, 0.3)
+            code = (
+                "import sys; sys.path.insert(0, sys.argv[1]); from whizbang_sets import spend\n"
+                "l = spend.Ledger(sys.argv[2])\n"
+                "for _ in range(12):\n"
+                "    try: l.charge('fal', 10000, 'https://fal.run')\n"
+                "    except spend.SpendRefused: pass\n"
+            )
+            children = [subprocess.Popen([sys.executable, "-I", "-B", "-c", code, kit.TOOL, str(path)]) for _ in range(4)]
+            self.assertEqual([c.wait(10) for c in children], [0, 0, 0, 0])
+            head, lines = entries(path)
+            self.assertEqual((len(lines), spend.Ledger(path).held()), (30, 300_000))
 
 
 def picture_answer(size=64):
@@ -118,7 +151,7 @@ class Live(unittest.TestCase):
         with kit.Scratch() as s, Server(body=picture_answer()) as provider:
             a = approved((provider.origin, (), ("prompts", "source_images")))
             ledger = spend.Ledger(Path(s) / "owner" / "ledger.jsonl", 1)
-            guard = spend.Guard(ledger, {"fal": 10_000})
+            guard = spend.Guard(ledger, {"fal": (10_000, 1024, 4)})
             gens = generators.live(egress.Sender(a, sleep=lambda w: None), guard)
             gens["fal"].base = provider.origin
             report = build.build(plan, Path(s) / "evalsets" / plan.set.id, Path(s) / "owner", gens)

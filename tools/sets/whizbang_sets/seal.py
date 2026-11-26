@@ -188,17 +188,23 @@ def promote(
 
 def pin(set_dir: Path, rev: str) -> None:
     """Names the revision of the pictures' repository the set's pictures were committed at
-    (`images_rev`), which the seal does not cover; nothing else of the set changes."""
+    (`images_rev`), which the seal does not cover; nothing else of the set changes. A set
+    pinned at another revision already is refused: a pin is never changed unsaid."""
     set_dir = Path(set_dir)
-    manifest = tomllib.loads(read_text(set_dir / "set.toml"))
-    meta = {k: v for k, v in manifest["set"].items() if k != "images_rev"}
-    fields = list(meta.items())
+    path = set_dir / "set.toml"
+    before_text = read_text(path)
+    manifest = tomllib.loads(before_text)
+    held = manifest["set"].get("images_rev")
+    if held == rev:
+        return
+    if held is not None:
+        raise ValueError("the set is pinned at another revision already; it is not changed")
+    fields = list(manifest["set"].items())
     at = [k for k, _ in fields].index("images_repo") + 1
     fields.insert(at, ("images_rev", rev))
+    text = build.manifest_text(dict(fields), manifest.get("item", []), "Built by whizbang-sets; labels confirmed by the owner.")
     before = components(set_dir)
-    write_text(
-        set_dir / "set.toml",
-        build.manifest_text(dict(fields), manifest.get("item", []), "Built by whizbang-sets; labels confirmed by the owner."),
-    )
+    write_text(path, text)
     if components(set_dir) != before:
-        raise AssertionError("pinning the revision changed what the seal covers")
+        write_text(path, before_text)
+        raise ValueError("pinning the revision would change what the seal covers; nothing was changed")

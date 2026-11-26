@@ -142,11 +142,17 @@ are read from `FAL_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY`.
 **The spend guard.** A live build or rebuild names a ledger in owner storage, `--ledger`, one
 for all of a milestone's generation, and sets its allowance once, at its first use
 (`--cap-usd 8`); every later build shares it, across interruptions. `tools/sets/prices.toml`
-holds a dated bound price per picture for each generator, read from the provider's page by the
-orchestrator before the first build; a generator with no row is never used live. Each request,
-each retry included, is charged at its bound and written to the ledger, synced, before it is
-sent, and one that would pass the allowance is not sent. The build prints what the ledger
-holds. This spend is outside every store's ledger.
+holds, for each generator, the most that one request as the builder builds it can cost
+(`usd_per_request`): at the largest side of any picture it sends or asks for (`largest_side`,
+the largest source size in use) and with as many pictures sent as `pictures_sent` (up to 4
+references), input tokens included, dated (`checked_on`), read from the provider's page by
+the orchestrator before the first build. A generator with no row is never used live, and a
+request larger than its row in either is refused. OpenAI's edits are asked for at the size of
+the picture sent, so the answer is of the shape priced. Each request, each retry included, is
+charged at its bound and written to the ledger, synced, before it is sent, and one that would
+pass the allowance is not sent; a request with no charge is never sent. The build prints what
+the ledger holds. This spend is outside every store's ledger. Where the config approves
+several accounts at one origin, `--account` names the one to send as.
 
 **Full requirements.** A protected subject of a scene family may be a table that states its
 `colour`, `count` and `lettering`: `{ subject = "the red door", colour = "red", count =
@@ -178,7 +184,11 @@ scripts/sets-publish.sh <set id> "<attestation>"` promotes the set built at `<ow
 storage>/build/evalsets/<set id>`, commits its pictures in the clone of the pictures'
 repository (whose `origin` must be the current name), pins that commit (`pin`), places the
 set without its pictures under `evalsets/` and checks it. It never writes over a published
-set. Pushing the clone, the row of `evalsets/README.md` and the commit here follow.
+set or pictures the clone holds, and refuses a clone inside this repository or with changes
+staged. Pushing the clone, the row of `evalsets/README.md` and the commit here follow. A publish
+that failed part-way is run again from the start once what it did is taken back: the clone's
+commit of the set (`git reset --hard HEAD~1` there, if it was made), `evalsets/<set id>`
+removed, and for a blind set its `labels/` in owner storage moved aside.
 
 `scripts/tests/test-sets.sh` runs the builder's tests and the offline dry run: a set of each
 use case, a blind one and the seasonal cover pair, built with the fake generator, confirmed,

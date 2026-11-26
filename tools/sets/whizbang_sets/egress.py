@@ -130,7 +130,7 @@ def origin_of(url: str) -> str:
 def config_origin(text: str) -> str:
     """An origin as a config gives one: nothing after it."""
     origin, rest = _parse(text, query=False)
-    if rest not in ("", "/"):
+    if rest != "":
         raise Refused("an origin in the config has something after it")
     return origin
 
@@ -197,11 +197,18 @@ class Approved:
             out.append(Recipient(name, origin, upstreams, frozenset(classes), account))
         return cls(out)
 
-    def recipient_for(self, url: str, classes: tuple[str, ...]) -> Recipient:
-        """The recipient at the address's origin that may receive every one of `classes`."""
+    def recipient_for(self, url: str, classes: tuple[str, ...], account: str | None = None) -> Recipient:
+        """The recipient at the address's origin that may receive every one of `classes`, of
+        `account` when one is named. Where the config approves several accounts at the origin,
+        one must be named: which is meant is never guessed."""
         origin = origin_of(url)
-        for r in self.recipients:
-            if r.origin == origin and set(classes) <= r.classes:
+        at = [r for r in self.recipients if r.origin == origin]
+        if account is not None:
+            at = [r for r in at if r.account == account]
+        elif len(at) > 1:
+            raise Refused(f"the config approves several accounts at {origin}; name one with --account")
+        for r in at:
+            if set(classes) <= r.classes:
                 return r
         raise Refused(
             f"{origin} is not approved by the config as a recipient of {', '.join(classes)} "
@@ -235,8 +242,9 @@ class Sender:
     """Every request and download of the generators. `opener` makes the opener of one
     request from its handlers (a test swaps it); `sleep` waits between tries."""
 
-    def __init__(self, approved: Approved, sleep=time.sleep, opener=urllib.request.build_opener):
+    def __init__(self, approved: Approved, sleep=time.sleep, opener=urllib.request.build_opener, account=None):
         self.approved = approved
+        self.account = account
         self.sleep = sleep
         self.opener = opener
 
@@ -251,13 +259,16 @@ class Sender:
         charge: Callable[[Recipient], None] | None = None,
     ) -> tuple[bytes, Recipient]:
         """The answer of a POST to `url`, with the recipient it went to. `charge` is called
-        before each attempt, a retry included, and may refuse it (the spend guard)."""
-        recipient = self.approved.recipient_for(url, classes)
+        before each attempt, a retry included, and may refuse it (the spend guard). A POST
+        with no charge is refused: nothing is sent unguarded."""
+        if charge is None:
+            raise Refused("a request with no charge to the spend guard was refused; nothing was sent")
+        recipient = self.approved.recipient_for(url, classes, self.account)
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         for k, v in credentials.items():
             req.add_unredirected_header(k, v)
         allowed = lambda origin: recipient.reaches(origin)  # noqa: E731
-        before = (lambda: charge(recipient)) if charge else None
+        before = lambda: charge(recipient)  # noqa: E731
         return self._open(req, allowed, what, before), recipient
 
     def get(self, url: str, via: Recipient, what: str) -> bytes:

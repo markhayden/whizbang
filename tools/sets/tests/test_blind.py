@@ -182,6 +182,15 @@ class Draw(unittest.TestCase):
             self.assertEqual(code, 1, "a drawn plan is never written over")
             self.assertNotIn("quayside", said)
 
+    def test_a_pool_edit_cannot_name_another_kind(self):
+        with kit.Scratch() as s:
+            path = self.pool(s)
+            with open(path, "w") as f:
+                f.write(POOL.replace('removes = "red crane" }', 'removes = "red crane", kind = "grade" }'))
+            code, _ = run("draw", "--pool", path, "--seed", "1", "--out", f"{s}/owner/k.plan.toml")
+            self.assertEqual(code, 1)
+            self.assertFalse(os.path.exists(f"{s}/owner/k.plan.toml"))
+
     def test_a_pool_or_a_plan_inside_a_repository_is_refused(self):
         with kit.Scratch() as s:
             pool = self.pool(s)
@@ -208,6 +217,10 @@ class Pin(unittest.TestCase):
             self.assertEqual(seal.components(folder), tomllib.loads(sealed)["seal"]["components"])
             code, _ = run("pin", "--set", str(folder), "--rev", "main")
             self.assertEqual(code, 1)
+            self.assertEqual(run("pin", "--set", str(folder), "--rev", "ab" * 20)[0], 0, "the same pin again")
+            code, said = run("pin", "--set", str(folder), "--rev", "cd" * 20)
+            self.assertEqual(code, 1)
+            self.assertIn("pinned at another revision", said)
 
 
 if __name__ == "__main__":

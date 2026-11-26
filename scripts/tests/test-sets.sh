@@ -132,8 +132,20 @@ rev=$(git -C "$clone" rev-parse HEAD)
 grep -x -F "images_rev = \"$rev\"" "$tmp/published/$publish_id/set.toml" >/dev/null || fail "the clone's commit is pinned"
 [ -z "$(find "$tmp/published" -name '*.png')" ] || fail "no picture is placed with the set"
 [ -n "$(git -C "$clone" ls-files -- "$publish_id" | grep '\.png$' || true)" ] || fail "the pictures are committed in the clone"
-expect_fail "publish it again" "a sealed set is never edited" publish "$publish_id" "the dry run"
-git -C "$clone" remote set-url origin git@github.com:markhayden/wafflery-evalsets.git
-expect_fail "a clone of the old name" "is not github.com/markhayden/whizbang-evalsets" publish "$publish_id" "x"
+expect_fail "publish it again" "its pictures are never written over" publish "$publish_id" "the dry run"
+git -C "$clone" rm -q -r -- "$publish_id" && git -C "$clone" commit -q -m "taken back"
+expect_fail "publish it again, its pictures taken back" "a sealed set is never edited" publish "$publish_id" "the dry run"
+for url in git@github.com:markhayden/wafflery-evalsets.git https://evil.example/github.com/markhayden/whizbang-evalsets \
+  https://github.com/markhayden/whizbang-evalsets.git.example; do
+  git -C "$clone" remote set-url origin "$url"
+  expect_fail "a clone whose origin is $url" "is not github.com/markhayden/whizbang-evalsets" publish "$publish_id" "x"
+done
+git -C "$clone" remote set-url origin https://github.com/markhayden/whizbang-evalsets.git
+printf 'x\n' >"$clone/staged.txt" && git -C "$clone" add staged.txt
+expect_fail "a clone with changes staged" "changes staged" publish "reality-checks/other-v1" "x"
+mkdir -p "$root/tools/sets/clone-inside/.git"
+expect_fail "a clone inside this repository" "inside this repository" \
+  env WHIZBANG_OWNER_DIR="$owner" WHIZBANG_EVALSETS_DIR="$root/tools/sets/clone-inside" scripts/sets-publish.sh "$publish_id" "x"
+rm -r "$root/tools/sets/clone-inside"
 
 finished

@@ -42,19 +42,29 @@ def _micros(usd, what: str) -> int:
     return micros
 
 
-def prices(path: Path = PRICES_FILE) -> dict[str, int]:
-    """Each generator's bound per picture, in millionths of a dollar. A row is a generator's
-    table with `usd_per_picture` and `checked_on`, the date it was read from the provider."""
+ROW = {"usd_per_request", "largest_side", "pictures_sent", "checked_on"}
+
+
+def prices(path: Path = PRICES_FILE) -> dict[str, tuple[int, int, int]]:
+    """Each generator's bound: (millionths of a dollar, the largest side priced, the most
+    pictures sent priced). A row is the most one request as the builder builds it can cost,
+    at that side and with that many pictures sent, input tokens included, and the date it was
+    read from the provider (`checked_on`)."""
     with open(path, "rb") as f:
         doc = tomllib.load(f)
-    out: dict[str, int] = {}
+    out: dict[str, tuple[int, int, int]] = {}
     for name, row in doc.get("generator", {}).items():
         where = f"prices: generator {name}"
-        if not isinstance(row, dict) or set(row) != {"usd_per_picture", "checked_on"}:
-            raise ValueError(f"{where} has usd_per_picture and checked_on, and nothing else")
+        if not isinstance(row, dict) or set(row) != ROW:
+            raise ValueError(f"{where} has {', '.join(sorted(ROW))}, and nothing else")
         if not isinstance(row["checked_on"], dt.date):
             raise ValueError(f"{where}: checked_on is a date")
-        out[name] = _micros(row["usd_per_picture"], f"{where}: usd_per_picture")
+        side, sent = row["largest_side"], row["pictures_sent"]
+        if isinstance(side, bool) or not isinstance(side, int) or not 64 <= side <= 8192:
+            raise ValueError(f"{where}: largest_side is a number of pixels, 64 to 8192")
+        if isinstance(sent, bool) or not isinstance(sent, int) or not 0 <= sent <= 4:
+            raise ValueError(f"{where}: pictures_sent is 0 to 4")
+        out[name] = (_micros(row["usd_per_request"], f"{where}: usd_per_request"), side, sent)
     return out
 
 
@@ -135,16 +145,24 @@ class Ledger:
 class Guard:
     """The charge each generator makes before each attempt of each request."""
 
-    def __init__(self, ledger: Ledger, table: dict[str, int]):
+    def __init__(self, ledger: Ledger, table: dict[str, tuple[int, int, int]]):
         self.ledger = ledger
         self.table = table
 
-    def charge(self, generator: str, recipient) -> None:
-        """Charges one attempt of a request of `generator`, or refuses it: a generator with no
-        dated bound price is never used live."""
+    def charge(self, generator: str, recipient, side: int, pictures: int) -> None:
+        """Charges one attempt of a request of `generator`, of its largest side and the
+        pictures it sends, or refuses it: a generator with no dated bound is never used live,
+        and a request larger than its bound was priced for is never sent."""
         if generator not in self.table:
             raise SpendRefused(
                 f"no dated bound price for the generator {generator}; the orchestrator reads it "
                 "from the provider's page into prices.toml first"
             )
-        self.ledger.charge(generator, self.table[generator], recipient.shown())
+        micros, most_side, most_sent = self.table[generator]
+        if side > most_side or pictures > most_sent:
+            raise SpendRefused(
+                f"the request of {generator} is larger than its bound was priced for "
+                f"({side} pixels and {pictures} pictures sent, against {most_side} and {most_sent}); "
+                "nothing was sent"
+            )
+        self.ledger.charge(generator, micros, recipient.shown())

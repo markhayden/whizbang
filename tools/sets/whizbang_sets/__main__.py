@@ -46,6 +46,7 @@ def _parser() -> argparse.ArgumentParser:
         p.add_argument("--ledger", type=Path, help="a live build's spend ledger, in owner storage")
         p.add_argument("--cap-usd", type=float, help="the ledger's allowance, set once, at its first use")
         p.add_argument("--prices", type=Path, default=spend.PRICES_FILE, help="the dated bound prices")
+        p.add_argument("--account", help="the account to send as, where the config approves several at an origin")
 
     common(sub.add_parser("build", help="a set from a plan: the set folder and the owner's worksheet"))
     r = sub.add_parser("rebuild", help="one item again, from the family's pictures already built")
@@ -76,7 +77,7 @@ def _generators(args):
     approved = Approved.from_config(args.config)
     ledger = spend.Ledger(args.ledger, args.cap_usd)
     guard = spend.Guard(ledger, spend.prices(args.prices))
-    return generators.live(Sender(approved), guard), ledger
+    return generators.live(Sender(approved, account=args.account), guard), ledger
 
 
 def _plan(args) -> plan_mod.Plan:
