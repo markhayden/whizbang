@@ -3,6 +3,9 @@
 //! test needs no store and no executor.
 
 use whizbang_core::artifact::{Mask, UseCase};
+use whizbang_rascal::examples::{
+    feather_blob, feather_wire, plug_holes, plug_openings, select_instances,
+};
 use whizbang_rascal::feather::feather;
 use whizbang_rascal::plug::plug;
 use whizbang_rascal::select::{holding, select};
@@ -18,34 +21,12 @@ fn never() -> bool {
     false
 }
 
-fn core(set: impl Fn(usize, usize) -> bool) -> Mask {
-    mask_of(W, H, plane(W, H, set), &[0; W * H])
-}
-
-/// An ellipse centred at (cx, cy) with half-axes a and b.
-fn oval(cx: i64, cy: i64, a: i64, b: i64) -> impl Fn(usize, usize) -> bool {
-    move |x, y| {
-        let (dx, dy) = (x as i64 - cx, y as i64 - cy);
-        dx * dx * b * b + dy * dy * a * a <= a * a * b * b
-    }
-}
-
 /// One example: its name, what it was asked in words, the masks given and the mask made.
 pub struct Example {
     pub name: &'static str,
     pub asked: String,
     pub given: Vec<Mask>,
     pub made: Mask,
-}
-
-/// `select`'s three instance masks, as `segment` commits them: two ovals that overlap,
-/// and a third apart.
-fn instances() -> Vec<Mask> {
-    vec![
-        core(oval(26, 30, 16, 12)),
-        core(oval(46, 34, 12, 10)),
-        core(oval(76, 28, 12, 14)),
-    ]
 }
 
 fn examples(tool: &str) -> Vec<Example> {
@@ -57,7 +38,7 @@ fn examples(tool: &str) -> Vec<Example> {
     };
     match tool {
         "select" => {
-            let all = instances();
+            let all = select_instances();
             let kept = vec![all[0].clone(), all[2].clone()];
             let cut = select(&kept, &[[70.0, 0.0, 96.0, 24.0]], UseCase::Remove).unwrap();
             let held = holding(all.clone(), [38.0, 32.0]).unwrap();
@@ -73,19 +54,7 @@ fn examples(tool: &str) -> Vec<Example> {
             ]
         }
         "plug" => {
-            // A disc with a hole of 16 pixels and one of 196; a square with a bay open
-            // along its side and a pocket open only across its corner.
-            let holed = core(|x, y| {
-                oval(30, 32, 22, 22)(x, y)
-                    && !((20..24).contains(&x) && (30..34).contains(&y))
-                    && !((30..44).contains(&x) && (22..36).contains(&y))
-            });
-            let bays = core(|x, y| {
-                let square = (60..90).contains(&x) && (10..54).contains(&y);
-                let bay = (60..66).contains(&x) && (20..26).contains(&y);
-                let pocket = (x, y) == (60, 40) || ((61..64).contains(&x) && (41..44).contains(&y));
-                square && !bay && !pocket
-            });
+            let (holed, bays) = (plug_holes(), plug_openings());
             let plugged = |mask: &Mask| plug(mask.clone(), 0.1, &never).unwrap().unwrap().0;
             vec![
                 example(
@@ -103,11 +72,7 @@ fn examples(tool: &str) -> Vec<Example> {
             ]
         }
         _ => {
-            // A blob with a protected bar across its edge; and a line one pixel wide.
-            let mut blob = core(oval(40, 32, 20, 14));
-            blob.protect_union(&plane(W, H, |x, y| (56..60).contains(&x) && y < 40))
-                .unwrap();
-            let wire = core(|x, y| y == 32 && (8..88).contains(&x));
+            let (blob, wire) = (feather_blob(), feather_wire());
             let feathered =
                 |mask: &Mask, sigma| feather(mask.clone(), sigma, &never).unwrap().unwrap();
             vec![

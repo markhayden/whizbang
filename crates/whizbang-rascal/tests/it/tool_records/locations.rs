@@ -5,6 +5,7 @@
 use whizbang_core::artifact::{Artifact, Location, Shape};
 use whizbang_core::contract::{Call, Value};
 use whizbang_core::identity::{CanonicalPixels, Space};
+use whizbang_rascal::examples::scratched;
 use whizbang_rascal::rasterize::location_core;
 
 use super::super::grow::{made_by, on};
@@ -12,23 +13,6 @@ use super::super::paste::image_of;
 use super::super::record::time;
 use super::super::shaping::Shop;
 use super::{Page, SIZES, count, hold, image_picture, scene, timed_head, timed_row};
-
-/// The scene with a scratch: a dark line about two pixels wide from (20, 20) to
-/// (76, 44).
-pub fn scratched() -> CanonicalPixels {
-    let scene = scene();
-    let mut rgba = scene.rgba().to_vec();
-    for at in 0..96 * 64 {
-        let (x, y) = ((at % 96) as f64 + 0.5, (at / 96) as f64 + 0.5);
-        // The distance from the segment's line, which runs 56 across and 24 down.
-        let along = ((x - 20.0) * 56.0 + (y - 20.0) * 24.0) / (56.0f64 * 56.0 + 24.0 * 24.0);
-        let off = ((x - 20.0) * 24.0 - (y - 20.0) * 56.0).abs() / 60.926_184_846_911_27;
-        if (0.0..=1.0).contains(&along) && off <= 1.0 {
-            rgba[at * 4..at * 4 + 3].copy_from_slice(&[40, 30, 30]);
-        }
-    }
-    CanonicalPixels::from_rgba(96, 64, rgba).unwrap()
-}
 
 /// An example of a tool: its name, the scene, and the call's arguments.
 type Asked = (&'static str, CanonicalPixels, Vec<(&'static str, Value)>);

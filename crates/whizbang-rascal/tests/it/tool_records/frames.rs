@@ -4,15 +4,15 @@
 //! no executor. The panorama of `cut` and `put` is the scene, whose left and right edges
 //! differ, so the seam shows.
 
-use whizbang_core::artifact::{Mask, Source, Step, UseCase};
+use whizbang_core::artifact::Step;
 use whizbang_core::contract::Failure;
-use whizbang_core::identity::{Binding, CanonicalPixels, Space};
+use whizbang_core::identity::{CanonicalPixels, Space};
 use whizbang_rascal::cut::{STRIP_DEFAULT, canvas_of, strip_width};
+use whizbang_rascal::examples::{self, about_the_seam, cut_canvas, painted, seam_mask_on};
 use whizbang_rascal::put::put_through;
 use whizbang_rascal::unwindow::unwound;
 use whizbang_rascal::window::{Windowed, windowed};
 
-use super::super::grow::{made_by, plane};
 use super::super::record::time;
 use super::{Page, SIZES, count, hold, image_picture, scene, timed_head, timed_row};
 
@@ -25,31 +25,6 @@ fn never() -> bool {
 
 fn flat(width: u32, height: u32) -> Space {
     Space::flat(width, height).unwrap()
-}
-
-/// A mask on these pixels whose core is where `core` holds.
-fn mask_on(pixels: &CanonicalPixels, core: impl Fn(usize, usize) -> bool) -> Mask {
-    let (w, h) = (pixels.width() as usize, pixels.height() as usize);
-    Mask::from_core(
-        Binding::root(pixels.digest(), flat(w as u32, h as u32)),
-        UseCase::Seam,
-        plane(w, h, core),
-        Source::default(),
-        made_by("fixture"),
-    )
-    .unwrap()
-}
-
-/// These pixels with a brick red wherever `paint` holds.
-fn painted(pixels: &CanonicalPixels, paint: impl Fn(usize, usize) -> bool) -> CanonicalPixels {
-    let w = pixels.width() as usize;
-    let mut rgba = pixels.rgba().to_vec();
-    for at in 0..rgba.len() / 4 {
-        if paint(at % w, at / w) {
-            rgba[at * 4..at * 4 + 3].copy_from_slice(&[200, 60, 50]);
-        }
-    }
-    CanonicalPixels::from_rgba(pixels.width(), pixels.height(), rgba).unwrap()
 }
 
 /// Where two pictures of one size differ, as a plane.
@@ -92,12 +67,11 @@ fn cuts() -> Vec<(&'static str, f64, u32, CanonicalPixels)> {
 /// `put`'s examples, on the default cut: the canvas put back as it was, and with the four
 /// columns about its seam painted through a mask of them.
 fn puts() -> Vec<(&'static str, CanonicalPixels)> {
-    let s = strip_width(W, STRIP_DEFAULT);
-    let cut = canvas_of(&scene(), s).unwrap();
-    let mask = mask_on(&cut, |x, _| (4..8).contains(&x));
+    let (s, cut) = cut_canvas();
+    let mask = seam_mask_on(&cut, about_the_seam);
     let given = [
         ("unchanged", cut.clone()),
-        ("painted", painted(&cut, |x, _| (4..8).contains(&x))),
+        ("painted", painted(&cut, about_the_seam)),
     ];
     given
         .into_iter()
@@ -110,17 +84,8 @@ fn puts() -> Vec<(&'static str, CanonicalPixels)> {
 
 /// `window`'s examples: a block in the middle, and one near the top right corner.
 fn windows() -> Vec<(&'static str, Windowed)> {
-    let blocks: [(&'static str, [usize; 4]); 2] =
-        [("middle", [40, 26, 52, 36]), ("corner", [84, 2, 94, 10])];
-    blocks
-        .into_iter()
-        .map(|(name, [l, t, r, b])| {
-            let mask = mask_on(&scene(), |x, y| (l..r).contains(&x) && (t..b).contains(&y));
-            let step = Step::new("window", "1.0.0");
-            let made = windowed(&scene(), flat(W, H), &mask, None, 0.5, step).unwrap();
-            (name, made)
-        })
-        .collect()
+    let made = examples::windows().into_iter();
+    made.map(|(name, _, made)| (name, made)).collect()
 }
 
 /// `unwindow`'s examples, on the middle window: the crop written back as it was, and
@@ -236,7 +201,7 @@ pub fn timed(tool: &str) -> String {
             "cut" => time(5, || (), |()| canvas_of(&pixels, s).unwrap()),
             "put" => {
                 let canvas = canvas_of(&pixels, s).unwrap();
-                let mask = mask_on(&canvas, |x, _| x + 2 >= s as usize && x < s as usize + 2);
+                let mask = seam_mask_on(&canvas, |x, _| x + 2 >= s as usize && x < s as usize + 2);
                 time(
                     5,
                     || (),
@@ -244,7 +209,7 @@ pub fn timed(tool: &str) -> String {
                 )
             }
             _ => {
-                let mask = mask_on(&pixels, block);
+                let mask = seam_mask_on(&pixels, block);
                 let step = || Step::new("window", "1.0.0");
                 if tool == "window" {
                     time(5, step, |step| {
@@ -293,7 +258,7 @@ fn the_records_of_cut_put_window_and_unwindow_are_what_they_give() {
         "4 of them, 0 to 95"
     );
     let cut = canvas_of(&scene(), s).unwrap();
-    let mask = mask_on(&cut, |x, _| (4..8).contains(&x));
+    let mask = seam_mask_on(&cut, |x, _| (4..8).contains(&x));
     let stray = painted(&cut, |x, _| x == 0);
     let refused = put_through(&scene(), flat(W, H), &stray, s, &mask, &never);
     assert!(matches!(refused, Err(Failure::Invalid { why }) if why.contains("weighs nothing")));

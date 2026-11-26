@@ -2,40 +2,16 @@
 
 use whizbang_core::artifact::Mask;
 use whizbang_rascal::close::close;
-use whizbang_rascal::feather::feather;
+use whizbang_rascal::examples::{close_blocks as blocks, close_discs as discs};
 use whizbang_rascal::grow::radius_squared;
 
-use super::super::grow::{mask_of, plane};
 use super::super::record::{picture, tiled, time};
 use super::{Page, SIZES, count, hold, timed_head, timed_row};
 
 const W: usize = 96;
-const H: usize = 64;
 
 fn never() -> bool {
     false
-}
-
-/// The first example: two blocks four columns apart, a notch two columns wide bitten
-/// from the top of the left one, and a protected patch in the gap.
-fn blocks() -> Mask {
-    let core = plane(W, H, |x, y| {
-        let block = (16..48).contains(&y) && ((20..44).contains(&x) || (48..72).contains(&x));
-        let notch = (28..30).contains(&x) && (16..20).contains(&y);
-        block && !notch
-    });
-    let patch = plane(W, H, |x, y| (44..48).contains(&x) && (30..34).contains(&y));
-    mask_of(W, H, core, &patch)
-}
-
-/// The second: two discs of radius 10, four columns apart, feathered by a sigma of 2.
-fn discs() -> Mask {
-    let core = plane(W, H, |x, y| {
-        let near = |cx: i64| (x as i64 - cx).pow(2) + (y as i64 - 32).pow(2) <= 100;
-        near(34) || near(59)
-    });
-    let mask = mask_of(W, H, core, &[0; W * H]);
-    feather(mask, 2.0, &never).unwrap().unwrap()
 }
 
 fn examples() -> [(&'static str, f64, Mask, Mask); 2] {

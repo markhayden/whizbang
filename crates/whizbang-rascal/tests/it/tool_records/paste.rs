@@ -9,10 +9,11 @@ use whizbang_core::capability::{Filler, Painted, Picture};
 use whizbang_core::contract::Call;
 use whizbang_core::identity::{Binding, CanonicalPixels, DecodeLimits, Space, encode};
 use whizbang_rascal::composite::composite;
+use whizbang_rascal::examples::{BRICK, paste_disc, paste_fill, paste_striped};
 use whizbang_rascal::feather::feather;
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
 
-use super::super::grow::{made_by, plane};
+use super::super::grow::made_by;
 use super::super::paste::image_of;
 use super::super::record::{picture, tiled, time};
 use super::super::shaping::Shop;
@@ -20,8 +21,6 @@ use super::{Page, SIZES, hold, image_picture, scene, timed_head, timed_row};
 
 const W: usize = 96;
 const H: usize = 64;
-/// The colour of the fills: a brick red.
-const BRICK: [u8; 3] = [200, 60, 50];
 
 fn never() -> bool {
     false
@@ -29,50 +28,6 @@ fn never() -> bool {
 
 fn pixels_of(image: &Image) -> CanonicalPixels {
     image.pixels(&DecodeLimits::default()).unwrap()
-}
-
-/// A disc of radius 12 at (48, 30), feathered by a sigma of 3, on `image`.
-fn disc(image: &Image) -> Mask {
-    let core = plane(W, H, |x, y| {
-        (x as i64 - 48).pow(2) + (y as i64 - 30).pow(2) <= 144
-    });
-    let mask = Mask::from_core(
-        image.binding(),
-        UseCase::Remove,
-        core,
-        Source::default(),
-        made_by("fixture"),
-    )
-    .unwrap();
-    feather(mask, 3.0, &never).unwrap().unwrap()
-}
-
-/// A block from (20, 12) to (75, 51), with no blend, and rows 28 to 33 of it protected.
-fn striped(image: &Image) -> Mask {
-    let core = plane(W, H, |x, y| (20..76).contains(&x) && (12..52).contains(&y));
-    let mut mask = Mask::from_core(
-        image.binding(),
-        UseCase::Remove,
-        core,
-        Source::default(),
-        made_by("fixture"),
-    )
-    .unwrap();
-    mask.protect_union(&plane(W, H, |x, y| {
-        (16..80).contains(&x) && (28..34).contains(&y)
-    }))
-    .unwrap();
-    mask
-}
-
-/// A picture of the scene's size, every pixel `rgb`, or every pixel the scene's inverse.
-fn painted(rgb: Option<[u8; 3]>) -> CanonicalPixels {
-    let scene = scene();
-    let rgba = scene.rgba().chunks(4).flat_map(|p| match rgb {
-        Some([r, g, b]) => [r, g, b, 255],
-        None => [255 - p[0], 255 - p[1], 255 - p[2], 255],
-    });
-    CanonicalPixels::from_rgba(96, 64, rgba.collect()).unwrap()
 }
 
 struct Example {
@@ -89,23 +44,18 @@ struct Example {
 
 /// A case of the examples: its name, what paints, its mask, and the colour of the fill,
 /// or none for the scene's inverse.
-type Case = (
-    &'static str,
-    &'static str,
-    fn(&Image) -> Mask,
-    Option<[u8; 3]>,
-);
+type Case = (&'static str, &'static str, fn() -> Mask, Option<[u8; 3]>);
 
 fn examples(tool: &str) -> Vec<Example> {
     let base = image_of(&scene(), "import");
     let cases: [Case; 2] = [
-        ("feathered", "a brick red", disc, Some(BRICK)),
-        ("protected", "the scene's inverse", striped, None),
+        ("feathered", "a brick red", paste_disc, Some(BRICK)),
+        ("protected", "the scene's inverse", paste_striped, None),
     ];
     cases
         .into_iter()
         .map(|(name, by, mask_of, rgb)| {
-            let mask = mask_of(&base);
+            let mask = mask_of();
             let paint = rgb.map_or(Paint::Inverse, Paint::Support);
             let filler: Option<Arc<dyn Filler>> =
                 (tool == "fill").then(|| Arc::new(FakeFiller::new(paint)) as Arc<dyn Filler>);
@@ -117,7 +67,7 @@ fn examples(tool: &str) -> Vec<Example> {
             let mut call = Call::new(tool)
                 .input("image", image_id)
                 .input("mask", mask_id);
-            let fill = (tool == "paste").then(|| painted(rgb));
+            let fill = (tool == "paste").then(|| paste_fill(rgb));
             if let Some(fill) = &fill {
                 call = call.input("fill", shop.put(Artifact::Image(image_of(fill, "import"))));
             }
