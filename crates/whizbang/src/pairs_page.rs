@@ -16,11 +16,12 @@
 //!   own travels), and the same three with `-focus` when the results changed anything: the
 //!   region both changed, with context, at full size, through the edge of a picture that
 //!   wraps (`whizbang_eval::lab::focus`). Names say the pair's place on the page and the
-//!   side, never an arm; each pair's left is written before its right. The three whole
-//!   pictures of a pair are one size on disk, and so are its three of the focus (plan m4,
-//!   task A1, item 9): each holds, beside its pixels, one chunk of padding that a reader
-//!   of a PNG passes over ([`same_size`]). Without it a reference arm's picture, written
-//!   by the same encoder from the source's own pixels, had the source's size to the byte.
+//!   side, never an arm; each pair's left is written before its right. Each is a PNG whose
+//!   pixels are not compressed ([`stored_png`]; plan mE, task P0, item 1), so its size and
+//!   every length inside it follow from its dimensions alone. A compressing encoder gave a
+//!   reference arm's picture, made from the source's own pixels, the source's size to the
+//!   byte; plan m4's chunk of padding hid that from the size but not from the chunk's own
+//!   length.
 //! - `index.html`: the page. A Content-Security-Policy in its head lets nothing load but
 //!   pictures from the page's own place or a local file (`img-src 'self' file:`, since a
 //!   browser may not count a file's own folder as `'self'`), no script run but its own and
@@ -34,11 +35,8 @@
 //! What an inspecting picker could still find: the pair ids (corpus ids) and the pictures'
 //! files, which name places and sides only; a side whose pixels are the source's own, when
 //! an arm hands the source back, which the page shows as well (hold `s`); and
-//! `assignment.json` beside the page, which names every arm. A file's size no longer says
-//! anything of its side; but the length of its chunk of padding does to one who lists a
-//! PNG's chunks, since it is what the file lacked of the longest, so the size the encoder
-//! gave it can be worked out again (the carry-over list has the row: pictures whose size
-//! follows from their dimensions alone).
+//! `assignment.json` beside the page, which names every arm. A file's bytes, its size and
+//! its chunks' lengths, say nothing beyond the picture's width and height.
 //!
 //! The folder: by default `pairs/<a>-vs-<b>` under the corpus's folder, which the owner
 //! names and which is outside any repository. Refused inside the store, and inside a git
@@ -362,10 +360,6 @@ pub(crate) fn png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Str
     png_of(pixels, width, height, Channels::Rgba)
 }
 
-/// The type of the chunk of padding in a pair's pictures: ancillary, private and safe to
-/// copy, as the PNG format reads its letters' cases, so every reader passes over it.
-pub const PADDING_CHUNK: [u8; 4] = *b"paDd";
-
 /// The CRC a PNG chunk ends with (ISO 3309, as the format's own text gives it), over the
 /// chunk's type and data.
 fn crc32(bytes: &[u8]) -> u32 {
@@ -383,28 +377,76 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
-/// PNG files brought to one size on disk: each is given one chunk of zeros
-/// ([`PADDING_CHUNK`]) before its last chunk, as long as it takes to reach the longest of
-/// them with its own, empty, chunk. Every file gets the chunk, so none is told apart by
-/// having it; no pixel changes. So a file's size says nothing of which arm made it.
-pub fn same_size(files: &mut [Vec<u8>]) -> Result<(), String> {
-    /// A chunk with no data: its length, its type and its CRC.
-    const EMPTY: usize = 12;
-    let longest = files.iter().map(Vec::len).max().unwrap_or(0);
-    for file in files.iter_mut() {
-        // The last chunk of a PNG is `IEND`, which has no data.
-        let end = (file.len().checked_sub(EMPTY))
-            .filter(|end| file[end + 4..end + 8] == *b"IEND")
-            .ok_or("a picture of a pair was not written as a PNG; no page was finished")?;
-        let data = vec![0; longest - file.len()];
-        let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
-        let mut covered = PADDING_CHUNK.to_vec();
-        covered.extend(&data);
-        chunk.extend(&covered);
-        chunk.extend(crc32(&covered).to_be_bytes());
-        file.splice(end..end, chunk);
+/// The largest stored block of deflate: its length is two bytes.
+const STORED_BLOCK: usize = 65_535;
+
+/// The size on disk of [`stored_png`]'s file of a picture of these dimensions: the
+/// signature, `IHDR`, one `IDAT` of a zlib stream of stored blocks over the rows (each a
+/// filter byte and four bytes a pixel), and `IEND`. It follows from the dimensions alone.
+pub fn stored_png_size(width: u32, height: u32) -> u64 {
+    let raw = u64::from(height) * (1 + 4 * u64::from(width));
+    let blocks = raw.div_ceil(STORED_BLOCK as u64).max(1);
+    let idat = 2 + 5 * blocks + raw + 4;
+    8 + (12 + 13) + (12 + idat) + 12
+}
+
+/// A picture of a pair written as a PNG whose pixel data is not compressed (plan mE, task
+/// P0, item 1): eight-bit RGBA, no filter, one `IDAT` holding a zlib stream of stored
+/// deflate blocks of the largest size and the rest, and no other chunk. So its size and
+/// every chunk's length follow from its width and height ([`stored_png_size`]), and two
+/// pictures of one size are files of one length, whichever arm made them.
+pub fn stored_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let row = 4 * width as usize;
+    if width == 0 || height == 0 || pixels.len() != row * height as usize {
+        return Err("a picture of a pair is not RGBA of its size; no page was finished".into());
     }
-    Ok(())
+    let size = stored_png_size(width, height);
+    let idat = size - 8 - 25 - 12 - 12;
+    if idat > u64::from(i32::MAX as u32) {
+        return Err(
+            "a picture of a pair is too large for one PNG chunk; no page was finished".into(),
+        );
+    }
+    let chunk = |out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]| {
+        out.extend((data.len() as u32).to_be_bytes());
+        let start = out.len();
+        out.extend(kind);
+        out.extend(data);
+        let crc = crc32(&out[start..]);
+        out.extend(crc.to_be_bytes());
+    };
+    let mut raw = Vec::with_capacity((row + 1) * height as usize);
+    for line in pixels.chunks_exact(row) {
+        raw.push(0);
+        raw.extend(line);
+    }
+    let (mut a, mut b) = (1_u32, 0_u32);
+    for byte in &raw {
+        a = (a + u32::from(*byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    let mut zlib = Vec::with_capacity(idat as usize);
+    zlib.extend([0x78, 0x01]);
+    let blocks: Vec<&[u8]> = raw.chunks(STORED_BLOCK).collect();
+    for (n, block) in blocks.iter().enumerate() {
+        let len = block.len() as u16;
+        zlib.push(u8::from(n + 1 == blocks.len()));
+        zlib.extend(len.to_le_bytes());
+        zlib.extend((!len).to_le_bytes());
+        zlib.extend(*block);
+    }
+    zlib.extend(((b << 16) | a).to_be_bytes());
+    let mut header = Vec::with_capacity(13);
+    header.extend(width.to_be_bytes());
+    header.extend(height.to_be_bytes());
+    // Eight bits a sample, RGBA, deflate, adaptive filtering, no interlace.
+    header.extend([8, 6, 0, 0, 0]);
+    let mut out = Vec::with_capacity(size as usize);
+    out.extend(b"\x89PNG\r\n\x1a\n");
+    chunk(&mut out, b"IHDR", &header);
+    chunk(&mut out, b"IDAT", &zlib);
+    chunk(&mut out, b"IEND", &[]);
+    Ok(out)
 }
 
 /// Writes the page of a prepared round's pairs (the module's description says what).
@@ -542,27 +584,15 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
             out.join("pictures")
                 .join(format!("{file}-{side}{kind}.png"))
         };
-        // The pair's pictures are encoded first and brought to one size on disk, the whole
-        // ones together and those of the focus together, and then written, left first.
-        let sides = [("left", &left), ("right", &right), ("source", &source)];
-        let mut wholes = Vec::new();
-        let mut crops = Vec::new();
-        for (side, pixels) in sides {
-            wholes.push(png(pixels.rgba(), pixels.width(), pixels.height())?);
+        // Each picture is written uncompressed, so its size follows from its dimensions
+        // alone ([`stored_png`]), left first.
+        for (side, pixels) in [("left", &left), ("right", &right), ("source", &source)] {
+            let whole = stored_png(pixels.rgba(), pixels.width(), pixels.height())?;
+            bytes += write_new(&named(side, ""), &whole)?;
             if let Some(f) = focus.filter(|_| (pixels.width(), pixels.height()) == (width, height))
             {
-                let crop = png(&f.crop(width, pixels.rgba()), f.width, f.height)?;
-                crops.push((side, crop));
-            }
-        }
-        same_size(&mut wholes)?;
-        let (crop_sides, mut crop_files): (Vec<&str>, Vec<Vec<u8>>) = crops.into_iter().unzip();
-        same_size(&mut crop_files)?;
-        for ((side, _), whole) in sides.iter().zip(&wholes) {
-            bytes += write_new(&named(side, ""), whole)?;
-            let crop = crop_sides.iter().position(|of| of == side);
-            if let Some(crop) = crop.and_then(|at| crop_files.get(at)) {
-                bytes += write_new(&named(side, "-focus"), crop)?;
+                let crop = stored_png(&f.crop(width, pixels.rgba()), f.width, f.height)?;
+                bytes += write_new(&named(side, "-focus"), &crop)?;
             }
         }
         on_page.push(OnPage {
@@ -580,9 +610,14 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
     let subset_words = match subset {
         Some(Subset { limit, of }) => format!(
             "This round is a subset: {limit} of its {of} pairs, drawn by group from the \
-             protocol's seed. A group with fewer than {} decided pairs is inconclusive, never \
-             a win; the decode says so.",
-            protocol.min_decided
+             protocol's seed. A group with fewer than {} {} is inconclusive, never a win; the \
+             decode says so.",
+            protocol.min_decided,
+            if protocol.version >= 2 {
+                "pairs picked"
+            } else {
+                "decided pairs"
+            }
         ),
         None => String::new(),
     };
