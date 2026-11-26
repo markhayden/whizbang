@@ -110,7 +110,7 @@ use whizbang_core::contract::Recovery;
 use whizbang_core::identity::{
     CanonicalPixels, DecodeLimits, Digest, Projection, Topology, identify,
 };
-use whizbang_core::store::Error;
+use whizbang_core::store::{Error, Generation};
 
 /// The step a picture's origin names.
 const PICTURE_STEP: &str = "import-picture";
@@ -712,6 +712,18 @@ fn commit(
 /// hour, in milliseconds.
 const REMARKED_AFTER_MS: u64 = 3_600_000;
 
+/// Whether the artifact of this name was marked as imported under an hour ago with every one
+/// of `names` coming in with it: an import of it again leaves the mark as it is.
+pub fn marked_recently(generation: &Generation, name: &str, names: &[String]) -> bool {
+    generation.imported(name).is_some_and(|imported| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
+        now_ms.saturating_sub(imported.at_ms) < REMARKED_AFTER_MS
+            && names.iter().all(|name| imported.with.contains(name))
+    })
+}
+
 /// Commits an artifact that has been read and checked into a store open to write, as
 /// `store import` does: marked as imported, with a picture's name of where it came from,
 /// and with these names beside it in the same publication, so that all are there or
@@ -737,15 +749,11 @@ pub fn commit_to(
     // is under an hour old and already names every name that comes in with it, so that
     // a picture sent many times over makes a publication an hour at most.
     let name = artifact::name(kind, id);
-    let marked = generation.imported(&name).filter(|imported| {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_millis() as u64);
-        let names = named.iter().chain(beside.iter().map(|(name, _)| name));
-        now_ms.saturating_sub(imported.at_ms) < REMARKED_AFTER_MS
-            && names.into_iter().all(|name| imported.with.contains(name))
-    });
-    if held && marked.is_some() && unnamed.is_none() && beside.is_empty() {
+    let names: Vec<String> = (named.iter().cloned())
+        .chain(beside.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let marked = marked_recently(&generation, &name, &names);
+    if held && marked && unnamed.is_none() && beside.is_empty() {
         return Ok(true);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;

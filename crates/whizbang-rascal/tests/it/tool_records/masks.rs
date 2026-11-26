@@ -3,16 +3,18 @@
 //! function directly, the function its action runs, so the test needs no store and no
 //! executor.
 
-use whizbang_core::artifact::{Image, Location, Mask, Shape, Source, UseCase};
+use whizbang_core::artifact::{Location, Mask, Shape, Source, UseCase};
 use whizbang_core::identity::{Binding, CanonicalPixels, DecodeLimits, Digest, Point, Space};
 use whizbang_rascal::carry::Placed;
-use whizbang_rascal::feather::feather;
+use whizbang_rascal::examples::{
+    CROP, carry_masks, cornered, crop_of, feathered, holed, points, rasterize_shapes,
+};
 use whizbang_rascal::inspect::{TINT, core_widths, overlay, report};
 use whizbang_rascal::invert::{InvertError, invert};
 use whizbang_rascal::rasterize::{location_core, rasterize};
 use whizbang_rascal::shrink::shrink;
 
-use super::super::grow::{made_by, plane};
+use super::super::grow::made_by;
 use super::super::paste::image_of;
 use super::super::record::{picture, tiled, time};
 use super::{Page, SIZES, count, hold, image_picture, scene, timed_head, timed_row};
@@ -46,61 +48,8 @@ fn mask_on(pixels: &CanonicalPixels, core: Vec<u8>, protect: &[u8]) -> Mask {
     mask
 }
 
-fn disc(cx: i64, cy: i64, r: i64) -> impl Fn(usize, usize) -> bool {
-    move |x, y| (x as i64 - cx).pow(2) + (y as i64 - cy).pow(2) <= r * r
-}
-
-/// A disc of radius 14 at (40, 30) on the scene, a protected patch across its right edge,
-/// feathered by a sigma of 2.
-fn feathered() -> Mask {
-    let core = plane(W, H, disc(40, 30, 14));
-    let patch = plane(W, H, |x, y| (50..58).contains(&x) && (26..34).contains(&y));
-    feather(mask_on(&scene(), core, &patch), 2.0, &never)
-        .unwrap()
-        .unwrap()
-}
-
-/// A block against the image's top and left edges.
-fn cornered() -> Mask {
-    let core = plane(W, H, |x, y| x < 30 && y < 24);
-    mask_on(&scene(), core, &[0; W * H])
-}
-
-/// A disc of radius 20 with a protected disc of radius 6 at its centre.
-fn holed() -> Mask {
-    let core = plane(W, H, disc(48, 32, 20));
-    mask_on(&scene(), core, &plane(W, H, disc(48, 32, 6)))
-}
-
-fn points(at: &[(i32, i32)]) -> Vec<Point> {
-    at.iter()
-        .map(|(x, y)| Point {
-            x: f64::from(*x),
-            y: f64::from(*y),
-        })
-        .collect()
-}
-
-/// `rasterize`'s examples: a triangle, and a chevron, whose notch is outside.
-fn shapes() -> [(&'static str, Shape); 2] {
-    [
-        (
-            "triangle",
-            Shape::Polygon {
-                points: points(&[(12, 56), (48, 6), (84, 56)]),
-            },
-        ),
-        (
-            "chevron",
-            Shape::Polygon {
-                points: points(&[(10, 10), (50, 32), (10, 54), (30, 32)]),
-            },
-        ),
-    ]
-}
-
 fn rasterized() -> Vec<(&'static str, Mask)> {
-    shapes()
+    rasterize_shapes()
         .into_iter()
         .map(|(name, shape)| {
             let location = Location::new(onto(&scene()), shape, made_by("fixture")).unwrap();
@@ -140,50 +89,15 @@ fn inspected() -> Vec<(&'static str, Mask, CanonicalPixels)> {
         .collect()
 }
 
-/// Where the crop of `carry`'s examples sits on the scene: left, top, right and bottom.
-const CROP: [usize; 4] = [30, 16, 70, 48];
-
-/// The pixels of a picture inside a box, as an image of their own: what `view` cuts.
-fn crop_of(pixels: &CanonicalPixels, [left, top, right, bottom]: [usize; 4]) -> Image {
-    let width = pixels.width() as usize;
-    let mut rgba = Vec::new();
-    for y in top..bottom {
-        rgba.extend_from_slice(&pixels.rgba()[(y * width + left) * 4..(y * width + right) * 4]);
-    }
-    let cut = CanonicalPixels::from_rgba((right - left) as u32, (bottom - top) as u32, rgba);
-    image_of(&cut.unwrap(), "view")
-}
-
 /// `carry`'s examples: a mask on the crop of the scene, and the same mask on the scene.
 /// A disc in the middle of the crop; and a block against the crop's left and top edges
 /// with a protected patch, feathered.
 fn carried() -> Vec<(&'static str, Mask, Mask)> {
-    let (w, h) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
     let crop = crop_of(&scene(), CROP);
-    let on_crop = |core: Vec<u8>, protect: &[u8]| {
-        let mut mask = Mask::from_core(
-            crop.binding(),
-            UseCase::Remove,
-            core,
-            Source::default(),
-            made_by("fixture"),
-        )
-        .unwrap();
-        mask.protect_union(protect).unwrap();
-        mask
-    };
-    let disc = on_crop(plane(w, h, disc(20, 16, 9)), &vec![0; w * h]);
-    let mut edged = on_crop(
-        plane(w, h, |x, y| x < 14 && y < 10),
-        &plane(w, h, |x, y| (4..8).contains(&x) && (3..6).contains(&y)),
-    );
-    edged
-        .set_blend(plane(w, h, |x, y| (14..17).contains(&x) && y < 10))
-        .unwrap();
     let image = image_of(&scene(), "import");
     let at = [CROP[0] as u32, CROP[1] as u32];
     let placed = Placed::checked(&crop, &image, at, &DecodeLimits::default()).unwrap();
-    [("disc", disc), ("edged", edged)]
+    carry_masks()
         .into_iter()
         .map(|(name, mask)| (name, mask.clone(), placed.carry(&mask).unwrap()))
         .collect()

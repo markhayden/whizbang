@@ -46,6 +46,22 @@ What to look for: at 0.07 the strip is 6 columns, and the canvas is the scene's 
 then its first six, the seam in the middle; at 0.5 the strip is 48 and the canvas is the
 whole panorama turned by half.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| default | image | image | `sha256:31f1498cbc70550fabce91da76dd45cda0cab258cef8d63e5b12fcfc73312c82` |
+| half | image | image | `sha256:31f1498cbc70550fabce91da76dd45cda0cab258cef8d63e5b12fcfc73312c82` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

@@ -1,11 +1,12 @@
-//! `whizbang store list|delete|prune|import|export`: wiring from arguments to the core's
-//! store (`export` is the module `export`).
+//! `whizbang store list|delete|prune|import|record-inputs|export`: wiring from arguments
+//! to the core's store (`export` is the module `export`, `record-inputs` the module
+//! `record_inputs`).
 //!
-//! One rule for all five: the store must be there. None of them makes a store at a path
+//! One rule for all six: the store must be there. None of them makes a store at a path
 //! with nothing at it or completes one in an empty directory, except `import --create`,
-//! which says so when it has (the module `import` says what it makes). The three that
+//! which says so when it has (the module `import` says what it makes). The four that
 //! write take the writer lock and are refused while another process holds it. Each of
-//! the three opens the store through the one entry point (`wiring::opening`), so the
+//! the four opens the store through the one entry point (`wiring::opening`), so the
 //! store is recovered before the command changes anything; where the recovery fails
 //! the command is refused with the reason, and where it could not be published at the
 //! limit on a generation file, `delete` and `prune` still work and `import` is refused.
@@ -121,6 +122,15 @@ pub enum Command {
         #[arg(long)]
         create: bool,
     },
+    /// Write the inputs of every tool record's worked examples into the store, as
+    /// canonical artifacts made by the constructors the records' tests use, each with what
+    /// it depends on (a mask with its image, its protect plane, its band profile and its
+    /// prescriptions), in one publication; and print one line for each: its record, its
+    /// example, its port, its type and its identity. The store must be there.
+    RecordInputs {
+        #[command(flatten)]
+        at: Where,
+    },
     /// Write an image in the store as a PNG file of its pixels alone, upright and in
     /// sRGB, whatever form the store holds it in: no text, time, colour profile or EXIF;
     /// a mask, with `--mask`, as a grey PNG a person can edit and bring back with `store
@@ -166,6 +176,7 @@ pub fn run(command: &Command) -> Result<String, String> {
 pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String> {
     match command {
         Command::List { at } => list(&at.store),
+        Command::RecordInputs { at } => whizbang::record_inputs::write(&at.store, recovery),
         Command::Export {
             id,
             to,

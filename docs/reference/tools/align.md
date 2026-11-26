@@ -99,6 +99,24 @@ the content: the frame around the change holds the transform, and the change is 
 share of the pixels. So a close fit is no evidence that a structure held; squint's own
 sentence says so, and the judge is told it with every registration.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| turned | image | image | `sha256:68cd6dcf5a5fb39cbd87852702e41b42b3dad8f16efdb61e4b639bf99ee4389d` |
+| turned | against | image | `sha256:dc9f46a837bcbd74695e6b6946fedb26f34e78960959c2facd5f78918235f65b` |
+| moved | image | image | `sha256:0bf01209a8bc9c4ae929d6ff6a31f2ed6c63dae88be9a821c316a39da0b44180` |
+| moved | against | image | `sha256:dc9f46a837bcbd74695e6b6946fedb26f34e78960959c2facd5f78918235f65b` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Scored alone, for `align`, means the registration error on pairs with a known transform

@@ -43,6 +43,28 @@ middle one of `window`'s record.
 What to look for: unchanged, nothing differs; painted, exactly the block of 12 by 10 the
 mask's core covers changes, and nothing else of the box or the image.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| unchanged | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| unchanged | crop | image | `sha256:4cfc13c34d82390bbbf8ebc8dc5917b145865a6b810d47096a26899ff03ceb37` |
+| unchanged | mask | mask | `sha256:14d3fbe545680c7c3d4cffeb698973818219c9be64610c3d1263d0ca2f221626` |
+| unchanged | image of mask | image | `sha256:4cfc13c34d82390bbbf8ebc8dc5917b145865a6b810d47096a26899ff03ceb37` |
+| painted | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| painted | crop | image | `sha256:efd8b1878b44f4202c3fea45eb2c37447f2763730ba8744f78ecbe855292d17f` |
+| painted | mask | mask | `sha256:14d3fbe545680c7c3d4cffeb698973818219c9be64610c3d1263d0ca2f221626` |
+| painted | image of mask | image | `sha256:4cfc13c34d82390bbbf8ebc8dc5917b145865a6b810d47096a26899ff03ceb37` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

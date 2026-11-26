@@ -26,7 +26,9 @@ struct Examples {
     said: [String; 2],
 }
 
-fn examples() -> Examples {
+/// The examples' pictures: the source, the restyled and turned candidate, and the source
+/// with a block moved.
+pub fn pictures() -> [Image; 3] {
     let scene = Scene::random(21, 160, f64::from(SIZE.1) / f64::from(SIZE.0));
     let source = scene.render(SIZE.0, SIZE, &IDENTITY, scenes::same);
     let turned = similarity(SIZE, 1.03, 0.03, (4.0, -3.0));
@@ -42,6 +44,11 @@ fn examples() -> Examples {
             [pixels[at], pixels[at + 1], pixels[at + 2], 255]
         })
     };
+    [source, candidate, reshaped]
+}
+
+fn examples() -> Examples {
+    let [source, candidate, reshaped] = pictures();
     let run = |image: &Image| align::align(image, &source, &Options::default(), &limits()).unwrap();
     let (first, second) = (run(&candidate), run(&reshaped));
     let said = [

@@ -123,6 +123,12 @@ fn import(root: &Path, file: &Path) -> store::Command {
     }
 }
 
+fn record_inputs(root: &Path) -> store::Command {
+    store::Command::RecordInputs {
+        at: Where::at(root),
+    }
+}
+
 fn grow(root: &Path, mask: &str) -> rascal::Command {
     rascal::Command::Grow {
         mask: mask.to_owned(),
@@ -286,6 +292,7 @@ fn after_a_failed_recovery_every_writing_command_is_refused_with_the_reason_and_
         store::run_with(&delete(&root, LEFT[0]), with(&failing())),
         store::run_with(&prune(&root), with(&failing())),
         store::run_with(&import(&root, &file), with(&failing())),
+        store::run_with(&record_inputs(&root), with(&failing())),
         rascal::run_with(&grow(&root, &mask), with(&failing())),
     ];
     for answered in refused {
@@ -324,6 +331,7 @@ fn a_store_another_opening_holds_refuses_every_writing_command_in_words_true_of_
         store::run_with(&delete(&root, LEFT[0]), with(&part)),
         store::run_with(&prune(&root), with(&part)),
         store::run_with(&import(&root, &file), with(&part)),
+        store::run_with(&record_inputs(&root), with(&part)),
         rascal::run_with(&grow(&root, &mask), with(&part)),
     ];
     for answered in refused {
@@ -382,6 +390,7 @@ fn at_the_generation_limit_store_delete_and_prune_work_and_every_other_writing_c
         assert!(why.ends_with("delete runs and prune, and the next open recovers it"));
     };
     told(store::run_with(&import(&root, &file), limited()));
+    told(store::run_with(&record_inputs(&root), limited()));
     told(rascal::run_with(&grow(&root, &mask), limited()));
     assert_eq!(held(&root).0, found, "nothing was published");
     // Pruning works, and deleting, which makes room.

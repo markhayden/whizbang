@@ -77,6 +77,26 @@ is protected: in the middle row protect runs from column 17 to 43 around a core 
 26 to 34. To protect the shape alone, subtract its mask before it is feathered, or give a
 location.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| bar | mask | mask | `sha256:11cf046595ecc6121523e78ef8f03e59d03eec9588c02192ac72ec545e277a3f` |
+| bar | subtract | mask | `sha256:ed137bf419f34b2a68bd3e8f058c6fbd6210a3f110b278035ce6edca791ea5d6` |
+| bar | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| faint | mask | mask | `sha256:11cf046595ecc6121523e78ef8f03e59d03eec9588c02192ac72ec545e277a3f` |
+| faint | subtract | mask | `sha256:2fc6e33f19e3aaaf862f484802e5d67802cd363aff9549bed43e1369457e66be` |
+| faint | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results, and timed across sizes (`SPEC.md` section 8). Measured on

@@ -343,7 +343,7 @@ pub fn example_name(id: &str) -> String {
 }
 
 /// The name of the canonical file of an example's input, by its place.
-fn input_name(id: &str, at: usize) -> String {
+pub fn input_name(id: &str, at: usize) -> String {
     format!("{EXAMPLES_PREFIX}{id}/inputs/{at}")
 }
 
