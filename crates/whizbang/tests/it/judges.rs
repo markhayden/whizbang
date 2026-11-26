@@ -881,6 +881,15 @@ fn rejections_count_first_classes_apart_from_also_and_a_mismatched_format_is_not
         submission: "v1".to_owned(),
         ..rejected
     });
+    // A submission failure is counted by the class of the rejection that ended it (plan
+    // mE, task F1, item 1): the last of its run's.
+    all[2].submissions = Some(Submissions {
+        classes: vec!["finding_cites".to_owned(), "item_findings".to_owned()],
+        also: Vec::new(),
+        cause: "invalid_submission".to_owned(),
+        submission: "v2".to_owned(),
+        recoveries: Vec::new(),
+    });
     let population = Population {
         cells: all.len(),
         decisions: all,
@@ -902,7 +911,12 @@ fn rejections_count_first_classes_apart_from_also_and_a_mismatched_format_is_not
     assert_eq!(m.also_by_class.get("bad_field"), Some(&1));
     assert_eq!(m.also_by_class.get("evidence"), Some(&1));
     assert_eq!(m.recoveries_by_kind.get("wrapper"), Some(&1));
-    assert_eq!(m.first_rejection_rate, Some(1.0 / 9.0));
+    assert_eq!(m.first_rejection_rate, Some(2.0 / 9.0));
+    assert_eq!(m.rejections_by_class.get("finding_cites"), Some(&1));
+    assert_eq!(
+        m.failures_by_class,
+        std::collections::BTreeMap::from([("item_findings".to_owned(), 1)])
+    );
     // Under the format rule, a mismatch makes no decision.
     let mut population = complete(formats(&["haiku"], 20, (10, 0)));
     let first_v1 = (population.decisions.iter())

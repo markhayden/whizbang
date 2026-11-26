@@ -5,11 +5,11 @@
 use whizbang_core::artifact::Shape;
 use whizbang_core::identity::{CanonicalPixels, Point};
 use whizbang_rascal::constants::TIGHTEN_V1;
+use whizbang_rascal::examples::{scratched, tighten_strokes};
 use whizbang_rascal::rasterize::location_core;
 use whizbang_rascal::tighten::{Tightened, Tunables, tighten};
 
 use super::super::record::time;
-use super::locations::scratched;
 use super::{Page, SIZES, count, hold, image_picture, timed_head, timed_row};
 
 fn never() -> bool {
@@ -20,19 +20,10 @@ fn path(at: &[(f64, f64)]) -> Vec<Point> {
     at.iter().map(|(x, y)| Point { x: *x, y: *y }).collect()
 }
 
-/// The examples: the stroke of `stroke`'s record along the scratch, and one as wide across
-/// the scene's plain upper part, where there is no edge.
-fn strokes() -> [(&'static str, Vec<Point>, f64); 2] {
-    [
-        ("scratch", path(&[(20.0, 20.0), (76.0, 44.0)]), 6.0),
-        ("plain", path(&[(10.0, 8.0), (86.0, 12.0)]), 6.0),
-    ]
-}
-
 fn tightened() -> Vec<(&'static str, Vec<Point>, f64, Tightened)> {
     let pixels = scratched();
     let tunables = Tunables::of(TIGHTEN_V1.1, |_| None).unwrap();
-    strokes()
+    tighten_strokes()
         .into_iter()
         .map(|(name, path, radius)| {
             let made = tighten(&path, radius, pixels.rgba(), 96, 64, &tunables, &never);

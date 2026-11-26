@@ -6,55 +6,21 @@
 //! The canvas is 192 by 64, its seam at column 96: two smooth halves of different tones
 //! (`smooth`), and the same with a fine texture on its lower half (`detail`).
 
-use whizbang_core::artifact::{ArtifactId, BandProfile, Mask, Series, Step};
-use whizbang_core::identity::{Binding, CanonicalPixels, Digest, Space};
+use whizbang_core::artifact::{BandProfile, Mask};
+use whizbang_core::identity::CanonicalPixels;
 use whizbang_rascal::apply::performed;
 use whizbang_rascal::constants::{self, FAN, MEASURES_V1};
+use whizbang_rascal::examples::{band_of, banded, canvas, canvases, ramped};
 use whizbang_rascal::fan::{Settings, fan_profile, windows};
 use whizbang_rascal::measure::{MEASURES, Measured, Measuring};
-use whizbang_rascal::profile::{band_core, band_mask};
-use whizbang_rascal::ramp::tone_step;
+use whizbang_rascal::profile::band_core;
 
-use super::super::grow::made_by;
 use super::super::record::{picture, time};
 use super::{Page, SIZES, count, hold, image_picture, timed_head, timed_row};
 
 const W: u32 = 192;
 const H: u32 = 64;
 const C: f64 = 96.0;
-
-fn never() -> bool {
-    false
-}
-
-/// A canvas `width` by `height` whose seam is its middle column: a warm left half and a
-/// cooler, darker right one, each brightening a little downward; from row `detail_from`
-/// down, a fine texture whose Sobel gradient is nowhere zero.
-fn canvas(width: u32, height: u32, detail_from: u32) -> CanonicalPixels {
-    let rgba = (0..width * height)
-        .flat_map(|at| {
-            let (x, y) = (at % width, at / width);
-            let base: [i32; 3] = if x < width / 2 {
-                [150, 120, 90]
-            } else {
-                [120, 100, 80]
-            };
-            let lift = (y * 16 / height) as i32;
-            let t = if y >= detail_from {
-                (((x * 7 + y * 13) % 5) as i32 - 2) * 6
-            } else {
-                0
-            };
-            let c = |v: i32| (v + lift + t).clamp(0, 255) as u8;
-            [c(base[0]), c(base[1]), c(base[2]), 255]
-        })
-        .collect();
-    CanonicalPixels::from_rgba(width, height, rgba).unwrap()
-}
-
-fn examples() -> [(&'static str, CanonicalPixels); 2] {
-    [("smooth", canvas(W, H, H)), ("detail", canvas(W, H, H / 2))]
-}
 
 /// What the chain made of one canvas.
 struct Chain {
@@ -71,59 +37,8 @@ struct Chain {
     largest: u8,
 }
 
-/// The band of `pixels` under `fan-v3`, made into a band profile on them.
-fn band_of(pixels: &CanonicalPixels, column: f64) -> BandProfile {
-    let settings = Settings::of(FAN[0].0).unwrap();
-    let made = fan_profile(pixels, column, &settings).unwrap();
-    let on = Binding::root(
-        pixels.digest(),
-        Space::flat(pixels.width(), pixels.height()).unwrap(),
-    );
-    let line = ArtifactId(Digest::of_bytes(b"the line"));
-    BandProfile::new(
-        on,
-        line,
-        made.column,
-        made.thin,
-        made.half,
-        made.windows,
-        FAN[0].0,
-        made_by("fan"),
-    )
-    .unwrap()
-}
-
-/// The band mask of `band`, at `profile-v1`'s ratio.
-fn banded(band: &BandProfile) -> Mask {
-    let ratio = constants::number(constants::PROFILE_V1.1, "feather_ratio").unwrap();
-    band_mask(band, ratio, Step::new("profile", "1.0.0"), &never)
-        .unwrap()
-        .unwrap()
-}
-
-/// The mask with `ramp-v1`'s tone ramp measured on `pixels`.
-fn ramped(pixels: &CanonicalPixels, mask: &Mask) -> Mask {
-    let ramp = constants::RAMP_V1.1;
-    let share = constants::number(ramp, "share").unwrap();
-    let sigma = constants::number(ramp, "ramp_sigma").unwrap();
-    let band = &mask.profile().unwrap().band;
-    let values = tone_step(pixels, band, sigma * f64::from(pixels.height()));
-    let step = Series::new(
-        mask.binding().clone(),
-        "tone_ramp.step",
-        "levels",
-        3,
-        values,
-        made_by("ramp"),
-    )
-    .unwrap();
-    let mut out = mask.clone();
-    out.push_tone_ramp(step, share).unwrap();
-    out
-}
-
 fn chains() -> Vec<Chain> {
-    examples()
+    canvases()
         .into_iter()
         .map(|(name, canvas)| {
             let band = band_of(&canvas, C);

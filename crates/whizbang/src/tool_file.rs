@@ -386,6 +386,7 @@ impl Declaration {
                     required: a.required,
                 })
                 .collect(),
+            region_kind: self.regions().then(|| self.region_kind.clone()).flatten(),
         }
     }
 

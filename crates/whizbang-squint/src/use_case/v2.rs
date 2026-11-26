@@ -28,10 +28,6 @@ use super::submission::{Class, Decided, Rejection, cited_calls_held, decided_wit
 use super::{Checklist, Resolved, SUBMIT};
 use crate::job::Job;
 
-/// The values of the setting `submission`, and its default.
-pub const FORMATS: [&str; 2] = ["v1", "v2"];
-pub const DEFAULT_FORMAT: &str = "v1";
-
 /// The most problems one repair names; the rest are counted.
 pub const PROBLEMS_SHOWN: usize = 12;
 
@@ -144,8 +140,8 @@ impl Recovery {
     }
 }
 
-/// What a submission of v2 decided: the verdict, the submission as v1's array form, and
-/// each near-miss read on the way, in order.
+/// What a submission of v2 or v3 decided: the verdict, the submission as v1's array form,
+/// and each near-miss read on the way, in order.
 #[derive(Debug, Clone)]
 pub struct Submitted {
     pub decided: Decided,
@@ -153,7 +149,7 @@ pub struct Submitted {
     pub recoveries: Vec<Recovery>,
 }
 
-/// What a call of `submit_verdict` under v2 gave: its arguments, and the JSON pointers
+/// What a call of `submit_verdict` under v2 or v3 gave: its arguments, and the JSON pointers
 /// of every key its adapter found written more than once in them as sent
 /// (`ToolCall::repeated_keys`), which the parsed arguments no longer show.
 pub struct Given<'a> {
@@ -174,6 +170,7 @@ pub fn decided_of_v2(
 ) -> Result<Submitted, Rejection> {
     let mut recoveries = Vec::new();
     let (read, twice) = normalised(
+        Form::V2,
         call.arguments,
         call.repeated,
         checklist,
@@ -190,7 +187,7 @@ pub fn decided_of_v2(
         let said = format!("{id} has more than one disposition");
         Rejection::new(Class::DuplicateItem, said)
     });
-    let decided = decided_with(&read, job, resolved, checklist, true);
+    let decided = decided_with(&read, job, resolved, checklist, &[], true);
     found.extend(twice);
     match decided {
         Ok(decided) if found.is_empty() => Ok(Submitted {
@@ -208,7 +205,7 @@ pub fn decided_of_v2(
 
 /// Every problem as one rejection: the first's words alone, or how many and each, at most
 /// [`PROBLEMS_SHOWN`], then how many more.
-fn one(found: Vec<Rejection>) -> Rejection {
+pub(super) fn one(found: Vec<Rejection>) -> Rejection {
     let mut found = found.into_iter();
     let Some(first) = found.next() else {
         return Rejection::new(Class::NotAList, "the submission is not a verdict");
@@ -369,12 +366,20 @@ fn text_read(value: &mut Json, object: bool, recoveries: &mut Vec<Recovery>) {
     recoveries.push(Recovery::ListAsText);
 }
 
-/// The submission as v1's array form, every near-miss read and recorded.
+/// Which form `normalised` reads: v2's keyed `items` (or v1's list, recorded as
+/// `array_form`), or v3's list, each item with its findings inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Form {
+    V2,
+    V3,
+}
+
 /// The submission as v1's array form, every near-miss read and recorded; and the ids of
 /// the checklist whose key the submission wrote more than once in `items`, which a JSON
 /// object cannot hold and its reader collapses: from the pointers the judge's adapter
 /// found repeated in the arguments as sent (`repeated`), and from `items` given as text.
-fn normalised(
+pub(super) fn normalised(
+    form: Form,
     arguments: &Json,
     repeated: &[String],
     checklist: &Checklist,
@@ -417,7 +422,7 @@ fn normalised(
         }
     }
     let items = match read.get("items") {
-        Some(Json::Object(keyed)) => {
+        Some(Json::Object(keyed)) if form == Form::V2 => {
             // In the order of the checklist, then any other key in the order given.
             let mut answers: Vec<(usize, Json)> = Vec::new();
             for (key, answer) in keyed {
@@ -439,7 +444,9 @@ fn normalised(
             Some(answers.into_iter().map(|(_, a)| a).collect::<Vec<_>>())
         }
         Some(Json::Array(list)) => {
-            recoveries.push(Recovery::ArrayForm);
+            if form == Form::V2 {
+                recoveries.push(Recovery::ArrayForm);
+            }
             let mut answers = list.clone();
             for answer in &mut answers {
                 if let Some(said) = answer.get("id").and_then(Json::as_str) {
@@ -457,15 +464,27 @@ fn normalised(
     if let Some(mut answers) = items {
         for answer in &mut answers {
             enum_words(answer, recoveries);
+            // Under v3, the findings inside an item are read as the separate ones are.
+            if form == Form::V3
+                && let Some(inside) = answer.get_mut("findings")
+            {
+                text_read(inside, false, recoveries);
+                if let Json::Array(inside) = inside {
+                    for finding in inside.iter_mut() {
+                        enum_words(finding, recoveries);
+                        evidence(finding, shown, also, recoveries);
+                    }
+                }
+            }
         }
         // Two answers of one item that say the same, read as the first.
         let mut kept: Vec<Json> = Vec::new();
         for answer in answers {
-            let same = |a: &Json, b: &Json| {
-                ["id", "disposition", "confidence", "location", "allowed_by"]
-                    .iter()
-                    .all(|key| a.get(*key) == b.get(*key))
+            let keys: &[&str] = match form {
+                Form::V2 => &["id", "disposition", "confidence", "location", "allowed_by"],
+                Form::V3 => &super::v3::SAME_V3,
             };
+            let same = |a: &Json, b: &Json| keys.iter().all(|key| a.get(*key) == b.get(*key));
             if answer.get("id").is_some() && kept.iter().any(|k| same(k, &answer)) {
                 recoveries.push(Recovery::IdenticalDuplicate);
                 continue;

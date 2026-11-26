@@ -325,6 +325,15 @@ pub fn v2_schema() -> serde_json::Value {
     tool.schema().clone()
 }
 
+/// v3's tool for the checklist of source-fidelity's shorthand job (plan mE, task F1).
+pub fn v3_schema() -> serde_json::Value {
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let resolved = whizbang_squint::use_case::resolve(&job).unwrap();
+    let checklist = whizbang_squint::use_case::Checklist::build(&resolved, &job);
+    let tool = whizbang_squint::use_case::submit_tool_v3(&checklist).unwrap();
+    tool.schema().clone()
+}
+
 #[test]
 fn a_v2_keyed_submission_is_sent_with_its_definitions_in_place_and_read() {
     let (printed, first) = v2_sent(GOOGLE, "google-v2");

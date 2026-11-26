@@ -210,10 +210,15 @@ pub struct Item {
 }
 
 /// What the judge must answer, item by item: one item for each mandatory instance, then
-/// one for each reference with the instances that consult it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// one for each reference with the instances that consult it, then the evidence items a
+/// tool's regions added (`crate::checklist::ingest`). Each evidence item's image and bounds
+/// are kept with it here, which a later item's overlaps are read against, so the two are
+/// never of different checklists.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Checklist {
     pub items: Vec<Item>,
+    /// Each evidence item's id, the image it is on, and its bounds in that image's pixels.
+    pub(crate) evidence: Vec<(String, String, [f64; 4])>,
 }
 
 impl Checklist {
@@ -241,7 +246,10 @@ impl Checklist {
                 ..Item::default()
             });
         }
-        Checklist { items }
+        Checklist {
+            items,
+            evidence: Vec::new(),
+        }
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
@@ -252,31 +260,43 @@ impl Checklist {
         self.items.iter().find(|item| item.id == id)
     }
 
+    /// How many evidence items the checklist holds.
+    pub fn evidence_count(&self) -> usize {
+        self.evidence.len()
+    }
+
     /// The checklist as the judge sees it: an evidence item with its label and where it
     /// is, and the items it overlaps (squint's `render`).
     pub fn render(&self, resolved: &Resolved) -> String {
         let mut out = String::from("Checklist. Give every item below exactly one disposition.\n");
         for item in &self.items {
-            let texts: Vec<&str> = resolved
-                .instances
-                .iter()
-                .filter(|i| item.instances.contains(&i.id()))
-                .map(|i| i.text.as_str())
-                .collect();
-            let mut line = format!("- {}", item.id);
-            if let Some(label) = &item.label {
-                line.push_str(&format!(" [{}]", clean(label)));
-            }
-            if let Some(location) = &item.location {
-                line.push_str(&format!(" at {}", clean(location)));
-            }
-            line.push_str(&format!(": {}", texts.join(" ")));
-            if !item.overlaps.is_empty() {
-                line.push_str(&format!(" (overlaps {})", item.overlaps.join(", ")));
-            }
-            out.push_str(&line);
+            out.push_str(&Checklist::line(item, resolved));
             out.push('\n');
         }
         out
+    }
+
+    /// One item's line as [`Checklist::render`] shows it. A region's label is quoted, as
+    /// Rust quotes a string, so that nothing in it can read as the end of the item's id or
+    /// as another item (plan mE, task F1, from the review of T1).
+    pub fn line(item: &Item, resolved: &Resolved) -> String {
+        let texts: Vec<&str> = resolved
+            .instances
+            .iter()
+            .filter(|i| item.instances.contains(&i.id()))
+            .map(|i| i.text.as_str())
+            .collect();
+        let mut line = format!("- {}", item.id);
+        if let Some(label) = &item.label {
+            line.push_str(&format!(" {:?}", clean(label)));
+        }
+        if let Some(location) = &item.location {
+            line.push_str(&format!(" at {}", clean(location)));
+        }
+        line.push_str(&format!(": {}", texts.join(" ")));
+        if !item.overlaps.is_empty() {
+            line.push_str(&format!(" (overlaps {})", item.overlaps.join(", ")));
+        }
+        line
     }
 }

@@ -166,7 +166,8 @@ function ExampleRow(props: ExampleRowProps) {
             <button type="button" role="menuitem" class="menu__item" onClick={() => props.onDoing("rename")}>
               <span class="menu__title">Rename…</span>
             </button>
-            <button type="button" role="menuitem" class="menu__item" onClick={props.onRun}>
+            {/* An example no run made (one `store record-inputs` wrote) has no run to open. */}
+            <button type="button" role="menuitem" class="menu__item" disabled={!example.run} onClick={props.onRun}>
               <span class="menu__title">Open its run</span>
             </button>
             <span class="menu__rule" aria-hidden="true" />

@@ -117,24 +117,8 @@ pub fn image_picture(pixels: &CanonicalPixels, marked: Option<&[u8]>) -> Vec<u8>
     )
 }
 
-/// The examples' scene: 96 by 64, a soft gradient from blue to sand with a darker band
-/// across its lower third, every pixel opaque.
-pub fn scene() -> CanonicalPixels {
-    let (width, height) = (96u32, 64u32);
-    let rgba = (0..width * height)
-        .flat_map(|at| {
-            let (x, y) = (at % width, at / width);
-            let band = if (40..48).contains(&y) { 40 } else { 0 };
-            [
-                (60 + x + y) as u8 - band,
-                (90 + x / 2 + y) as u8 - band,
-                (170 - x / 2) as u8 - band / 2,
-                255,
-            ]
-        })
-        .collect();
-    CanonicalPixels::from_rgba(width, height, rgba).unwrap()
-}
+/// The examples' scene, which their inputs are made on (`whizbang_rascal::examples`).
+pub use whizbang_rascal::examples::scene;
 
 /// How many bytes of a plane are not 0.
 pub fn count(plane: &[u8]) -> usize {

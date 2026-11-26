@@ -55,6 +55,26 @@ What to look for: every plane keeps its count, and the block that touched the cr
 and left edges starts at 30, 16 on the picture, the crop's corner; nothing is set outside
 the crop's 40 by 32.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| disc | mask | mask | `sha256:72f5b6c93eae3bb91a9de948dc9de3996f53c5f1cc53dad841bb85a4a47c18a1` |
+| disc | crop | image | `sha256:e7326de20ad06d50b37831dd150aca18a2df1f3288b9d9c421b1f61fa80d4cdf` |
+| disc | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| edged | mask | mask | `sha256:19aed466d475c605d3cbf77a55cf434cc7f46125887965c2438e879547bf7453` |
+| edged | crop | image | `sha256:e7326de20ad06d50b37831dd150aca18a2df1f3288b9d9c421b1f61fa80d4cdf` |
+| edged | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-20.

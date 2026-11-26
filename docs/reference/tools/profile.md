@@ -42,6 +42,26 @@ What to look for: the feather of a wide row reaches far past its core, 1.65 half
 so on the smooth canvas the core and the blend together cover 9,856 of its 12,288 pixels;
 under the texture the core is about four pixels wide and its feather under a pixel.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| smooth | band | band_profile | `sha256:d507a45e55aca5aad545bbf5c4555fc211c555a650eb5c413989179b458b09c7` |
+| smooth | image of band | image | `sha256:4a1f416814e4de643c1c200890a6ebc1e98a9e7f5e2b86a53a390062cfc2393c` |
+| smooth | line of band | location | `sha256:f33f4f79010ab2a22d3e0a6d08fa77eb9da68237b974107a7e367c68020abf1e` |
+| detail | band | band_profile | `sha256:610b511816aead4f7851a5b90a69a16b3c0089a1c20f35d3d2df31e2bce07508` |
+| detail | image of band | image | `sha256:8a7b5edd4ad1498c199c212d6d2cd9c1875412945a6c1e78291150007bb9f130` |
+| detail | line of band | location | `sha256:b9e7f56466326d6c5d1966096202c312d87146bb2f7fdff2aa6b98b98e958e0c` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

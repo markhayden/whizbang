@@ -123,9 +123,17 @@ struct Examples {
     strip: Crop,
 }
 
+/// The examples' pictures: the scene, the edited scene and the panorama.
+pub fn pictures() -> [Image; 3] {
+    [
+        picture(WIDTH, HEIGHT, scene(false)),
+        picture(WIDTH, HEIGHT, scene(true)),
+        panorama::panorama(1024, 512, sphere),
+    ]
+}
+
 fn examples() -> Examples {
-    let scene = picture(WIDTH, HEIGHT, scene(false));
-    let edited = picture(WIDTH, HEIGHT, self::scene(true));
+    let [scene, edited, sphere] = pictures();
     let detail = view(
         &Request {
             image: &scene,
@@ -136,7 +144,6 @@ fn examples() -> Examples {
     )
     .unwrap();
     let whole = look(&scene, WHOLE);
-    let sphere = panorama::panorama(1024, 512, sphere);
     let across = seen(&sphere, ACROSS.0, ACROSS.1, ACROSS.2);
     let up = seen(&sphere, UP.0, UP.1, UP.2);
     let strip = look(&sphere, STRIP);

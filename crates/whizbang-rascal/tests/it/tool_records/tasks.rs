@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use whizbang_core::artifact::{Artifact, ArtifactId, Location, Mask, Shape, Source, UseCase};
+use whizbang_core::artifact::{Artifact, ArtifactId, Location, Mask, Source, UseCase};
 use whizbang_core::contract::{Call, Value};
 use whizbang_core::identity::{CanonicalPixels, DecodeLimits};
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
@@ -59,12 +59,7 @@ fn passes(shop: &Shop) -> Vec<Pass> {
             );
             shop.completed(&Call::new("fill").input("image", image).input("mask", mask))
         } else {
-            let shape = Shape::Box {
-                left: 24.0,
-                top: 16.0,
-                right: 56.0,
-                bottom: 44.0,
-            };
+            let shape = whizbang_rascal::examples::protect_box();
             let location = Location::new(base.binding(), shape, made_by("rect")).unwrap();
             let location = shop.put(Artifact::Location(location));
             shop.completed(

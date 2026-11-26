@@ -20,6 +20,7 @@
 mod render;
 mod submission;
 mod v2;
+mod v3;
 
 use std::collections::BTreeSet;
 
@@ -31,9 +32,14 @@ pub use submission::{
     submit_tool,
 };
 pub use v2::{
-    DEFAULT_FORMAT, FORMATS, Given, KEY_LIMIT, PROBLEMS_SHOWN, Recovery, Submitted, decided_of_v2,
-    item_keys, submit_tool_v2,
+    Given, KEY_LIMIT, PROBLEMS_SHOWN, Recovery, Submitted, decided_of_v2, item_keys, submit_tool_v2,
 };
+pub use v3::{ReadBack, decided_of_v3, read_back, submit_tool_v3};
+
+/// The values of the setting `submission`, the form the judge answers in (ADR 0042), and its
+/// default: v1, squint's; v2, keyed by checklist id; v3, each finding inside its item.
+pub const FORMATS: [&str; 3] = ["v1", "v2", "v3"];
+pub const DEFAULT_FORMAT: &str = "v1";
 
 use crate::job::{Job, Role};
 

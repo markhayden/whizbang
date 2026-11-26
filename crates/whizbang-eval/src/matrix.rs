@@ -186,7 +186,7 @@ impl Judge {
 /// `{ arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }], second_look = "on" }`,
 /// or with `second_look = [{ look = "strict", use_cases = ["reality-checks"] }]`.
 ///
-/// Either arm may name the form the judge answers in, `submission`, `v1` or `v2` (plan
+/// Either arm may name the form the judge answers in, `submission`, `v1`, `v2` or `v3` (plan
 /// e1, task F1): `C;submission=v2`, or `submission = "v2"` in a table. It is in the arm's
 /// name only when given, so every matrix written before it keeps its identity, and an arm
 /// that names none runs the default of the binary.
@@ -204,7 +204,7 @@ pub struct Arm {
 
 /// The values an arm's `submission` takes. The binary's tests hold this to
 /// `whizbang_squint::check::SUBMISSIONS`.
-pub const SUBMISSIONS: [&str; 2] = ["v1", "v2"];
+pub const SUBMISSIONS: [&str; 3] = ["v1", "v2", "v3"];
 
 /// A second look an arm gives, and the use cases it gives it for: every one when none is
 /// named.
@@ -335,7 +335,7 @@ impl Arm {
         if let Some(submission) = &self.submission
             && !SUBMISSIONS.contains(&submission.as_str())
         {
-            return Err(format!("arm {self}: submission is v1 or v2"));
+            return Err(format!("arm {self}: submission is v1, v2 or v3"));
         }
         if self.details.len() > ARM_DETAILS_LIMIT {
             return Err(format!("arm {self}: at most {ARM_DETAILS_LIMIT} details"));
@@ -518,7 +518,7 @@ impl std::str::FromStr for Arm {
                 }
                 "submission" if plain(value) => arm.submission = Some(value.to_owned()),
                 "submission" => {
-                    return Err(format!("arm {text:?}: submission is v1 or v2"));
+                    return Err(format!("arm {text:?}: submission is v1, v2 or v3"));
                 }
                 _ => {
                     return Err(format!(
