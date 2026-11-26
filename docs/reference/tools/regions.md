@@ -68,6 +68,34 @@ mark; `subject_disagreement`, the share of the subjects' pixels on one side only
 `candidates`, the regions found before the cap. Beside it the regions, each held to its
 declared bounds before anything uses it, of the kind `change_region`. No image.
 
+**Its methods** (plan mE, task T2; `SPEC.md` section 8, "Comparing methods"), the argument
+`method`, which `whizbang eval tool --method` gives each run: `sam3`, the default, as above;
+or `eomt`, squint's own, where the second map is the classes of the catalogue's fixed-class
+segmenter `eomt-ade20k` disagreeing (both pictures labelled through `context.labels`, a
+working pixel counted where its two classes differ and both are sure at 0.5 or more). A
+region is labelled by the majority class on each side (`floor -> swimming pool`), a
+disagreement between classes the segmenter confuses scores 0.35 of what it would, and
+`preserve` and `ignore` name classes. Its measurement is `class_disagreement`, in place of
+`subject_disagreement`: as squint's, the share of the confident working pixels that the
+cleaned disagreement map holds. Its examples under `eomt` run as tests
+(`test_classes.RegionsByClass`); rung 2 chooses between the two (task R2).
+
+Under `eomt`, the record's own source and examples, read by a fake fixed-class segmenter that
+calls each red pixel `swimming pool` and every other `floor` (run as a test,
+`test_classes.MethodRecords`), the subject from the job "The pool keeps its shape.":
+
+<!-- eomt: begin -->
+
+| Example | Subject | Values | Regions |
+|---|---|---|---|
+| tub | the pair | candidates 1 changed_fraction 0.0309 class_disagreement 0.0309 photometric_fraction 0.0198 strongest 0.642 | floor -> swimming pool 0.642 |
+| redrawn | the pair | candidates 1 changed_fraction 0.8456 class_disagreement 0 photometric_fraction 0.8456 strongest 0.453 | floor changed 0.453 |
+
+<!-- eomt: end -->
+
+`tub` is a class disagreement: the floor read as a pool where the tub is. `redrawn` moves
+every edge a little, so its change is photometric and no confident class differs.
+
 ## Examples
 
 Both compare a picture drawn by a program, 160 by 120, a red pool on a checked lawn, with an
@@ -150,3 +178,5 @@ names it.
 - 2026-11-25, plan mE task T1: ported from squint as a tool file on SAM 3's phrase requests
   and `change_map`'s photometric map, with its regions on the candidate; this record's two
   examples (rung 1), run against the fake model.
+- 2026-11-26, plan mE task T2: the argument `method`, `sam3` (the default) or `eomt`, on the
+  catalogue's fixed-class segmenter; version 0.2.0.

@@ -2290,6 +2290,7 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
         &root,
         &sets_root,
         &declared,
+        None,
         &[set.to_owned()],
         50,
     )
@@ -2313,6 +2314,82 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
         again.primary(&declared).unwrap(),
     );
     assert!((after - before / 2.0).abs() < 1e-9, "{before} {after}");
+}
+
+/// The declaration `eval tool` reads of a tool file the pack ships, by its file's text.
+fn shipped(text: &str) -> whizbang::trying::Declared {
+    let declaration = whizbang::tool_file::Declaration::parse(text.as_bytes()).unwrap();
+    whizbang::trying::Declared {
+        tool: declaration.name.clone(),
+        primary: declaration.primary.clone(),
+        changed: declaration.changed(),
+        report: whizbang::tool_file::REPORT.to_owned(),
+        file: true,
+        takes_job: declaration.arguments.iter().any(|a| a.name == "job"),
+        texts: (declaration.arguments.iter())
+            .filter(|a| a.kind == "text")
+            .map(|a| a.name.clone())
+            .collect(),
+    }
+}
+
+#[test]
+fn eval_tool_runs_a_method() {
+    // Plan mE, task T2, item 6: `--method` is given to each run of a tool that declares a
+    // method, `regions` and `outline`, named in what `eval tool` prints, and refused for a
+    // tool that declares none, before anything runs. A run under it is
+    // `outline_and_regions_run_under_try_and_eval_tool_against_the_fake_segmenter`'s.
+    use whizbang_core::contract::Value;
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    for text in [
+        include_str!("../../../../pack/tools/regions.py"),
+        include_str!("../../../../pack/tools/outline.py"),
+    ] {
+        let declared = shipped(text);
+        let given = whizbang::trying::item_arguments(&declared, &job, Some("eomt")).unwrap();
+        assert!(
+            given.contains(&("method".to_owned(), Value::text("eomt"))),
+            "{given:?}"
+        );
+        assert_eq!(given[0].0, "job");
+        let none = whizbang::trying::item_arguments(&declared, &job, None).unwrap();
+        assert!(none.iter().all(|(name, _)| name != "method"));
+        assert_eq!(
+            whizbang::trying::named(&declared, Some("eomt")),
+            format!("{}@eomt", declared.tool)
+        );
+    }
+    let per_subject = shipped(include_str!("../../../../pack/tools/per_subject.py"));
+    let refused = whizbang::trying::item_arguments(&per_subject, &job, Some("eomt")).unwrap_err();
+    assert!(refused.contains("declares no methods"), "{refused}");
+    // A method of no name, or not a name, is refused whatever the tool.
+    let regions = shipped(include_str!("../../../../pack/tools/regions.py"));
+    for given in ["", "eomt sam3", "Eomt"] {
+        let refused = whizbang::trying::item_arguments(&regions, &job, Some(given)).unwrap_err();
+        assert!(
+            refused.contains("a method is a name"),
+            "{given:?}: {refused}"
+        );
+    }
+}
+
+#[test]
+fn eval_tool_gives_a_tool_that_takes_a_box_the_whole_frame() {
+    // Plan mE, task T2, item 4: `classes` reads one box; `eval tool` gives it the whole
+    // frame, so that each item has one number and no tool feeds another.
+    use whizbang_core::contract::Value;
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let classes = shipped(include_str!("../../../../pack/tools/classes.py"));
+    assert_eq!(
+        (classes.primary.as_str(), classes.takes_job),
+        ("class_changed", false)
+    );
+    let given = whizbang::trying::item_arguments(&classes, &job, None).unwrap();
+    assert_eq!(given, [("bbox".to_owned(), Value::text("0 0 1 1"))]);
+    // A tool that takes no box is given none.
+    let regions = shipped(include_str!("../../../../pack/tools/regions.py"));
+    let given = whizbang::trying::item_arguments(&regions, &job, None).unwrap();
+    assert!(given.iter().all(|(name, _)| name != "bbox"));
 }
 
 #[test]
@@ -2371,18 +2448,20 @@ fn outline_and_regions_run_under_try_and_eval_tool_against_the_fake_segmenter() 
     assert_eq!(report["regions"], serde_json::json!([]));
     // `regions` scored on two items, a pass and a fail (the score needs both), each
     // subject read from its job.
+    // Under its method named, `sam3` (plan mE, task T2, item 6), given to each run.
     let (scored, said) = whizbang::trying::eval_tool(
         &executor,
         &root,
         &sets_root,
         &regions,
+        Some("sam3"),
         &[set.to_owned()],
         50,
     )
     .unwrap();
     assert_eq!((scored.items, scored.families), (2, 2), "{said}");
     assert!(
-        said.contains("regions strongest (larger is changed): 2 items"),
+        said.contains("regions@sam3 strongest (larger is changed): 2 items"),
         "{said}"
     );
     let run = said

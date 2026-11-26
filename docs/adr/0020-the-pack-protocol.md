@@ -27,6 +27,10 @@ and no reason changed. Added: "The worker", under "Decision".
 Amended: 2026-11-17, by task P6a (the kind `pack`). No byte and no reason changed. Added,
 under "The worker": what a caller gives with a request beside its cancellation and its
 deadline, the kind's limit for a call and the lifetime of a worker it starts.
+Amended: 2026-11-26, by plan mE's task T2. No byte and no reason of `pack/1` changed: the
+kind `pack` puts the worker's sentence after the words of a fault the worker's `error`
+ended a request in, so that a run's error names the cause; the handle redacts and cleans
+it with the rest.
 Amended: 2026-11-23, by task P1 of plan m6 (ADR 0046). No byte and no reason of `pack/1`
 changed. "The HTTP codec, on paper" gains a note: it is built, as ADR 0046 records it.
 
@@ -578,7 +582,7 @@ request; a worker already running keeps its own. No byte of `pack/1` changed.
 | Waiting, or asked | The supervisor ended (`Supervisor::kill`, task P5b) | `unavailable`, `not_sent` | the supervisor of the pack's worker was ended before this request's turn came; it was not sent |
 | In its turn, before a byte is written | Its cancel or deadline (looked at before the worker is started, and again after its hello) | `cancelled` or `timed_out`, `not_sent` | … before the pack's worker was asked, or while the pack's worker was started; it was not sent |
 | In its turn, the worker not started again | Three workers in a row that ended before they answered anything (below) | `unavailable`, `not_sent` | the pack's worker ended before it answered anything 3 times in a row; no worker is started until 60 seconds after the last |
-| In the worker | Its result, or the worker's `error` for it | none, or the worker's fault, `answered` | the pack's worker ended the request with the fault … |
+| In the worker | Its result, or the worker's `error` for it | none, or the worker's fault, `answered` | the pack's worker ended the request with the fault …; and, from the kind `pack`, `; the worker said: ` and the worker's sentence (amended 2026-11-26) |
 | In the worker | Its kind's limit | `timed_out`; the worker killed | the pack's worker did not end the request within … seconds and was killed |
 | In the worker | Its deadline, when earlier | `timed_out`; the worker killed | the request's deadline passed before the pack's worker ended it, and the worker was killed |
 | In the worker | Its cancel, then 5 s | `cancelled`; the worker killed | the pack's worker did not stop the cancelled request within 5 seconds of its cancel and was killed |

@@ -807,6 +807,7 @@ fn the_pack_this_build_carries_is_the_repositorys() {
         "pyproject.toml",
         "uv.lock",
         ".python-version",
+        "tools/classes.py",
         "tools/outline.py",
         "tools/per_subject.py",
         "tools/regions.py",

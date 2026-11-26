@@ -1,7 +1,7 @@
 # /// whizbang-tool
 # format = "tool-file/1"
 # name = "regions"
-# version = "0.1.0"
+# version = "0.2.0"
 # purpose = "Finds where the candidate differs from the source, with high recall: photometric change and the protected subjects' masks disagreeing, boxed, labelled and scored, as regions on the candidate."
 # evidence = ["measurements", "regions"]
 # bindings = ["source", "candidate"]
@@ -39,6 +39,11 @@
 # unit = "count"
 # min = 0.0
 # max = 1000000.0
+# [[measurements]]
+# name = "class_disagreement"
+# unit = "ratio of the confident pixels"
+# min = 0.0
+# max = 1.0
 # [[arguments]]
 # name = "job"
 # type = "text"
@@ -55,6 +60,10 @@
 # name = "ignore"
 # type = "text"
 # purpose = "Things whose change matters less, each a phrase, separated by semicolons: a region on one scores lower."
+# [[arguments]]
+# name = "method"
+# type = "text"
+# purpose = "sam3, the default: the subjects' masks disagreeing; or eomt: the fixed-class segmenter's classes disagreeing."
 # ///
 """`regions` (plan mE, task T1, item 2; `SPEC.md` section 16, row E): an experimental tool
 file. Ported from squint's `tools/python/src/squint_tools/regions.py` at the commit
@@ -75,6 +84,19 @@ Subjects come from the job's requirements of kind `must_hold` (`whizbang_pack.su
 from `phrases`, and from `preserve` and `ignore`, at most `SUBJECTS_MOST`: the hints'
 first, then the job's, then `phrases`, each once, as printable text.
 
+**The method** (plan mE, task T2, item 5; `SPEC.md` section 8, "Comparing methods"), the
+argument `method`: `sam3`, the default, as above; or `eomt`, squint's own, where the second
+map is the fixed-class segmenter's classes disagreeing: both pictures labelled by the
+catalogue's `eomt-ade20k` (`context.labels`, every class of ADE20K), and a working pixel
+counted where the two classes differ and both are at least `CONFIDENT` sure. A region is
+labelled by the majority class on each side ("floor -> swimming pool", or "wall changed"),
+a disagreement between two classes the segmenter confuses scores `RELABEL` of what it would
+(`whizbang_pack.class_groups`), and `preserve` and `ignore` name classes, raising a region
+either side of which is one and lowering one both sides of which are. Its measurement is
+`class_disagreement`, in place of `subject_disagreement`: as squint's, the share of the
+confident working pixels that the cleaned disagreement map holds. A class's confidence is the mean
+over its pixels (one figure a class, what `labels` gives), where squint read each pixel's.
+
 What changed from squint. Squint's labels were classes ("floor -> swimming pool") and its
 hints classes; here they are the subjects' phrases, and the class labels come with plan mE's
 task T2. The photometric map is `change_map`'s; squint's own `regions` added a blurred
@@ -84,7 +106,9 @@ working pixel, where `change_map` resamples by a triangle filter. No image is re
 """
 
 import json
+from collections import Counter
 
+from whizbang_pack import class_groups
 from whizbang_pack.masks import Grid, components, mask_of, one_grid, printable
 from whizbang_pack.subjects import subjects_of
 
@@ -100,6 +124,9 @@ SUPPORT = 0.2
 # Two regions overlapping by more than this IoU are one: a disagreement a photometric
 # region already covers is not reported again.
 OVERLAP = 0.3
+# Both sides must be at least this sure of their class for a disagreement to count (the
+# method `eomt`).
+CONFIDENT = 0.5
 # A preserve subject's region scores this much more, an ignore subject's this much.
 PRESERVE = 1.25
 IGNORE = 0.5
@@ -258,8 +285,62 @@ def find(grid, residual, photometric, subjects, preserve, ignore):
     return found, photometric | disagree, photometric
 
 
+def find_classes(grid, residual, photometric, before, after, preserve, ignore):
+    """The regions of the method `eomt`, best first, as `find` gives them: the photometric
+    map's, then the confident class disagreements no photometric region covers. `before`
+    and `after` are each working pixel's class and its confidence (`class_groups.on_grid`)
+    on the source and the candidate. Also the cleaned disagreement map, the photometric
+    one, and the counts of confident pixels the cleaned disagreement holds and of confident
+    pixels (squint's `class_disagreement`: the cleaned map over the confident pixels)."""
+    names_b, sure_b = before
+    names_a, sure_a = after
+    sure = [sb >= CONFIDENT and sa >= CONFIDENT for sb, sa in zip(sure_b, sure_a)]
+    differs = [s and nb != na for s, nb, na in zip(sure, names_b, names_a)]
+    raw = int("".join("1" if d else "0" for d in differs), 2) if differs else 0
+    photometric, disagree = cleaned(grid, photometric), cleaned(grid, raw)
+    w, n = grid.w, grid.n
+    found = []
+    for source_mask, by_class in ((photometric, False), (disagree, True)):
+        for pixels, x0, y0, x1, y1, runs in components(grid, source_mask)[0]:
+            area = pixels / n
+            if area < MIN_AREA:
+                continue
+            box = [x0 / w, y0 / grid.h, x1 / w, y1 / grid.h]
+            if by_class and any(_iou(box, r["bbox"]) > OVERLAP for r in found):
+                continue
+            piece = grid.of_runs(runs)
+            strength = sum(sum(residual[y * w + a : y * w + b]) for y, a, b in runs) / pixels
+            strength = min(1.0, max(0.0, strength / SATURATION))
+            share = (piece & disagree).bit_count() / pixels
+            counted_b, counted_a = Counter(), Counter()
+            for y, a, b in runs:
+                counted_b.update(names_b[y * w + a : y * w + b])
+                counted_a.update(names_a[y * w + a : y * w + b])
+            was = counted_b.most_common(1)[0][0] or "nothing"
+            now = counted_a.most_common(1)[0][0] or "nothing"
+            if by_class:
+                # A class disagreement with no change in the pixels behind it is the
+                # segmenter changing its mind, not the picture.
+                share *= min(1.0, strength / SUPPORT)
+            score = min(1.0, 0.5 * strength + 0.5 * max(strength, share))
+            if by_class and was != now and class_groups.related(was, now):
+                score *= class_groups.RELABEL
+            if was in preserve or now in preserve:
+                score = min(1.0, score * PRESERVE)
+            if was in ignore and now in ignore:
+                score *= IGNORE
+            label = "%s -> %s" % (was, now) if was != now else "%s changed" % now
+            found.append({"bbox": box, "label": printable(label, LABEL_MOST), "score": round(score, 3), "area": area})
+    found.sort(key=lambda r: (-r["score"], -r["area"]))
+    confident = int("".join("1" if c else "0" for c in sure), 2) if sure else 0
+    return found, disagree, photometric, (disagree & confident).bit_count(), sum(sure)
+
+
 def run(context):
     arguments = context.arguments
+    method = arguments.get("method") or "sam3"
+    if method not in ("sam3", "eomt"):
+        raise ValueError("method is sam3 or eomt")
     source, candidate = context.image("source"), context.image("candidate")
     one_grid(source, candidate, ASPECT)
     gw, gh = working(source.width, source.height)
@@ -268,6 +349,8 @@ def run(context):
     b = lcn(blur3(luminance(candidate, gw, gh), gw, gh), gw, gh)
     residual = [abs(x - y) for x, y in zip(a, b)]
     photometric = int("".join("1" if d > CHANGED else "0" for d in residual), 2)
+    if method == "eomt":
+        return _by_class(context, grid, residual, photometric, candidate)
     named = subjects_of(json.loads(arguments["job"]))[0] if arguments.get("job") else []
     # Phrases are compared as they are kept, printable and cut; the hints' come first, so
     # that `SUBJECTS_MOST` never leaves out a subject whose score they move.
@@ -308,3 +391,36 @@ def run(context):
         for x0, y0, x1, y1 in [r["bbox"]]
     ]
     return {"readings": [{"subject": "the pair", "values": values}], "not_applicable": [], "regions": regions}
+
+
+def _boxed(kept, candidate):
+    """Regions on the candidate, in its pixels, from boxes in fractions of the grid."""
+    return [
+        {
+            "frame": "candidate",
+            "box": [round(x0 * candidate.width, 2), round(y0 * candidate.height, 2), round(x1 * candidate.width, 2), round(y1 * candidate.height, 2)],
+            "label": r["label"],
+            "score": r["score"],
+        }
+        for r in kept
+        for x0, y0, x1, y1 in [r["bbox"]]
+    ]
+
+
+def _by_class(context, grid, residual, photometric, candidate):
+    """The method `eomt`: the classes of both pictures from the fixed-class segmenter."""
+    arguments = context.arguments
+    classed = lambda text: {class_groups.class_of(p) or printable(p, 200) for p in _phrases(text)}
+    preserve, ignore = classed(arguments.get("preserve")), classed(arguments.get("ignore"))
+    before = class_groups.on_grid(class_groups.labels_of(context, "source"), grid.w, grid.h)
+    after = class_groups.on_grid(class_groups.labels_of(context, "candidate"), grid.w, grid.h)
+    found, disagree, photometric, differing, sure = find_classes(grid, residual, photometric, before, after, preserve, ignore)
+    kept = found[:MAX_REGIONS]
+    values = {
+        "strongest": kept[0]["score"] if kept else 0.0,
+        "changed_fraction": round((photometric | disagree).bit_count() / grid.n, 4),
+        "photometric_fraction": round(photometric.bit_count() / grid.n, 4),
+        "class_disagreement": round(differing / sure, 4) if sure else 0.0,
+        "candidates": float(len(found)),
+    }
+    return {"readings": [{"subject": "the pair", "values": values}], "not_applicable": [], "regions": _boxed(kept, candidate)}
