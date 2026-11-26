@@ -64,6 +64,83 @@ items are judged under.
   --mode judges|arms [--arm <arm>] [--rule judge-pick/1|submission/1] --out <file>` scores
   the runs matrices made ("Scoring judges", below).
 
+## Building a set
+
+`tools/sets/` is the set builder (plan mE, task B1; ADR 0050), ported from squint's
+`scripts/sets/` at the commit `docs/sources.toml` pins. It is a small Python program with one
+package, Pillow, pinned by hash in its `uv.lock`, run on the Python the pack pins, from its
+folder:
+
+```
+cd tools/sets
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets build \
+  --plan <plan.toml> --out <owner storage>/build/evalsets/<set id> --owner <owner storage> --fake
+# review <owner storage>/<set id>/contact-<family>.png and labels-draft.toml:
+# set each label's status to "confirmed" or "struck", and adjudicated_on to the date
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets promote \
+  --draft <owner storage>/<set id>/labels-draft.toml --set <the set folder> --attest "<attestation>"
+```
+
+A **plan** names the set and its families. Each family has one generator (`fal` for FLUX.2
+[klein] 4B, `openai` for gpt-image-2, `gemini` for Gemini 3.1 Flash Image, or `fake`) and is
+of one of three kinds:
+
+- A **scene** family has one generated source, its protected subjects (one requirement
+  each, under source fidelity), a brief, and items each made from the source by one op:
+  `grade` (a mild colour grade: a pass), `restyle` (the generator makes a permitted change,
+  such as the light or the season: a pass the owner confirms kept the structure), `mirror`,
+  `rotate`, `crop`, and the small camera changes `tilt`, `zoom` and `keystone`, each refilled
+  to the frame at the source's size (the structural rule, a fail over the whole picture), and
+  `edit` (the generator removes, adds or changes something named by `removes`, `adds` or
+  `alters`: the identity rule, a fail whose region is the densest patch of pixel difference;
+  any other dense patch is noted for the reviewer). Any op may carry delivery damage, `jpeg`
+  and `resample`, which changes no label. An item may name its own generator. Under reality
+  checks the job is the candidate alone: `as_is`, `restyle`, `edit` with a `defect`
+  (`anatomy`, `shadow`, `text` or `merge`, labelled RE1 to RE4) and `generate` with one.
+- A **subject** family has one to four generated references and three forms of item: a
+  `scene` composed from the references (a pass), an item made `from` an earlier one by an
+  `edit` that changes a marking (RC2; under product fidelity PF1, PF2 or PF3 by its `aspect`),
+  and a `scene` with a `lookalike` made without the references (RC3 and RC1; PF1 and PF2).
+- A **brief** family has a brief, what it `asks` for and `forbids` (one requirement each) and
+  the `text` it gives; each item is `generate` with a seed, from the brief or from one that
+  `violates` BC1, BC2 or BC3.
+
+The draft label comes from the construction alone: no judge or tool looks at an item to
+write it. `build` writes the set folder (manifest, families, one job per item with its
+pictures pinned) and, under `--owner`, the construction record, the draft labels and a contact
+sheet per family; `--owner` inside a repository is refused. A set's id is
+`<use case>/<name>`, and every id is lower-case letters, digits and hyphens, so none leads out
+of its folder. `rebuild` makes one item again from the pictures already built, with the plan
+as it now reads, and puts only its label back to draft:
+
+```
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets rebuild \
+  --plan <plan.toml> --out <the set folder> --owner <owner storage> --fake \
+  --item <id> [--seed-offset N]
+```
+
+`promote` publishes the confirmed labels, takes the struck items out, and writes the seal that
+`eval sets check` verifies; a label still a draft is refused.
+
+**Blind sets.** A blind plan lives in owner storage and is refused inside a repository, since
+an item's construction gives its label away; so is its `--draft`. Its item ids are public, so
+each is its family's id and its place, `<family>-<n>`, and any other is refused.
+`promote --labels-out <owner storage>` moves the labels there and leaves `labels_sha256` in
+the manifest; a blind set is refused without it.
+
+**The generators reach only approved recipients.** `--config <file>` names the whizbang config
+whose `[egress.recipients]` decide where a generator may send: a request goes only to an
+origin approved for every class it carries (`prompts`; with a picture to edit or compose
+from, `source_images` too), a downloaded picture only from an approved origin or an upstream
+of the recipient asked, and a redirect only where the same rule allows; a key never follows a
+redirect, and no proxy is used. The keys are read from `FAL_KEY`, `OPENAI_API_KEY` and
+`GEMINI_API_KEY`. Until the spend guard of B1's second pull request is built, only `--fake`
+builds.
+
+`scripts/tests/test-sets.sh` runs the builder's tests and the offline dry run: a set of each
+use case and a blind one from `tools/sets/tests/plans/`, built with the fake generator,
+confirmed, promoted, and read by `whizbang eval sets check`.
+
 ## Labels and corrections
 
 A label found wrong after a set was scored is not edited in place: `labels.toml` stays as

@@ -1,0 +1,31 @@
+# The dry run's plan of a brief-compliance set (scripts/tests/test-sets.sh). Made up for
+# the test.
+[set]
+id = "brief-compliance/dry-run-v1"
+use_case = "brief-compliance"
+split = "dev"
+licence = "CC-BY-4.0"
+images_repo = "github.com/markhayden/wafflery-evalsets"
+rules = { base = "brief-compliance", version = 1 }
+
+[[family]]
+id = "kite-beach"
+kind = "brief"
+generator = "fake"
+description = "a beach with a red kite and a striped windbreak"
+brief = "A photograph of a beach: a red kite in the sky, a striped windbreak on the sand, and a sign that reads TIDE. No dogs."
+asks = ["a red kite in the sky", "a striped windbreak on the sand", "a sign that reads TIDE"]
+forbids = ["dogs"]
+text = ["TIDE"]
+
+[[family.item]]
+id = "kite-beach-asked"
+op = { kind = "generate", seed = 901, size = 128 }
+
+[[family.item]]
+id = "kite-beach-no-windbreak"
+op = { kind = "generate", seed = 902, size = 128, prompt = "A photograph of a beach: a red kite in the sky, and a sign that reads TIDE. No dogs.", violates = "BC1", about = "a striped windbreak on the sand" }
+
+[[family.item]]
+id = "kite-beach-misspelt"
+op = { kind = "generate", seed = 903, size = 128, prompt = "A photograph of a beach: a red kite, a striped windbreak, and a sign that reads TIED. No dogs.", violates = "BC3", about = "TIDE" }

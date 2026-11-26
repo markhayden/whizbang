@@ -1,0 +1,36 @@
+# The dry run's plan of a reference-consistency set (scripts/tests/test-sets.sh). Made up
+# for the test.
+[set]
+id = "reference-consistency/dry-run-v1"
+use_case = "reference-consistency"
+split = "dev"
+licence = "CC-BY-4.0"
+images_repo = "github.com/markhayden/wafflery-evalsets"
+rules = { base = "reference-consistency", version = 1 }
+
+[[family]]
+id = "moss"
+kind = "subject"
+generator = "fake"
+size = 128
+description = "Moss, a grey tabby cat with one white paw and a yellow collar"
+subject = "Moss, a grey tabby cat with one white front paw and a yellow collar"
+protected = ["Moss's white front paw", "Moss's yellow collar"]
+references = [
+  { prompt = "Moss sitting, front view, plain background.", seed = 701 },
+  { prompt = "Moss walking, side view, on a rug.", seed = 702 },
+]
+
+[[family.item]]
+id = "moss-library"
+scene = { prompt = "Moss asleep on a library table, afternoon light.", seed = 711 }
+
+[[family.item]]
+id = "moss-library-collar"
+from = "moss-library"
+op = { kind = "edit", prompt = "Make the collar red. Change nothing else.", alters = "yellow collar" }
+
+[[family.item]]
+id = "moss-library-lookalike"
+scene = { prompt = "A grey cat asleep on a library table, afternoon light.", seed = 713 }
+lookalike = "a grey tabby cat with no white paw and a green collar"
