@@ -104,6 +104,43 @@ fn a_pictures_bytes_tell_only_its_dimensions() {
     assert_eq!(pixels_of(&b).rgba(), flat.as_slice());
 }
 
+#[test]
+fn pairs_drawn_from_runs_are_pictures_whose_bytes_tell_only_their_dimensions() {
+    // `lab pairs --from-runs` (plan mE, task M2) writes through the same function as a
+    // round of the lab: a run of `remove_prompt` against the picture it was given, the
+    // reference that hands the source back, so its side is the source to the pixel.
+    use whizbang::pairs_page::stored_png_size;
+    let recorded = crate::edits_gate::recorded_of("pairs-from-runs-sizes", false);
+    let assignment = recorded.pairs(&recorded.remove_cases, None, "pairs");
+    let pictures = assignment.with_file_name("pictures");
+    let mut names: Vec<String> = (std::fs::read_dir(&pictures).unwrap())
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert!(names.contains(&"001-left.png".to_owned()), "{names:?}");
+    for name in &names {
+        let file = std::fs::read(pictures.join(name)).unwrap();
+        let pixels = pixels_of(&file);
+        assert_eq!(
+            file.len() as u64,
+            stored_png_size(pixels.width(), pixels.height()),
+            "{name}"
+        );
+        let found: Vec<String> = lengths(&file).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(found, ["IHDR", "IDAT", "IEND"], "{name}");
+    }
+    // The three whole pictures share their dimensions, so they are files of one length.
+    let sizes: Vec<usize> = ["left", "right", "source"]
+        .iter()
+        .map(|side| {
+            std::fs::read(pictures.join(format!("001-{side}.png")))
+                .unwrap()
+                .len()
+        })
+        .collect();
+    assert!(sizes.iter().all(|s| *s == sizes[0]), "{sizes:?}");
+}
+
 /// The page's own script, as the page written for these pair ids holds it, and its data.
 fn script_and_data(ids: &[&str]) -> (String, String) {
     let pairs: Vec<whizbang::pairs_page::OnPage> = (ids.iter().enumerate())
