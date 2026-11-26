@@ -36,7 +36,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         body = self.server.body
-        self.send_response(200)
+        self.send_response(getattr(self.server, "status", 200))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -86,9 +86,19 @@ class Origins(unittest.TestCase):
         self.assertEqual(egress.origin_of("HTTPS://Fal.Run:443/x?y"), "https://fal.run")
         self.assertEqual(egress.origin_of("http://127.0.0.1:8080/a"), "http://127.0.0.1:8080")
         with_user = "https://someone" + chr(64) + "h.example/"  # an address naming a user
-        for bad in ("file:///etc/x", with_user, "ftp://h/", "https:///x", "https://h:port/"):
+        for bad in (
+            "file:///etc/x", with_user, "ftp://h/", "https:///x", "https://h:port/",
+            "https://h.example#x", "https://h.example?x", "https://h_x.example/", "https://-h.example/",
+            "https://h.example:0/", "https://h.example:080/", "https://h.example:65536/",
+            "https://127.1/", "https://0x7f.0.0.1/", "https://017700000001/", "https://00127.0.0.1/",
+            "https://h.example/a b", "https://h\u00e9.example/", "https://h.example/\\x",
+            "https://" + "a" * 64 + ".example/", "https://h.example/" + "a" * 2048,
+        ):
             with self.assertRaises(egress.Refused, msg=bad):
                 egress.origin_of(bad)
+        self.assertEqual(egress.origin_of("https://cdn.example/p.png?sig=1"), "https://cdn.example")
+        with self.assertRaises(egress.Refused):
+            egress.config_origin("https://fal.run/path")
 
     def test_the_config_is_read_for_its_recipients(self):
         with kit.Scratch() as s:
@@ -101,12 +111,22 @@ class Origins(unittest.TestCase):
                 )
             a = egress.Approved.from_config(path)
             r = a.recipient_for("https://fal.run/x", ("prompts",))
+            self.assertEqual(r.shown(), "https://fal.run")
             self.assertTrue(r.reaches("https://cdn.fal.example"))
             with self.assertRaises(egress.Refused):
                 a.recipient_for("https://fal.run/x", ("prompts", "derived_images"))
             with open(path, "a") as f:
+                f.write('\n[egress.recipients.team]\norigin = "https://fal.run"\naccount = "team-1234"\nclasses = ["prompts"]\n')
+            team = egress.Approved.from_config(path).recipients[1]
+            self.assertEqual((team.account, team.shown()), ("team-1234", "https://fal.run as team..."))
+            for bad in ('account = "two words"', 'account = ""', 'origin = "https://fal.run/x"', 'colour = "red"'):
+                with open(os.path.join(s, "bad.toml"), "w") as f:
+                    f.write('[egress.recipients.x]\norigin = "https://x.example"\nclasses = []\n' + bad + "\n")
+                with self.assertRaises(ValueError, msg=bad):
+                    egress.Approved.from_config(os.path.join(s, "bad.toml"))
+            with open(path, "a") as f:
                 f.write('\n[egress.recipients.other]\norigin = "https://o.example"\nclasses = ["secrets"]\n')
-            with self.assertRaisesRegex(ValueError, "unknown class"):
+            with self.assertRaisesRegex(ValueError, "not known"):
                 egress.Approved.from_config(path)
 
 
@@ -153,6 +173,20 @@ class Checked(unittest.TestCase):
             with self.assertRaisesRegex(egress.Refused, "redirect"):
                 s.get(cdn.origin + "/moved", via, "x")
             self.assertEqual(elsewhere.seen, [])
+            # Another recipient the config approves is still not where this one's pictures are.
+            both = approved((there.origin, (cdn.origin,), ("prompts",)), (elsewhere.origin, (), ("prompts",)))
+            with self.assertRaisesRegex(egress.Refused, "download"):
+                sender(both).get(elsewhere.origin + "/p.png", both.recipients[0], "x")
+            self.assertEqual(elsewhere.seen, [])
+
+    def test_a_provider_s_answer_to_a_failure_is_never_in_the_error_s_text(self):
+        opener, _ = scripted([http_error(400)])
+        s = egress.Sender(approved(("https://x.example", (), ("prompts",))), sleep=lambda w: None, opener=opener)
+        with self.assertRaises(egress.GeneratorError) as caught:
+            s.post("https://x.example/a", b"", {}, {}, ("prompts",), "x")
+        self.assertEqual(str(caught.exception), "x: HTTP 400")
+        self.assertEqual(caught.exception.status, 400)
+        self.assertIn("error", caught.exception.detail)
 
     def test_no_proxy_is_used_whatever_the_environment_names(self):
         made = []
@@ -232,7 +266,7 @@ class Recording:
         self.answer, self.download = answer, download
         self.posts, self.gets = [], []
 
-    def post(self, url, body, headers, credentials, classes, what):
+    def post(self, url, body, headers, credentials, classes, what, charge=None):
         self.posts.append((url, classes, credentials))
         return json.dumps(self.answer).encode(), "recipient"
 

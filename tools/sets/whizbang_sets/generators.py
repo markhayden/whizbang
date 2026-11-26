@@ -45,9 +45,9 @@ def _data_address(image: bytes) -> str:
     return f"data:{_mime(image)};base64," + base64.b64encode(image).decode()
 
 
-def _json(sender: Sender, url: str, body: dict, credentials: dict, classes, what: str):
+def _json(sender: Sender, url: str, body: dict, credentials: dict, classes, what: str, charge=None):
     answer, recipient = sender.post(
-        url, json.dumps(body).encode(), {"Content-Type": "application/json"}, credentials, classes, what
+        url, json.dumps(body).encode(), {"Content-Type": "application/json"}, credentials, classes, what, charge
     )
     try:
         return json.loads(answer), recipient
@@ -64,8 +64,11 @@ class FalKlein:
     edit_model = "fal-ai/flux-2/klein/4b/edit"
     base = "https://fal.run"
 
-    def __init__(self, sender: Sender):
+    def __init__(self, sender: Sender, charge=None, base: str | None = None):
         self.sender = sender
+        self.charge = charge
+        if base is not None:
+            self.base = base
 
     def _call(self, model: str, body: dict, classes) -> bytes:
         d, recipient = _json(
@@ -75,6 +78,7 @@ class FalKlein:
             {"Authorization": "Key " + _key("FAL_KEY")},
             classes,
             model,
+            self.charge,
         )
         images = d.get("images") or []
         if not images or not isinstance(images[0].get("url"), str):
@@ -119,8 +123,11 @@ class OpenAiImage:
     model = "gpt-image-2"
     base = "https://api.openai.com/v1/images"
 
-    def __init__(self, sender: Sender):
+    def __init__(self, sender: Sender, charge=None, base: str | None = None):
         self.sender = sender
+        self.charge = charge
+        if base is not None:
+            self.base = base
 
     @staticmethod
     def _picture(d: dict, what: str) -> bytes:
@@ -139,7 +146,9 @@ class OpenAiImage:
             "n": 1,
         }
         key = {"Authorization": "Bearer " + _key("OPENAI_API_KEY")}
-        d, _ = _json(self.sender, f"{self.base}/generations", body, key, PROMPT, "images/generations")
+        d, _ = _json(
+            self.sender, f"{self.base}/generations", body, key, PROMPT, "images/generations", self.charge
+        )
         return self._picture(d, "images/generations")
 
     def edit(self, image: bytes, prompt: str, seed: int) -> bytes:
@@ -171,6 +180,7 @@ class OpenAiImage:
             {"Authorization": "Bearer " + _key("OPENAI_API_KEY")},
             PROMPT_AND_PICTURES,
             "images/edits",
+            self.charge,
         )
         try:
             d = json.loads(answer)
@@ -186,8 +196,11 @@ class GeminiImage:
     model = "gemini-3.1-flash-image"
     base = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def __init__(self, sender: Sender):
+    def __init__(self, sender: Sender, charge=None, base: str | None = None):
         self.sender = sender
+        self.charge = charge
+        if base is not None:
+            self.base = base
 
     def _call(self, parts: list[dict], classes) -> bytes:
         body = {
@@ -204,6 +217,7 @@ class GeminiImage:
             {"x-goog-api-key": _key("GEMINI_API_KEY")},
             classes,
             self.model,
+            self.charge,
         )
         candidates = d.get("candidates") or [{}]
         for p in candidates[0].get("content", {}).get("parts", []):
@@ -266,11 +280,16 @@ class FakeGenerator:
         return _png(im)
 
 
-def live(sender: Sender) -> dict:
+def live(sender: Sender, guard) -> dict:
+    """The live generators, each charging `guard` (`spend.Guard`) before each attempt."""
+
+    def charge(name):
+        return lambda recipient: guard.charge(name, recipient)
+
     return {
-        "fal": FalKlein(sender),
-        "openai": OpenAiImage(sender),
-        "gemini": GeminiImage(sender),
+        "fal": FalKlein(sender, charge("fal")),
+        "openai": OpenAiImage(sender, charge("openai")),
+        "gemini": GeminiImage(sender, charge("gemini")),
         "fake": FakeGenerator(),
     }
 

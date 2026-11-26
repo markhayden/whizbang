@@ -42,26 +42,106 @@ class Refused(RuntimeError):
 
 
 class GeneratorError(RuntimeError):
-    pass
+    """A provider's failure. Its text names the call and the status alone, never what the
+    provider answered; `detail` keeps that, for the construction record in owner storage."""
+
+    def __init__(self, message: str, status: int | None = None, detail: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
+
+
+ADDRESS_LIMIT = 2048
+HOST_LIMIT = 253
+LABEL_LIMIT = 63
+ACCOUNT_LIMIT = 128
+
+
+def _plainly_numbered(host: str) -> bool:
+    """A host whose last label is a number is taken only as four decimal parts of 0 to 255
+    with no leading zero, as `Origin::of` takes it."""
+    last = host.rsplit(".", 1)[-1]
+    hexed = last[2:] if last.startswith("0x") else None
+    number = (last.isascii() and last.isdigit()) or (
+        hexed is not None and all(c in "0123456789abcdef" for c in hexed)
+    )
+    if not number:
+        return True
+    parts = host.split(".")
+
+    def part(p: str) -> bool:
+        return p.isascii() and p.isdigit() and len(p) <= 3 and (p == "0" or not p.startswith("0")) and int(p) <= 255
+
+    return len(parts) == 4 and all(part(p) for p in parts)
+
+
+def _parse(text: str, query: bool) -> tuple[str, str]:
+    """(origin, the rest) of an address, by the rules of whizbang's `Origin::of` and
+    `Address::of` (`crates/whizbang-core/src/egress/recipient.rs`): printable ASCII with no
+    space and no backslash, at most 2048 bytes; no `@` and no `#` anywhere; a query only
+    after a path, and only when `query`; the scheme http or https; the host labels of
+    letters, digits and hyphens; the port written plainly."""
+    refused = Refused("an address that is not a plain http or https address was refused")
+    if not isinstance(text, str) or len(text) > ADDRESS_LIMIT:
+        raise refused
+    if not all(0x21 <= ord(c) <= 0x7E and c != "\\" for c in text):
+        raise refused
+    if "@" in text or "#" in text or (not query and "?" in text):
+        raise refused
+    scheme, sep, after = text.partition("://")
+    scheme = scheme.lower()
+    if not sep or scheme not in DEFAULT_PORTS:
+        raise refused
+    end = after.find("/")
+    authority, rest = (after, "") if end < 0 else (after[:end], after[end:])
+    host, colon, port_text = authority.partition(":")
+    host = host.lower()
+
+    def label(lab: str) -> bool:
+        return (
+            1 <= len(lab) <= LABEL_LIMIT
+            and all(c.isascii() and (c.isalnum() or c == "-") for c in lab)
+            and not lab.startswith("-")
+            and not lab.endswith("-")
+        )
+
+    if len(host) > HOST_LIMIT or not all(label(lab) for lab in host.split(".")) or not _plainly_numbered(host):
+        raise refused
+    port = DEFAULT_PORTS[scheme]
+    if colon:
+        plain = (
+            0 < len(port_text) <= 5
+            and port_text.isascii()
+            and port_text.isdigit()
+            and not port_text.startswith("0")
+        )
+        if not plain or not 1 <= int(port_text) <= 65535:
+            raise refused
+        port = int(port_text)
+    origin = f"{scheme}://{host}" if port == DEFAULT_PORTS[scheme] else f"{scheme}://{host}:{port}"
+    return origin, rest
 
 
 def origin_of(url: str) -> str:
-    """The origin of an address: its scheme and host in lower case, and its port unless it
-    is the scheme's own. Anything but http and https, or an address with a user, is refused."""
-    parts = urllib.parse.urlsplit(url)
-    scheme = parts.scheme.lower()
-    if scheme not in DEFAULT_PORTS or not parts.hostname or "@" in parts.netloc:
-        raise Refused(f"{url!r} is not an address of an origin over http or https")
-    try:
-        port = parts.port
-    except ValueError:
-        raise Refused(f"{url!r} has a port that is not a number") from None
-    host = parts.hostname.lower()
-    if ":" in host:
-        host = f"[{host}]"
-    if port is None or port == DEFAULT_PORTS[scheme]:
-        return f"{scheme}://{host}"
-    return f"{scheme}://{host}:{port}"
+    """The origin of an address that may carry a path and a query after it."""
+    return _parse(url, query=True)[0]
+
+
+def config_origin(text: str) -> str:
+    """An origin as a config gives one: nothing after it."""
+    origin, rest = _parse(text, query=False)
+    if rest not in ("", "/"):
+        raise Refused("an origin in the config has something after it")
+    return origin
+
+
+def _account(text) -> str:
+    """A recipient's account, as `Account::new` takes it: 1 to 128 printable ASCII
+    characters with no space, no `"` and no backslash."""
+    plain = isinstance(text, str) and 0 < len(text) <= ACCOUNT_LIMIT
+    if not plain or not all(0x21 <= ord(c) <= 0x7E and c not in '"\\' for c in text):
+        raise ValueError("a recipient's account is 1 to 128 printable characters with no space")
+    return text
 
 
 @dataclass(frozen=True)
@@ -70,9 +150,17 @@ class Recipient:
     origin: str
     upstreams: frozenset[str]
     classes: frozenset[str]
+    account: str | None = None
 
     def reaches(self, origin: str) -> bool:
         return origin == self.origin or origin in self.upstreams
+
+    def shown(self) -> str:
+        """The recipient as a record names it: its origin, and its account cut to four."""
+        if self.account is None:
+            return self.origin
+        cut = self.account[:4] + ("..." if len(self.account) > 4 else "")
+        return f"{self.origin} as {cut}"
 
 
 class Approved:
@@ -86,23 +174,27 @@ class Approved:
         with open(path, "rb") as f:
             doc = tomllib.load(f)
         table = doc.get("egress", {}).get("recipients", {})
-        out = []
+        out: list[Recipient] = []
         for name, r in table.items():
             where = f"[egress.recipients.{name}]"
             if not isinstance(r, dict) or "origin" not in r or "classes" not in r:
                 raise ValueError(f"{where}: a recipient has an origin and its classes")
+            unknown_keys = sorted(set(r) - {"origin", "account", "upstreams", "classes", "probe"})
+            if unknown_keys:
+                raise ValueError(f"{where}: unknown key(s) {', '.join(unknown_keys)}")
             classes = list(r["classes"])
             unknown = [c for c in classes if c not in CLASSES]
-            if unknown:
-                raise ValueError(f"{where}: unknown class(es) {', '.join(map(str, unknown))}")
-            out.append(
-                Recipient(
-                    name=name,
-                    origin=origin_of(r["origin"]),
-                    upstreams=frozenset(origin_of(u) for u in r.get("upstreams", [])),
-                    classes=frozenset(classes),
-                )
-            )
+            if unknown or len(set(classes)) != len(classes):
+                raise ValueError(f"{where}: a class that is not known, or one twice")
+            try:
+                origin = config_origin(r["origin"])
+                upstreams = frozenset(config_origin(u) for u in r.get("upstreams", []))
+            except Refused:
+                raise ValueError(f"{where}: an origin that is not plain") from None
+            account = None if "account" not in r else _account(r["account"])
+            if any(o.origin == origin and o.account == account for o in out):
+                raise ValueError(f"{where}: the same origin and account as another recipient")
+            out.append(Recipient(name, origin, upstreams, frozenset(classes), account))
         return cls(out)
 
     def recipient_for(self, url: str, classes: tuple[str, ...]) -> Recipient:
@@ -116,8 +208,10 @@ class Approved:
             "([egress.recipients]); nothing was sent"
         )
 
-    def may_download(self, origin: str, via: Recipient) -> bool:
-        return via.reaches(origin) or any(r.origin == origin for r in self.recipients)
+    @staticmethod
+    def may_download(origin: str, via: Recipient) -> bool:
+        """A picture is downloaded only from the recipient asked, or one of its upstreams."""
+        return via.reaches(origin)
 
 
 class _Hops(urllib.request.HTTPRedirectHandler):
@@ -154,14 +248,17 @@ class Sender:
         credentials: dict[str, str],
         classes: tuple[str, ...],
         what: str,
+        charge: Callable[[Recipient], None] | None = None,
     ) -> tuple[bytes, Recipient]:
-        """The answer of a POST to `url`, with the recipient it went to."""
+        """The answer of a POST to `url`, with the recipient it went to. `charge` is called
+        before each attempt, a retry included, and may refuse it (the spend guard)."""
         recipient = self.approved.recipient_for(url, classes)
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         for k, v in credentials.items():
             req.add_unredirected_header(k, v)
         allowed = lambda origin: recipient.reaches(origin)  # noqa: E731
-        return self._open(req, allowed, what), recipient
+        before = (lambda: charge(recipient)) if charge else None
+        return self._open(req, allowed, what, before), recipient
 
     def get(self, url: str, via: Recipient, what: str) -> bytes:
         """A generated picture at `url`, with no key."""
@@ -172,12 +269,14 @@ class Sender:
             )
         return self._open(urllib.request.Request(url), allowed, what)
 
-    def _open(self, req, allowed, what: str) -> bytes:
+    def _open(self, req, allowed, what: str, before: Callable[[], None] | None = None) -> bytes:
         """The answer's body, tried again on a passing failure (a status in
         `RETRY_STATUSES`, a dropped connection, a timeout) after each of `RETRY_WAITS`; any
         other failure, or the last passing one, is a `GeneratorError` naming `what`."""
         opener = self.opener(urllib.request.ProxyHandler({}), _Hops(allowed))
         for attempt in range(len(RETRY_WAITS) + 1):
+            if before is not None:
+                before()
             try:
                 with opener.open(req, timeout=300) as r:
                     body = r.read(ANSWER_LIMIT + 1)
@@ -185,14 +284,14 @@ class Sender:
                     raise GeneratorError(f"{what}: the answer is over {ANSWER_LIMIT} bytes")
                 return body
             except urllib.error.HTTPError as e:
-                detail = e.read()[:400].decode("utf-8", "replace")
+                detail = e.read(400).decode("utf-8", "replace")
                 if e.code not in RETRY_STATUSES or attempt == len(RETRY_WAITS):
-                    raise GeneratorError(f"{what}: HTTP {e.code}: {detail}") from None
+                    raise GeneratorError(f"{what}: HTTP {e.code}", e.code, detail) from None
                 reason = f"HTTP {e.code}"
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
                 # A refused redirect is no URLError: `Refused` passes through untried.
                 if attempt == len(RETRY_WAITS):
-                    raise GeneratorError(f"{what}: {e}") from None
+                    raise GeneratorError(f"{what}: {type(e).__name__}", None, str(e)) from None
                 reason = type(e).__name__
             wait = RETRY_WAITS[attempt]
             print(f"{what}: {reason}, trying again in {wait}s", file=sys.stderr, flush=True)
