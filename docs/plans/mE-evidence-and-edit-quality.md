@@ -569,7 +569,7 @@ R5 and R6 need a scorer that `eval run --gate` is not: it gates balanced accurac
    `edits_gate::too_few_runs_is_inconclusive`; `loop_sheet::a_sheet_of_any_recipe`;
    `lab::pairs_from_recorded_loop_runs_decode_against_their_assignment`.
 
-- [ ] Done when: the tests pass. **Reviewer reads hardest:** that a mark file is never read
+- [x] Done when: the tests pass. **Reviewer reads hardest:** that a mark file is never read
   from inside the repo and that no mark or phrase reaches a receipt.
 
 ## B1. The set builder, ported (large, two pull requests)

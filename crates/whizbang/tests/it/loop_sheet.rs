@@ -238,3 +238,57 @@ fn a_path_through_dot_dot_into_a_work_tree_is_refused() {
     assert_eq!(ran.code, Some(1), "{}", ran.err);
     assert!(ran.err.contains("inside a git work tree"), "{}", ran.err);
 }
+
+#[test]
+fn a_sheet_of_any_recipe() {
+    use crate::edits_gate::{CASE, recorded_of};
+    // A run of remove_prompt, by the request id its cases file names (plan mE, task M2).
+    let recorded = recorded_of("sheet-any-recipe", false);
+    let out = recorded.dir.path().join("sheet");
+    let asked = loop_sheet::AskedCases {
+        cases: &recorded.remove_cases,
+        root: &recorded.world.root,
+        out: &out,
+    };
+    let written = loop_sheet::sheet_of_cases(&asked).unwrap();
+    assert_eq!(written.pictures, 1);
+    let mut files: Vec<String> = std::fs::read_dir(out.join("pictures"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    assert_eq!(files, ["001-edited.png", "001-source.png"]);
+    let page = std::fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(page.contains(crate::checked::PHRASE));
+    for word in [recorded.remove_run.as_str(), CASE, "remove_prompt"] {
+        assert!(!page.contains(word), "{word}");
+    }
+    // Its picture is the run's finished one: attempt 0, keyed by the sheet's seed.
+    let assignment: whizbang::loop_score::Assignment =
+        serde_json::from_str(&std::fs::read_to_string(out.join("assignment.json")).unwrap())
+            .unwrap();
+    let one = &assignment.pictures[0];
+    assert_eq!(
+        (one.item.as_str(), one.run.as_str()),
+        (CASE, recorded.remove_run.as_str())
+    );
+    assert_eq!(one.attempt, 0);
+    assert_eq!(
+        one.key,
+        whizbang::loop_score::key(assignment.seed, &one.run, 0)
+    );
+    // A folder that is not empty is refused, as the loop's sheet refuses one; so are cases
+    // none of whose runs the store holds (the loop's, not run here).
+    assert!(
+        loop_sheet::sheet_of_cases(&asked)
+            .unwrap_err()
+            .contains("not empty")
+    );
+    let asked = loop_sheet::AskedCases {
+        cases: &recorded.loop_cases,
+        root: &recorded.world.root,
+        out: &recorded.dir.path().join("sheet-loop"),
+    };
+    let refused = loop_sheet::sheet_of_cases(&asked).unwrap_err();
+    assert!(refused.contains("no finished run"), "{refused}");
+}

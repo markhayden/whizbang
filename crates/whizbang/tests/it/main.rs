@@ -17,6 +17,7 @@ mod credential;
 mod describe;
 mod door;
 mod edits;
+mod edits_gate;
 mod escape;
 mod evaluation;
 mod evidence;
