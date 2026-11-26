@@ -1321,9 +1321,11 @@ file, a bundle file, a set built `--fake`) are kept in the system temp folder an
 after it.
 
 **Each row's cases.** Before its session, each row lists in the record the cases it walks:
-for `check`, the use case `general` with a job of the caller's and each of the five use cases,
-each named in the form's `use_case` with its job, images in the job's order, tools and
-projection; for a setting, the run's record shows the setting in effect (the submission's
+for `check`, the use case `general` as it is (its pictures under a fixed prompt, a verdict in
+plain text; a job given to it is not read, and no checklist setting applies to it, `check.rs`),
+each recorded as a finding for the owner to decide on; and each of the five use cases, named in
+the form's `use_case` with its job, images in the job's order, tools and projection, which is
+where the submission formats and the second look are walked; for a setting, the run's record shows the setting in effect (the submission's
 format, the second look's turn taken or not, the details measured first); every mode the tool
 takes (`segment`'s phrase, point and box, on each backend; each method of
 a tool file; `second_look`'s three values; each submission format; `tiles` on a job of one
@@ -1347,7 +1349,12 @@ if the record names one, and one refusal. A row is done only when every case has
    it; if the judge did not call it, the case is not done, and is run again with a job whose
    record example calls for it, or recorded as a finding.
 4. `whizbang runs show <run> --store <store>`: the run's record, with the arguments asked;
-   `whizbang runs replay <run> --store <store>`: reproduced, without spending.
+   `whizbang runs replay <run> --store <store>`: reproduced, without spending, where the build
+   replays it. Where it does not, the row records the exact refusal and the owner hears it:
+   the root of a recipe file's run, and an offline replay of any family that called a tool
+   file (`contract/replay.rs`: "a recipe file's or a tool file's action is never replayed";
+   "an offline replay never runs one"). The step runs of a one-step recipe file are replayed
+   one by one.
 5. The refusal: an input the record says is refused (a missing field, a wrong size, a value
    out of range, `tiles` on a pair). The row says which of two it expects, and checks it:
    refused before anything runs, the message naming the fault and no run made; or a run that
@@ -1355,9 +1362,11 @@ if the record names one, and one refusal. A row is done only when every case has
    what it charged.
 6. For a case that spends: `whizbang spend status --store <store>` shows its charge.
 
-The set builder has no store runs: its steps 3 to 6 are `build`, `rebuild` and `promote` on a
-dev plan, `whizbang eval sets check` on what it wrote, and its refusals (a request past
-`--cap-usd`, an origin the config does not approve, an owner folder inside the work tree).
+The set builder has no store runs: its steps 3 to 6 are, in O1.1, `build --fake`, `rebuild`
+and `promote` on a dev plan, `whizbang eval sets check` on what it wrote, and its refusals of
+an owner folder inside the work tree and of live generation, which waits for the spend guard;
+in O1.3, one live build, a request past `--cap-usd` refused, and a request to an origin the
+config does not approve refused.
 
 **The playground, for each case,** started by `whizbang play --store <store>` with the same
 config:
@@ -1374,7 +1383,7 @@ config:
 5. The same refusal as the command line's step 5, shown in the form before Run where the form
    can know it, or as the invalid run's result.
 6. For a recipe or the loop: Bundle this run; the bundle opens in Bundles; its replay
-   reproduces the run without spending. `whizbang runs bundle` to a file in the system temp
+   reproduces the run without spending, or gives the refusal of the command line's step 4. `whizbang runs bundle` to a file in the system temp
    folder and `whizbang runs replay --bundle <file>` do the same on the command line, after
    the playground has stopped.
 
@@ -2207,3 +2216,20 @@ against the code; both were right and taken.
 2. **Minor: a tool file's mark is in `describe`.** Right (`wiring.rs`, `describe_text`, prints
    the marks of tools that are no action). Taken: not among the actions, its mark among the
    marks, checked against its record.
+
+### Review round O1-4
+
+Review round O1-4, on draft 4 of task O1. Verdict: revise. Round O1-3's fixes held but for its
+finding 1, corrected here. Three findings: 2 majors, 1 minor. Each was checked against the
+code; all were right and taken.
+
+1. **Major: some runs cannot be replayed.** Right (`contract/replay.rs` refuses the root of a
+   recipe file's run, and an offline replay of a family that called a tool file). Taken:
+   reproduced where the build replays it; otherwise the exact refusal recorded and told to the
+   owner; a one-step recipe file's step runs replayed one by one.
+2. **Major: `general` reads no job and has no checklist.** Right (`check.rs`: a fixed prompt
+   and a plain verdict). Taken: `general` walked as it is, with those gaps recorded for the
+   owner; the formats and the second look walked under the five use cases.
+3. **Minor: the builder's refusals mixed its two pull requests.** Right
+   (`tools/sets/whizbang_sets/__main__.py` has no `--cap-usd` yet). Taken: the fake build and
+   its refusals in O1.1; the cap and the egress refusals in O1.3.
