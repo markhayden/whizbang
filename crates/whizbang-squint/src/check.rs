@@ -224,7 +224,7 @@ pub const MEASURED_IMAGES: &str = "measured_images";
 
 /// The values of the argument `submission`, the form the judge answers in (plan e1, task
 /// F1; ADR 0042), and its default.
-pub const SUBMISSIONS: [&str; 2] = use_case::FORMATS;
+pub const SUBMISSIONS: [&str; 3] = use_case::FORMATS;
 pub const DEFAULT_SUBMISSION: &str = use_case::DEFAULT_FORMAT;
 
 /// The values of the argument `second_look`.
@@ -382,7 +382,7 @@ impl Check {
         ))
         .argument(Argument::with_default(
             "submission",
-            "v1 or v2: the form the judge answers in under a use case of the table. v2 keys the items by checklist id, reads near-misses that have one reading, and names every problem in its repair.",
+            "v1, v2 or v3: the form the judge answers in under a use case of the table. v2 keys the items by checklist id; v3 puts each finding inside its item. Both name every problem in a repair.",
             ValueType::choice(&SUBMISSIONS),
             Value::text(DEFAULT_SUBMISSION),
         ))
@@ -650,20 +650,114 @@ fn verdict_of(turn: &Turn) -> Option<Verdict> {
     Some(Verdict::new(decision, why.trim()))
 }
 
-/// Adds the tool the judge answers with under a use case of the table: v1's, or v2's
-/// keyed by this checklist's ids.
+/// Adds the tool the judge answers with under a use case of the table: v1's, v2's keyed by
+/// this checklist's ids, or v3's with an enum of them; in place of the one there is, when
+/// there is one.
 fn run_tools_submit(
     tools: &mut Vec<ToolDefinition>,
-    v2: bool,
+    format: &str,
     checklist: &Checklist,
 ) -> Result<(), Failure> {
-    let submit = if v2 {
-        use_case::submit_tool_v2(checklist)
-    } else {
-        use_case::submit_tool()
+    let submit = match format {
+        "v2" => use_case::submit_tool_v2(checklist),
+        "v3" => use_case::submit_tool_v3(checklist),
+        _ => use_case::submit_tool(),
     };
-    tools.push(submit.ok_or_else(|| failed("tools", &"the submission's schema is not read"))?);
+    let submit = submit.ok_or_else(|| failed("tools", &"the submission's schema is not read"))?;
+    match tools
+        .iter_mut()
+        .find(|tool| tool.name() == use_case::SUBMIT)
+    {
+        Some(there) => *there = submit,
+        None => tools.push(submit),
+    }
     Ok(())
+}
+
+/// The regions of a tool file's output, as the checklist takes them: each on the image of
+/// the job whose raw frame its binding was handed (a region on any other frame, an aligned
+/// one or a crop, is on no image of the job, named by the frame's artifact, and binds to
+/// nothing), its bounds in that image's pixels (a polygon's, for a polygon), and where it
+/// is said as fractions of that image, as a submission locates things.
+fn located(
+    context: &Context,
+    output: &Json,
+    images: &[(String, ArtifactId)],
+    names: &Names,
+    job: &Job,
+) -> Vec<crate::checklist::Located> {
+    let limits = DecodeLimits::default();
+    let mut out = Vec::new();
+    let regions = output.get("regions").and_then(Json::as_array);
+    for region in regions.into_iter().flatten() {
+        let frame = region
+            .get("frame")
+            .and_then(Json::as_str)
+            .unwrap_or_default();
+        let Some((_, artifact)) = images.iter().find(|(binding, _)| binding == frame) else {
+            continue;
+        };
+        let image = (job.images.iter())
+            .find(|image| {
+                names
+                    .resolve(&format!("raw:{}", image.id))
+                    .is_some_and(|(id, _)| id == *artifact)
+            })
+            .map_or_else(|| artifact.to_string(), |image| image.id.clone());
+        let numbers = |value: Option<&Json>| -> Vec<f64> {
+            (value.and_then(Json::as_array).into_iter().flatten())
+                .filter_map(Json::as_f64)
+                .collect()
+        };
+        let bounds = match (region.get("box"), region.get("polygon")) {
+            (Some(edges), _) => match numbers(Some(edges))[..] {
+                [l, t, r, b] => [l, t, r, b],
+                _ => continue,
+            },
+            (None, Some(Json::Array(points))) => {
+                let (mut l, mut t, mut r, mut b) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+                for point in points {
+                    if let [x, y] = numbers(Some(point))[..] {
+                        (l, t, r, b) = (l.min(x), t.min(y), r.max(x), b.max(y));
+                    }
+                }
+                [l, t, r, b]
+            }
+            _ => continue,
+        };
+        let size = match artifact::get(context.store(), ArtifactType::Image, *artifact, &limits) {
+            Ok(Artifact::Image(read)) => Some((read.space().width(), read.space().height())),
+            _ => None,
+        };
+        let shown = match size {
+            Some((width, height)) if width > 0 && height > 0 => {
+                let (w, h) = (f64::from(width), f64::from(height));
+                format!(
+                    "raw:{image} bbox [{:.3}, {:.3}, {:.3}, {:.3}]",
+                    bounds[0] / w,
+                    bounds[1] / h,
+                    bounds[2] / w,
+                    bounds[3] / h
+                )
+            }
+            _ => format!(
+                "{image}, pixels [{}, {}, {}, {}]",
+                bounds[0], bounds[1], bounds[2], bounds[3]
+            ),
+        };
+        out.push(crate::checklist::Located {
+            image,
+            bounds,
+            shown,
+            label: region
+                .get("label")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            score: region.get("score").and_then(Json::as_f64).unwrap_or(0.0),
+        });
+    }
+    out
 }
 
 /// The argument of a tool file that names its method.
@@ -714,7 +808,11 @@ impl Run<'_> {
     /// refused here, with no call made; a call of a listed tool goes to the executor,
     /// which holds it to the list again and to what the run may read. What comes
     /// back, a crop, a refusal or the tool's own rejection, is the call's result.
-    fn dispatch(&mut self, call: &ToolCall) -> Result<ToolResult, Failure> {
+    fn dispatch(
+        &mut self,
+        call: &ToolCall,
+        judging: Option<&mut Judging>,
+    ) -> Result<ToolResult, Failure> {
         let answer = |text: &str, error: bool, images: Vec<Picture>| {
             let result = ToolResult::new(call.id(), text, error, images);
             result.map_err(|why| failed("tool_result", &why))
@@ -733,7 +831,7 @@ impl Run<'_> {
         let listed = self.tools.iter().any(|tool| tool.name() == call.name());
         let id = format!("call:{}", self.dispatched - 1);
         if let Some(tool) = self.files.iter().find(|tool| tool.name == call.name()) {
-            return self.dispatch_file(&id, tool.clone(), call);
+            return self.dispatch_file(&id, tool.clone(), call, judging);
         }
         let mut said_as: Option<details::AlignAsked> = None;
         let mut resized: Option<String> = None;
@@ -856,6 +954,7 @@ impl Run<'_> {
         id: &str,
         tool: FileTool,
         call: &ToolCall,
+        judging: Option<&mut Judging>,
     ) -> Result<ToolResult, Failure> {
         let answer = |text: &str, error: bool| {
             let result = ToolResult::new(call.id(), text, error, Vec::new());
@@ -882,6 +981,10 @@ impl Run<'_> {
                 }
             }
         }
+        // What the rules of the run's use case hint to the tool (`[hints]`; plan mE, task F1).
+        if let Some(judging) = &judging {
+            files::hinted(&tool, &mut arguments, &judging.hints);
+        }
         let Some(file_tools) = &self.file_tools else {
             return answer("not called: no tool file is on offer", true);
         };
@@ -907,7 +1010,34 @@ impl Run<'_> {
                 if keyed.is_some_and(|(_, revision)| *revision != ran.digest) {
                     self.edited = true;
                 }
-                answer(&files::answer(id, &tool.name, &ran), false)
+                let mut said = files::answer(id, &tool.name, &ran);
+                // Under a use case, the regions of a tool that returns them are evidence
+                // items of the checklist the judge must then answer (plan mE, task F1;
+                // squint's `run.rs`): a result past the budget is not presented.
+                if let (Some(judging), Some(kind)) = (judging, tool.region_kind.as_deref()) {
+                    let regions = located(
+                        self.context,
+                        &ran.output,
+                        &images,
+                        &self.names,
+                        &judging.job,
+                    );
+                    if !regions.is_empty() {
+                        let took = crate::checklist::ingest(
+                            &mut judging.checklist,
+                            id,
+                            kind,
+                            &regions,
+                            &judging.resolved,
+                            crate::checklist::EVIDENCE_ITEMS_LIMIT,
+                        );
+                        match took {
+                            Ok(took) => said.push_str(&evidence_said(&took, judging)),
+                            Err(why) => return answer(&format!("not presented: {why}"), true),
+                        }
+                    }
+                }
+                answer(&said, false)
             }
             Err(why) => answer(&format!("the tool failed: {why}"), true),
         }
@@ -1182,14 +1312,18 @@ impl Run<'_> {
     }
 
     /// Answers every call of a turn, in the order the judge made them.
-    fn answer(&mut self, turn: &Turn) -> Result<Message, Failure> {
+    fn answer(
+        &mut self,
+        turn: &Turn,
+        mut judging: Option<&mut Judging>,
+    ) -> Result<Message, Failure> {
         let mut results = Vec::new();
         for call in turn.tool_calls() {
             if !self.answered.insert(call.id().to_owned()) {
                 let why = "a tool call has the id of a call that was answered before";
                 return Err(failed("judge_output", &why));
             }
-            let result = self.dispatch(call)?;
+            let result = self.dispatch(call, judging.as_deref_mut())?;
             // A result that is no error is of a call that was counted, under the id its
             // result gave the judge.
             if !result.is_error() {
@@ -1421,7 +1555,10 @@ impl Action for Check {
         let look_mode = chosen("second_look", &SECOND_LOOK)?;
         let second_look = look_mode != "off" && judging.is_some();
         let format = chosen("submission", &SUBMISSIONS)?;
-        let v2 = format == "v2";
+        let format: &'static str = (SUBMISSIONS.iter())
+            .find(|named| **named == format)
+            .copied()
+            .unwrap_or(DEFAULT_SUBMISSION);
         let strict = look_mode == "strict";
         // The decision cache's key is known here, before anything is measured or sent;
         // a run of the same key that completed answers this one (crate::cache).
@@ -1494,7 +1631,7 @@ impl Action for Check {
         // under a use case of the table (plan e1, task T1).
         let under_use_case = judging.is_some();
         let mut tally = Tally {
-            submission: if v2 { "v2" } else { "v1" },
+            submission: format,
             rejections: Vec::new(),
             recoveries: Vec::new(),
             cause: None,
@@ -1548,7 +1685,7 @@ impl Action for Check {
                 opening.extend(run.said_details(&entries)?);
                 opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
                 opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
-                run_tools_submit(&mut run.tools, v2, &judging.checklist)?;
+                run_tools_submit(&mut run.tools, format, &judging.checklist)?;
                 let tools = details::tools_section(&named);
                 use_case::system_with(&judging.resolved, &judging.job, &tools)
             } else {
@@ -1674,17 +1811,25 @@ impl Action for Check {
                             let mut arguments =
                                 submitted.first().map(|submit| submit.arguments().clone());
                             let read = match submitted.as_slice() {
-                                [submit] if calls == 1 && v2 => use_case::decided_of_v2(
-                                    &use_case::Given {
+                                [submit] if calls == 1 && format != "v1" => {
+                                    let given = use_case::Given {
                                         arguments: submit.arguments(),
                                         repeated: submit.repeated_keys(),
-                                    },
-                                    &judging.job,
-                                    &judging.resolved,
-                                    &judging.checklist,
-                                    &run.shown,
-                                    &run.completed,
-                                )
+                                    };
+                                    let decide = if format == "v3" {
+                                        use_case::decided_of_v3
+                                    } else {
+                                        use_case::decided_of_v2
+                                    };
+                                    decide(
+                                        &given,
+                                        &judging.job,
+                                        &judging.resolved,
+                                        &judging.checklist,
+                                        &run.shown,
+                                        &run.completed,
+                                    )
+                                }
                                 .map(|read| {
                                     let turn = sent_turns + 1;
                                     let kinds = read.recoveries.iter().map(|kind| (turn, *kind));
@@ -1737,10 +1882,9 @@ impl Action for Check {
                                             .push(Message::new(Role::User, asked).map_err(unfit)?);
                                         // The second look keeps its own contract: v1's
                                         // tool, whatever the first submission's form.
-                                        if v2 {
-                                            run.tools.retain(|t| t.name() != use_case::SUBMIT);
+                                        if format != "v1" {
                                             let checklist = &judging.checklist;
-                                            run_tools_submit(&mut run.tools, false, checklist)?;
+                                            run_tools_submit(&mut run.tools, "v1", checklist)?;
                                         }
                                         looking = Some(Looking {
                                             first: decided,
@@ -1788,7 +1932,17 @@ impl Action for Check {
                             messages.push(Message::new(Role::User, results).map_err(unfit)?);
                             continue;
                         }
-                        let results = run.answer(&turn)?;
+                        let before = judging.as_ref().map(|j| j.checklist.items.len());
+                        let results = run.answer(&turn, judging.as_mut())?;
+                        // An evidence item a call added is an item the submission must answer:
+                        // a tool keyed by the checklist is made again for it. v1's names no
+                        // item, and is sent as it was.
+                        if let Some(judging) = &judging
+                            && before != Some(judging.checklist.items.len())
+                            && format != "v1"
+                        {
+                            run_tools_submit(&mut run.tools, format, &judging.checklist)?;
+                        }
                         messages.push(said);
                         messages.push(results);
                     }
@@ -2106,6 +2260,32 @@ struct Judging {
     resolved: Resolved,
     checklist: Checklist,
     repairs: Vec<String>,
+    /// What the use case's rules hint to a tool file (`[hints]`), given it as arguments.
+    hints: use_case::Hints,
+}
+
+/// What the judge is told of the evidence items a call's regions added, after its answer:
+/// each item's line as the checklist shows it, and each region that was not taken, with why.
+fn evidence_said(took: &crate::checklist::Ingest, judging: &Judging) -> String {
+    let mut said = String::new();
+    if !took.added.is_empty() {
+        said.push_str(
+            "\nIts regions are on the checklist now: give each of these items exactly one disposition.",
+        );
+        for id in &took.added {
+            if let Some(item) = judging.checklist.get(id) {
+                said.push('\n');
+                said.push_str(&Checklist::line(item, &judging.resolved));
+            }
+        }
+    }
+    for dropped in &took.dropped {
+        said.push_str(&format!(
+            "\nRegion {} is not on the checklist: {}.",
+            dropped.region, dropped.reason
+        ));
+    }
+    said
 }
 
 /// The job of a call under a use case, read and held to the call: in the contract
@@ -2142,11 +2322,15 @@ fn judging(call: &PreparedCall, use_case: &str, job: Option<&Value>) -> Result<J
     }
     let resolved = use_case::resolve(&job).map_err(|why| Failure::invalid(&why))?;
     let checklist = Checklist::build(&resolved, &job);
+    let hints = use_case::rules(use_case)
+        .map(|rules| rules.hints)
+        .unwrap_or_default();
     Ok(Judging {
         job,
         resolved,
         checklist,
         repairs: Vec::new(),
+        hints,
     })
 }
 

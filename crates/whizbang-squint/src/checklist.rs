@@ -9,7 +9,8 @@
 //! binds to none is dropped and reported, never shown. A result that would take the
 //! checklist past its budget of evidence items is refused whole before anything of it is
 //! shown. Two evidence items on one image whose boxes overlap past [`OVERLAP_IOU`] name
-//! each other.
+//! each other. The evidence items' images and bounds are kept in the checklist itself
+//! (`Checklist::evidence_count`), so the two cannot be paired wrongly.
 //!
 //! What changed from squint. A region is a box or a polygon in pixels of the image the run
 //! handed the tool, by its binding (ADR 0032, "Amended: regions"), which the caller names
@@ -48,32 +49,40 @@ pub struct Ingest {
     pub dropped: Vec<Dropped>,
 }
 
-/// The evidence items taken so far, beside the checklist: each item's id, image and bounds,
-/// which later items' overlaps are read against.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Evidence {
-    taken: Vec<(String, String, [f64; 4])>,
-}
-
-impl Evidence {
-    /// How many evidence items the checklist holds.
-    pub fn count(&self) -> usize {
-        self.taken.len()
-    }
-}
+/// The most evidence items one checklist holds: squint's default budget (its
+/// `budget.evidence_items`).
+pub const EVIDENCE_ITEMS_LIMIT: usize = 24;
 
 /// Takes the regions of one tool call into the checklist, in their order, each as the item
 /// `chk:ev:<call>:<n>`: the regions of `kind` that bind to a mandatory instance on their
-/// image. Refused, with nothing taken, when the items would pass `budget`.
+/// image. Refused, with nothing taken, when the items would pass `budget`, when the call's
+/// items are on the checklist already (an id names one call), or when an item would depend
+/// on no mandatory instance (squint's `check_invariant`).
 pub fn ingest(
     checklist: &mut Checklist,
-    evidence: &mut Evidence,
     call: &str,
     kind: &str,
     regions: &[Located],
     resolved: &Resolved,
     budget: usize,
 ) -> Result<Ingest, String> {
+    let number = call.trim_start_matches("call:");
+    let prefix = format!("chk:ev:{number}:");
+    if checklist.ids().any(|id| id.starts_with(&prefix)) {
+        return Err(format!(
+            "the evidence items of {call} are on the checklist already: a call id is taken once"
+        ));
+    }
+    if let Some(item) = checklist
+        .items
+        .iter()
+        .find(|item| item.instances.is_empty())
+    {
+        return Err(format!(
+            "checklist: item {} has no mandatory dependency",
+            item.id
+        ));
+    }
     let mut out = Ingest::default();
     let mut bound: Vec<(&Located, Vec<String>)> = Vec::new();
     for (n, region) in regions.iter().enumerate() {
@@ -93,15 +102,16 @@ pub fn ingest(
         }
         bound.push((region, instances));
     }
-    if evidence.count() + bound.len() > budget {
+    let count = checklist.evidence_count();
+    if count + bound.len() > budget {
         return Err(format!(
             "evidence items would reach {} of a budget of {budget}; the result of {call} is not presented",
-            evidence.count() + bound.len()
+            count + bound.len()
         ));
     }
     for (n, (region, instances)) in bound.into_iter().enumerate() {
-        let id = format!("chk:ev:{}:{n}", call.trim_start_matches("call:"));
-        let overlaps: Vec<String> = (evidence.taken.iter())
+        let id = format!("{prefix}{n}");
+        let overlaps: Vec<String> = (checklist.evidence.iter())
             .filter(|(_, image, bounds)| {
                 *image == region.image && iou(bounds, &region.bounds) > OVERLAP_IOU
             })
@@ -112,8 +122,8 @@ pub fn ingest(
                 item.overlaps.push(id.clone());
             }
         }
-        evidence
-            .taken
+        checklist
+            .evidence
             .push((id.clone(), region.image.clone(), region.bounds));
         out.added.push(id.clone());
         checklist.items.push(Item {

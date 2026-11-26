@@ -84,13 +84,16 @@ pub enum Class {
     Evidence,
     /// `submit_verdict` called with other calls, or more than once in a turn.
     NotAlone,
+    /// Under submission v3: an item's findings that are not a list, or a finding inside an
+    /// item that lists an instance the item does not hold (plan mE, task F1).
+    ItemFindings,
     /// A turn of the judge that ended without calling `submit_verdict`.
     NoSubmission,
 }
 
 impl Class {
     /// Every class, in the order of the plan.
-    pub const ALL: [Class; 11] = [
+    pub const ALL: [Class; 12] = [
         Class::NotAList,
         Class::UnknownItem,
         Class::MissingItem,
@@ -102,6 +105,7 @@ impl Class {
         Class::Evidence,
         Class::NotAlone,
         Class::NoSubmission,
+        Class::ItemFindings,
     ];
 
     /// The class as it is recorded: `not_a_list`, `unknown_item`, ...
@@ -118,6 +122,7 @@ impl Class {
             Class::Evidence => "evidence",
             Class::NotAlone => "not_alone",
             Class::NoSubmission => "no_submission",
+            Class::ItemFindings => "item_findings",
         }
     }
 }
@@ -447,18 +452,22 @@ pub fn decided_of(
     resolved: &Resolved,
     checklist: &Checklist,
 ) -> Result<Decided, Rejection> {
-    decided_with(arguments, job, resolved, checklist, false).map_err(|mut found| found.remove(0))
+    decided_with(arguments, job, resolved, checklist, &[], false)
+        .map_err(|mut found| found.remove(0))
 }
 
 /// The same, with every problem of the submission when `all` is set (submission v2; plan
 /// e1, task F1, item 2): the first of each item and each finding, in the order they were
 /// given, and the items missing or given twice. Without it, the first problem alone, as
-/// v1 has always said it. Never an empty list.
+/// v1 has always said it. Never an empty list. A finding is named as `named` gives its
+/// place in `findings` (submission v3 names one inside an item by its item), and otherwise
+/// as v1 has always named it, `finding <place>`.
 pub(crate) fn decided_with(
     arguments: &Json,
     job: &Job,
     resolved: &Resolved,
     checklist: &Checklist,
+    named: &[String],
     all: bool,
 ) -> Result<Decided, Vec<Rejection>> {
     let mut found: Vec<Rejection> = Vec::new();
@@ -589,7 +598,7 @@ pub(crate) fn decided_with(
     }
     let findings = submission.findings.unwrap_or_default();
     'finding: for (at, value) in findings.iter().enumerate() {
-        let tag = format!("finding {at}");
+        let tag = (named.get(at).cloned()).unwrap_or_else(|| format!("finding {at}"));
         let answer = match read(value, &tag) {
             Ok(answer) => answer,
             Err(rejection) => problem!(@'finding, rejection),

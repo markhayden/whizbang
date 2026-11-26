@@ -2878,6 +2878,9 @@ pub struct Probe {
     pub fails: bool,
     /// Whether it takes a `method` (plan mE, task M1, item 12).
     pub methods: bool,
+    /// Whether it returns regions, of the kind `change_region`, and takes the rules'
+    /// `preserve` hint (plan mE, task F1): its output then holds `regions`.
+    pub regions: bool,
 }
 
 pub type Probed = (Vec<(String, ArtifactId)>, Json);
@@ -2906,8 +2909,17 @@ impl whizbang_squint::files::FileTools for Probe {
                         required: false,
                     });
                 }
+                if self.regions {
+                    arguments.push(whizbang_squint::files::FileArgument {
+                        name: "preserve".to_owned(),
+                        number: false,
+                        purpose: "Things whose change matters more.".to_owned(),
+                        required: false,
+                    });
+                }
                 arguments
             },
+            region_kind: self.regions.then(|| "change_region".to_owned()),
         }]
     }
 
@@ -2927,9 +2939,18 @@ impl whizbang_squint::files::FileTools for Probe {
         if self.fails {
             return Err("the file raised".to_owned());
         }
+        let mut output = json!({"readings": [{"subject": "door", "values": {"kept": 0.75}}]});
+        if self.regions {
+            // One region on the candidate, one on the source, one on the candidate again.
+            output["regions"] = json!([
+                {"frame": "candidate", "box": [10.0, 10.0, 30.0, 30.0], "label": "door moved", "score": 0.9},
+                {"frame": "source", "box": [10.0, 10.0, 30.0, 30.0], "label": "door", "score": 0.5},
+                {"frame": "candidate", "box": [0.0, 0.0, 8.0, 8.0], "label": "sill", "score": 0.4},
+            ]);
+        }
         Ok(whizbang_squint::files::FileRan {
             digest: self.ran_as.unwrap_or(PROBE_DIGEST).to_owned(),
-            output: json!({"readings": [{"subject": "door", "values": {"kept": 0.75}}]}),
+            output,
         })
     }
 }
@@ -4128,4 +4149,248 @@ fn a_judge_cannot_override_the_method_its_arm_froze() {
         drop(executor);
         assert!(quiet.received().is_empty());
     }
+}
+
+// --- evidence items, hints and submission v3 (plan mE, task F1) ---------------------------------
+
+/// A run of `check` under source-fidelity of the pair, the probe returning regions, in this
+/// form, its judge calling the probe and then answering by `then`.
+fn regions_run(
+    submission: &str,
+    then: &[(Json, &str)],
+) -> (Finished, Left, Arc<FakeJudge>, Arc<Probe>) {
+    let (mut world, source, candidate, _) = paired();
+    let probe = Arc::new(Probe {
+        regions: true,
+        ..Probe::default()
+    });
+    world.toolbox = whizbang_squint::check::Toolbox::with_files(probe.clone());
+    let asked = json!({"tool_call": {"id": "p1", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door"}}});
+    let mut script = vec![(json!([asked]), "tool_use")];
+    script.extend(then.iter().cloned());
+    let call = of_pair(
+        &source,
+        &candidate,
+        &[("tools", "view,probe"), ("submission", submission)],
+    );
+    let (finished, left, judge) = judged(&world, &call, &turns(&script));
+    (finished, left, judge, probe)
+}
+
+/// Source fidelity's two items and the two evidence items the probe's regions on the
+/// candidate add, each held.
+fn four_held() -> Json {
+    json!([
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+        item("chk:ev:0:0", "held", "confident"),
+        item("chk:ev:0:1", "held", "confident"),
+    ])
+}
+
+#[test]
+fn a_tool_files_regions_are_items_of_the_checklist_its_submission_answers() {
+    // Under v1: the probe's call is answered with its output and the items its regions
+    // on the candidate became; the one on the source binds to no instance and is said not
+    // taken. A submission without them is refused as missing them; with them, a verdict.
+    let static_two = json!([
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+    ]);
+    let (finished, left, judge, probe) = regions_run(
+        "v1",
+        &[
+            (json!([submission(static_two)]), "tool_use"),
+            (json!([submission(four_held())]), "tool_use"),
+        ],
+    );
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let said = results(&judge, 1)[0].text().to_owned();
+    assert!(
+        said.contains("Its regions are on the checklist now"),
+        "{said}"
+    );
+    assert!(
+        said.contains("\n- chk:ev:0:0 \"door moved\" at raw:candidate bbox ["),
+        "{said}"
+    );
+    assert!(
+        said.contains("\n- chk:ev:0:1 \"sill\" at raw:candidate bbox ["),
+        "{said}"
+    );
+    assert!(
+        said.contains("Region 1 is not on the checklist: no mandatory instance on \"source\""),
+        "{said}"
+    );
+    let refused = rejection(&judge, 2);
+    assert!(
+        refused.contains("chk:ev:0:0 has no disposition"),
+        "{refused}"
+    );
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+    // What the run decided names every item, the evidence ones among them.
+    let judged: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    assert_eq!(
+        judged["checklist"],
+        json!([
+            "chk:ob:SF1@candidate",
+            "chk:ob:SF2@candidate",
+            "chk:ev:0:0",
+            "chk:ev:0:1"
+        ])
+    );
+    // v1's tool names no item, and is sent as it was.
+    assert_eq!(submit_sent(&judge, 0), submit_sent(&judge, 1));
+    // The source-fidelity rules hint nothing, so the probe was given its call's arguments.
+    assert_eq!(probe.ran.lock().unwrap()[0].1, json!({"phrase": "door"}));
+}
+
+#[test]
+fn a_tool_keyed_by_the_checklist_is_made_again_for_the_items_a_call_added() {
+    // Under v2 the keys, and under v3 the ids, follow the checklist once regions add to it.
+    let (finished, _, judge, _) =
+        regions_run("v2", &[(json!([submission_v2(&four_held())]), "tool_use")]);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(
+        submit_sent(&judge, 0)["properties"]["items"]["required"],
+        json!(["chk_ob_SF1_candidate", "chk_ob_SF2_candidate"])
+    );
+    assert_eq!(
+        submit_sent(&judge, 1)["properties"]["items"]["required"],
+        json!([
+            "chk_ob_SF1_candidate",
+            "chk_ob_SF2_candidate",
+            "chk_ev_0_0",
+            "chk_ev_0_1"
+        ])
+    );
+    let (finished, left, judge, _) = regions_run(
+        "v3",
+        &[(json!([submission_v3(&four_held(), json!([]))]), "tool_use")],
+    );
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(
+        submit_sent(&judge, 1)["properties"]["items"]["items"]["properties"]["id"]["enum"],
+        json!([
+            "chk:ob:SF1@candidate",
+            "chk:ob:SF2@candidate",
+            "chk:ev:0:0",
+            "chk:ev:0:1"
+        ])
+    );
+    assert_eq!(rejections(&left)["submission"], "v3");
+}
+
+#[test]
+fn hints_are_given_to_a_tool_file_as_the_arguments_of_text_it_declares() {
+    use whizbang_squint::files::{FileArgument, FileTool, hinted};
+    use whizbang_squint::use_case::{Hints, RegionHints};
+    let argument = |name: &str, number: bool| FileArgument {
+        name: name.to_owned(),
+        number,
+        purpose: "Phrases.".to_owned(),
+        required: false,
+    };
+    let tool = FileTool {
+        name: "regions".to_owned(),
+        purpose: "Finds regions.".to_owned(),
+        bindings: vec!["source".to_owned(), "candidate".to_owned()],
+        arguments: vec![argument("preserve", false), argument("ignore", true)],
+        region_kind: Some("change_region".to_owned()),
+    };
+    let hints = Hints {
+        regions: Some(RegionHints {
+            preserve: vec!["wall".to_owned(), "pool".to_owned()],
+            ignore: vec!["chair".to_owned()],
+        }),
+        outline: None,
+    };
+    // `preserve` is declared as text and given; `ignore` is declared as a number, so it
+    // is not; a value the call gave is kept.
+    let mut arguments = serde_json::Map::new();
+    hinted(&tool, &mut arguments, &hints);
+    assert_eq!(Json::Object(arguments), json!({"preserve": "wall; pool"}));
+    let mut given = serde_json::Map::new();
+    given.insert("preserve".to_owned(), json!("door"));
+    hinted(&tool, &mut given, &hints);
+    assert_eq!(Json::Object(given), json!({"preserve": "door"}));
+    let mut none = serde_json::Map::new();
+    hinted(&tool, &mut none, &Hints::default());
+    assert!(none.is_empty());
+}
+
+/// A submission of v3 of these items, each with no finding inside it, and these observed
+/// findings, as the judge's one call.
+pub fn submission_v3(items: &Json, observed: Json) -> Json {
+    let items: Vec<Json> = (items.as_array().unwrap().iter())
+        .map(|item| {
+            let mut item = item.clone();
+            item["findings"] = json!([]);
+            item
+        })
+        .collect();
+    json!({"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": {
+        "schema_version": 3, "items": items, "findings": observed,
+        "opinion": {"verdict": "pass", "reason": "Recorded only."}}}})
+}
+
+#[test]
+fn v3_under_check_records_its_form_and_its_new_class() {
+    // A finding inside an item that lists an instance the item does not hold is refused
+    // as `item_findings`, counted in `rejections/2`; the repair is decided.
+    let world = World::new();
+    let items = json!([
+        item("chk:ob:SF1@candidate", "violation", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+    ]);
+    let mut bad = submission_v3(&items, json!([]));
+    bad["tool_call"]["arguments"]["items"][0]["findings"] = json!([{
+        "disposition": "violation", "confidence": "confident", "reason": "Moved.",
+        "allowed_by": null, "evidence": [], "instances": ["SF2@candidate"],
+        "location": {"kind": "bbox", "frame": "raw:candidate", "bbox": [0.1, 0.1, 0.2, 0.2],
+                     "polygon": null, "yaw": null, "pitch": null, "fov": null}}]);
+    let good = submission_v3(&items, json!([]));
+    let call = fidelity(&world).argument("submission", Value::text("v3"));
+    let script = turns(&[(json!([bad]), "tool_use"), (json!([good]), "tool_use")]);
+    let (finished, left, judge) = judged(&world, &call, &script);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Fail);
+    let kept = rejections(&left);
+    assert_eq!(kept["submission"], "v3");
+    assert_eq!(kept["rejections"][0]["class"], "item_findings", "{kept}");
+    let said = rejection(&judge, 1);
+    assert!(
+        said.contains(
+            "chk:ob:SF1@candidate finding 0: instances names one that is not this item's"
+        ),
+        "{said}"
+    );
+    // v3's tool, its one form for the job's two items of one instance.
+    let sent = submit_sent(&judge, 0);
+    assert_eq!(
+        sent["properties"]["items"]["items"]["properties"]["id"]["enum"],
+        json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
+    );
 }
