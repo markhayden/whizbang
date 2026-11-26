@@ -1376,11 +1376,14 @@ if the record names one, and one refusal. A row is done only when every case has
    what it charged.
 6. For a case that spends: `whizbang spend status --store <store>` shows its charge.
 
-The set builder has no store runs: its steps 3 to 6 are, in O1.1, on a dev plan, with a folder
-in the system temp folder as `--owner` and `--out` (never owner storage): `build --plan <plan>
---out <dir> --owner <dir> --fake`; `rebuild`; the draft labels confirmed or struck by the owner
-in `labels-draft.toml`, as `docs/evalsets.md` says; `promote --draft <file> --set <dir>
---attest <text>`; `whizbang eval sets check` on what it wrote, and its refusals of
+The set builder has no store runs: its steps 3 to 6 are, in O1.1, on a dev plan, with two
+folders in the system temp folder, `<scratch owner>` as `--owner` and `<scratch root>` for the
+sets (never owner storage), the set written to `<set dir>`, which is `<scratch
+root>/<use-case>/<set>`: `build --plan <plan> --out <set dir> --owner <scratch owner> --fake`;
+`rebuild --plan <plan> --out <set dir> --owner <scratch owner> --fake --item <id>`; the draft
+labels confirmed or struck by the owner in `labels-draft.toml`, as `docs/evalsets.md` says;
+`promote --draft <file> --set <set dir> --attest <text>`; `whizbang eval sets check --root
+<scratch root>` on what it wrote, and its refusals of
 an owner folder inside the work tree and of live generation, which waits for the spend guard;
 in O1.3, one live build, a request past `--cap-usd` refused, and a request to an origin the
 config does not approve refused.
@@ -2314,3 +2317,10 @@ code and the docs; all were right and taken.
    B1 and D1; O1.1's sequence with its arguments, a temporary folder as `--owner`, and the
    labels confirmed before `promote`.
 3. **Minor: "nine rounds" read as if O1 were one.** Right. Taken: the nine named, O1 apart.
+
+### Review round O1-8
+
+Review round O1-8, on draft 8 of task O1. Verdict: approve. Round O1-7's fixes held, and no
+earlier finding was reopened. One finding, a minor: the builder's `rebuild` and the checker's
+`--root` were abbreviated. Right (`tools/sets/whizbang_sets/__main__.py`; `eval.rs` defaults
+the root to `evalsets`), and taken: each written whole, the scratch folders named.
