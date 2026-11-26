@@ -772,7 +772,24 @@ pull request adds it with the tools that use it.
    passes only the job (`crates/whizbang/src/trying.rs`). `cli::eval_tool_runs_a_method`;
    `cli::eval_tool_gives_a_tool_that_takes_a_box_the_whole_frame`.
 
-- [ ] Done when: conformance passes with fakes; the model tier passes on the Mac; `classes`
+As built (the second pull request): `classes` is a tool file on `context.labels` of
+`eomt-ade20k`, its box read on a working grid of 256, its confidence over the box the
+share-weighted mean of its classes' confidences (`labels` gives one figure a class; squint
+averaged each pixel's), `bbox` as fractions of the frame, the whole frame when not given;
+`regions` and `outline` take `method`, `sam3` or `eomt` (version 0.2.0 of each), the
+classes' groups and words shared as `whizbang_pack.class_groups`. `eval tool --method`
+passes the method to each run, names the tool `regions@eomt`, and refuses a tool without a
+`method` argument; it gives a tool that takes `bbox` the whole frame. To keep the fast
+tier's time, the arguments `eval tool` gives are held by
+`cli::eval_tool_runs_a_method` and `cli::eval_tool_gives_a_tool_that_takes_a_box_the_whole_frame`
+without a run, the run under a method by the existing test of `outline` and `regions`
+(`regions@sam3`), and the methods' `eomt` paths against a fake fixed-class segmenter under
+`just test-pack` (`test_classes`). Under `check`, a tool file that asks `labels` is refused
+until `check.rs` holds `labels` among a run's calls, which task F1 adds; until then
+`C+regions@eomt` cannot run its `eomt` method under a judge. The model tier's test on the
+Mac is the orchestrator's.
+
+- [x] Done when: conformance passes with fakes; the model tier passes on the Mac; `classes`
   and both methods run under `eval tool --method` against the fakes. **Reviewer reads hardest:** that
   adding the entry edited no existing tool's logic (section 18, criterion 4).
 
@@ -1320,7 +1337,7 @@ The 58 rows, by session. A session's config lists only the tool files that have 
 | O1.2 | 8 rows, paid. `segment` (SAM 3 and Tiny; a phrase, a point, a box), `fill` (Bria through fal), `remove_prompt`, `remove`, `repair_area`, `repair`, `seam`, `remove_checked` (under the cheap judge) | E's store ("I need", item 1) | C1's measurement (item 1), V1, K1, R5, R6 |
 | O1.3 | The set builder walked again: live generation, its spend guard, full requirements, one real picture under `--cap-usd` | B1's second pull request | D1's first paid build |
 | O1.4 | 9 rows, and P1's steps walked again. `check`; `source-fidelity`, `reference-consistency`, `reality-checks`, `brief-compliance`, `product-fidelity`, each under v1 and v2; details first (with `align`, `change_map`, `edge_similarity`), `tiles`, the second look (`off`, `on`, `strict`); again: `view`'s panorama side, `line`, `rect`, `stroke`, `rasterize` through every binding, `fan`, `ramp`, `measure` | P1 | R2, R3, F2, R4, R5 |
-| O1.5 | 5 rows. `per_subject`, `outline`, `regions`, `classes`, each method; `labels` on the fixed-class entry (T2), beside it, again: `segment` on the fixed-class entry | T2 | R2, K1, R3, R4 |
+| O1.5 | 5 rows. `per_subject`, `outline`, `regions`, `classes`, each method; `labels` on the fixed-class entry (T2), beside it, again: `segment` on the fixed-class entry. `outline` and `regions` each under `--method sam3` and `--method eomt` of `eval tool`, `try --arg method=eomt`, and as `C+regions@eomt` under `check` once F1 lets a tool ask `labels` there; `classes` by `try` with `--arg bbox=...` and by `eval tool`, which gives it the whole frame (T2). A config with a segment backend of the model `eomt-ade20k` beside the default | T2 | R2, K1, R3, R4 |
 | O1.6 | 1 row. The submission format: v3 under `check` and each use case | F1 | F2, R4 |
 | O1.7 | Steps walked again. `remove_checked`, `select`, `carry` (L2); `seam` (P1's records) | L2 and P1 | R5 |
 | O1.8 | 1 row, if C1 builds it. The clicked removal | C1, item 3 | C1, item 4; R5 |

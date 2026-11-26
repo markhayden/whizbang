@@ -275,8 +275,8 @@ the package in `docs/results/2026-11-tool-study.md`.
 
 | From | Item | Where it is | Note |
 |---|---|---|---|
-| squint | `regions`, `classes`, `outline` tools | `tools/python/src/squint_tools/` | See "Evaluations". The 2026-11-11 study found a clear gain only for `regions` on one model, and that `outline` ranked noise above the real change |
-| squint | Fixed-class segmenter | `tools/python/MODEL.md` | Comes back as a catalogue entry if any of the three needs it |
+| squint | `regions`, `classes`, `outline` tools | `tools/python/src/squint_tools/` | See "Evaluations". The 2026-11-11 study found a clear gain only for `regions` on one model, and that `outline` ranked noise above the real change. **Brought in by plan mE, tasks T1 and T2:** each a tool file of the pack, marked experimental, with its record (`pack/tools/outline.py`, `regions.py`, `classes.py`); `regions` and `outline` each take a `method`, `sam3` or `eomt`, and `whizbang eval tool --method` scores either. Their rungs are R2 to R4's; N1 moves the row out of this section |
+| squint | Fixed-class segmenter | `tools/python/MODEL.md` | Comes back as a catalogue entry if any of the three needs it. **Back, by plan mE, task T2:** the catalogue's `eomt-ade20k` (ADR 0053), which `classes` and the methods `eomt` ask through the action `labels`; N1 moves the row out of this section |
 
 ## Not ported
 

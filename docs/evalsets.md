@@ -268,8 +268,10 @@ submission that left an item tentative, forecast at three times arm C; details s
 An arm may freeze a tool file's method: `C+regions@eomt`, or `{ arm = "C", tools = [{ tool =
 "regions", method = "eomt" }] }`, in its identity; `check` gives every call of that tool the
 method, and refuses a judge's call that names another. The tool file must declare a `method`
-argument: `regions` gains its methods with plan mE's task T2, and `C+regions@eomt` runs only
-after it.
+argument: `regions` and `outline` take `method`, `sam3` (the default) or `eomt`, since plan
+mE's task T2. Under `eomt`, `regions` asks the fixed-class segmenter's labels, so
+`C+regions@eomt` needs a config with a segment backend of the model `eomt-ade20k`, and `check`
+to hold `labels` among the calls a run of tool files makes (plan mE's task F1).
 
 `eval matrix --past-forecast` prints the forecast of the cells still to run and runs anyway:
 each run is admitted against the store's allowance as any run is, the first the allowance
