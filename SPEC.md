@@ -853,6 +853,8 @@ whizbang squint check <use-case> …
 whizbang try <tool> …                  # one tool on one image or pair, no judge
 whizbang eval tool <tool> --set <set>  # rung 2
 whizbang eval run --gate <file>        # rungs 3 and 4
+whizbang eval edits gate --gate <file> --receipt <file>
+                                       # an edit recipe's rungs 3 and 4 (edit-gate/1)
 whizbang models list|get <model>|remove <model> [--wait <seconds>]
                     [--config <file> [--env-file <file>]] [--models-dir <dir>]
                                        # the catalogue's models, installing one, removing

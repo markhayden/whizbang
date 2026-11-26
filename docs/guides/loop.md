@@ -296,6 +296,19 @@ outside the work tree, and are never committed.
   assignment.json` then adds what they say of the finished pictures, by group, and refuses
   a picture marked twice. The sheet is never written inside a git work tree, nor into a
   folder that is not empty.
+- Any recipe's runs are marked the same way (plan mE, task M2). A cases file
+  (`edit-cases/1`) names the action, and for each case its id, its family, the request id
+  its run was made under and what was to be removed or mended. `whizbang eval loop sheet
+  --cases <file> --out <folder>` shows each case's finished picture beside the picture its
+  run was given, both read from the store; `whizbang lab pairs --from-runs <file>
+  --protocol <file> --out <folder>` draws the blinded pairs of those runs against the
+  picture each was given (or against `--reference-runs`, another cases file's runs of the
+  same cases), which `lab decode` reads unchanged; and `whizbang eval edits gate --gate
+  <file> --receipt <file>` scores the recipe's gate, `edit-gate/1`, from the store, with
+  `--labels marks.json --sheet assignment.json` for a person's marks and `--assignment
+  --picks` for the pairs. Its receipt, `edit-receipt/1`, holds aggregates only, and `eval
+  admitted` lists the recipe a rung 4 receipt admitted. The marks, the picks and both
+  assignments are refused inside a git work tree.
 
 ## What it does not do yet
 

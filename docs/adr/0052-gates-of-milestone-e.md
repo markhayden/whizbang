@@ -106,3 +106,36 @@ resumed matrix kept a failed cell failed without a rule written down for it.
   later success is what section 9 forbids.
 - **Admissions written by hand into each record**: what admitted a tool would not be held to
   the receipt that says so.
+
+## Amended with task M2
+
+The edits' gates (`SPEC.md` section 8: an edit tool's gate is task success, preservation
+outside the mask and blinded quality) are not `eval run --gate`, which gates a judge's
+balanced accuracy.
+
+1. **`edit-gate/1`**, frozen before its round, pins its cases (`edit-cases/1`: each case's
+   family and the request id of its run) and the lab protocol of its pairs by digest, and
+   states its rung, the round's hypotheses, its level and seed, its minimum of families,
+   and a bar for each measure: task success (a share of every case, from the checks of the
+   finished edits on rung 3, from a person's marks on rung 4 and only there); preservation
+   outside the kept mask, exact; the outcomes the decode of the pairs must reach and the
+   pairs that must be picked; operational errors; cost (the mean settled cost of a run
+   against the recipe's guide figure times a multiple); and latency of the local work alone
+   (a run's time less its backend requests', over the record's time at the nearest size,
+   the median against a multiple).
+2. **Task success's lower bound is the lower of two**, each at the level corrected across
+   the round's recipes (Bonferroni): the percentile of a bootstrap that resamples families
+   at `resamples_for(count)`, and the Wilson bound over the cases. A round of 8 cases in 4
+   families gives a bootstrap a handful of families to draw; Wilson's bound does not lean
+   on their spread. A run that failed, or is missing, is an error and not a success, never
+   replaced by a later one; a finished edit with no check or mark leaves the gate
+   inconclusive.
+3. **The outcome**: rejected when preservation, errors, cost, latency or quality fails;
+   inconclusive when the data are short, whatever task success read; rejected when task
+   success misses a bar; else admitted. `whizbang eval edits gate` writes the receipt,
+   `edit-receipt/1`, aggregates only, and `eval admitted` lists its recipe when it was
+   admitted on rung 4 from marks.
+4. **Marks and pairs of any recipe's runs**: `eval loop sheet --cases` and `lab pairs
+   --from-runs` read each case's run from the store by its request id, a recipe's or the
+   loop's, so no round has to run through the lab to be marked or picked. The owner's marks,
+   picks and assignments are refused inside a git work tree.
