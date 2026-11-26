@@ -351,9 +351,9 @@ Needs: no capability.
 
 ## `view`
 
-Shows a region of an image closer, and the same region of a second image when one is given.
+Shows a region of an image closer, by box or as a perspective view into a panorama, and the same of a second image when one is given.
 
-Arguments: `left` (number, required), `top` (number, required), `right` (number, required), `bottom` (number, required).
+Arguments: `left` (number), `top` (number), `right` (number), `bottom` (number), `yaw` (number), `pitch` (number), `fov` (number).
 
 Takes: `image` (image, 1 to 1), `also` (image, 0 to 1).
 
