@@ -89,6 +89,7 @@ fn a_gate_file_missing_an_item_of_the_spec_is_refused() {
         ("matrix_identity = \"0123", "matrix_identity = \"X123"),
         ("treatment = \"F\"", "treatment = \"C\""),
         ("gate_version = 2", "gate_version = 1"),
+        ("gate_version = 2", "gate_version = 4"),
     ] {
         assert!(Gate::parse(&FILE.replace(from, to)).is_err(), "{to}");
     }
@@ -241,4 +242,56 @@ fn a_rise_in_false_accepts_past_its_guardrail_is_not_admitted() {
     }
     let verdict = gate.decide(&metrics::paired(&c, &kept, gate.resampling()).unwrap());
     assert_eq!(verdict.outcome, Outcome::Admitted, "{verdict:?}");
+}
+
+#[test]
+fn a_version_3_gate_names_its_matrix_by_file_alone() {
+    // Plan mE, task M1, items 3 and 4: the matrix names the gate by its digest, so the gate
+    // names the matrix by file alone.
+    use whizbang_eval::gate::Compared;
+    let identity =
+        "matrix_identity = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n";
+    let three = FILE
+        .replace("gate_version = 2", "gate_version = 3")
+        .replace(identity, "");
+    let gate = Gate::parse(&three).unwrap();
+    assert_eq!(gate.run.matrix_identity, None);
+    assert_eq!(
+        gate.compared().unwrap(),
+        Compared::Arms {
+            control: "C".into(),
+            treatment: "F".into()
+        }
+    );
+    // Version 3 refuses version 2's identity, and version 2 still needs it.
+    let refused = Gate::parse(&FILE.replace("gate_version = 2", "gate_version = 3")).unwrap_err();
+    assert!(refused.contains("by file alone"), "{refused}");
+    assert!(Gate::parse(&FILE.replace(identity, "")).is_err());
+    // Two versions of a set under one arm, in version 3 alone.
+    let sets = "arm = \"C\"\ncontrol_set = \"source-fidelity/plain-v1\"\n\
+                treatment_set = \"source-fidelity/full-v1\"\n";
+    let versions = three.replace("control = \"C\"\ntreatment = \"F\"\n", sets);
+    assert_eq!(
+        Gate::parse(&versions).unwrap().compared().unwrap(),
+        Compared::Sets {
+            arm: "C".into(),
+            control: "source-fidelity/plain-v1".into(),
+            treatment: "source-fidelity/full-v1".into()
+        }
+    );
+    let in_two = FILE.replace("control = \"C\"\ntreatment = \"F\"\n", sets);
+    assert!(Gate::parse(&in_two).is_err());
+    for refused in [
+        // Two arms and two sets at once; a set without its twin; two use cases; one set.
+        versions.replace(
+            "arm = \"C\"",
+            "control = \"C\"\ntreatment = \"F\"\narm = \"C\"",
+        ),
+        versions.replace("treatment_set = \"source-fidelity/full-v1\"\n", ""),
+        versions.replace("source-fidelity/full-v1", "reality-checks/full-v1"),
+        versions.replace("source-fidelity/full-v1", "source-fidelity/plain-v1"),
+        versions.replace("source-fidelity/full-v1", "full-v1"),
+    ] {
+        assert!(Gate::parse(&refused).is_err(), "{refused}");
+    }
 }
