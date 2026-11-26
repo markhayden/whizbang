@@ -73,15 +73,17 @@ fn spans(source: u64, target: u64) -> Vec<(usize, Vec<u64>)> {
 /// The region scaled down to `width` by `height`: neither is larger than the region's.
 ///
 /// The region is divided into `width` by `height` equal rectangles, one for each output
-/// pixel. An output sample is the mean of the source samples over its rectangle, each
-/// source pixel counted by the area of it that lies inside the rectangle; the mean is
-/// rounded to the nearest whole number, a half going up. The four channels are averaged
-/// apart, and alpha is not multiplied into the colours. Every sum is a whole number: the
-/// weights are in units of one output pixel's share of a source pixel, so nothing is
-/// rounded before the one division.
+/// pixel, and each source pixel counts by the area of it that lies inside a rectangle.
+/// An output pixel's alpha is the mean of the source alphas over its rectangle. Its
+/// colours are the means weighted by alpha as well as by area, so a colour under a
+/// transparent pixel counts for nothing where anything visible is beside it (plan mE,
+/// task P1, item 6); where every source alpha is 0 they are the plain means, as before.
+/// Each mean is rounded to the nearest whole number, a half going up. Every sum is a whole
+/// number: the weights are in units of one output pixel's share of a source pixel, so
+/// nothing is rounded before the one division.
 ///
-/// `None` when the sums could pass 64 bits, which takes a region of more than 2^64 / 511
-/// pixels, about 3.6 x 10^16.
+/// `None` when the sums could pass 64 bits, which takes a region of more than
+/// 2^64 / 130,305 pixels, about 1.4 x 10^14.
 pub(super) fn downscale(
     pixels: &CanonicalPixels,
     region: &Region,
@@ -90,20 +92,22 @@ pub(super) fn downscale(
 ) -> Option<Vec<u8>> {
     let (cut_width, cut_height) = (u64::from(region.width()), u64::from(region.height()));
     let area = cut_width.checked_mul(cut_height)?;
-    // The largest value divided below is 2 * 255 * area + area.
-    area.checked_mul(511)?;
+    // The largest value divided below is 2 * 255 * 255 * area + 255 * area.
+    area.checked_mul(2 * 255 * 255 + 255)?;
     let columns = spans(cut_width, u64::from(width));
     let rows = spans(cut_height, u64::from(height));
     let stride = pixels.width() as usize * 4;
     let rgba = pixels.rgba();
-    let across = width as usize * 4;
+    // Seven sums a pixel: each colour, alpha, and each colour times alpha.
+    const LANES: usize = 7;
+    let across = width as usize * LANES;
 
     // One source row summed into the output's columns, kept while the next output row
     // wants it too: a source row on the border between two output rows is in both.
     let mut sums = vec![0u64; across];
     let mut held = None;
     let mut totals = vec![0u64; across];
-    let mut out = Vec::with_capacity(across * height as usize);
+    let mut out = Vec::with_capacity(width as usize * 4 * height as usize);
     for (first_row, weights) in &rows {
         totals.fill(0);
         for (offset, weight) in weights.iter().enumerate() {
@@ -111,13 +115,17 @@ pub(super) fn downscale(
             if held != Some(row) {
                 let line = &rgba[row * stride + region.left as usize * 4..];
                 let (line, _) = line.as_chunks::<4>();
-                let (sums, _) = sums.as_chunks_mut::<4>();
+                let (sums, _) = sums.as_chunks_mut::<LANES>();
                 for ((first, weights), sum) in columns.iter().zip(sums) {
-                    *sum = [0; 4];
+                    *sum = [0; LANES];
                     for (weight, pixel) in weights.iter().zip(&line[*first..]) {
-                        for (channel, sample) in sum.iter_mut().zip(pixel) {
-                            *channel += weight * u64::from(*sample);
+                        let alpha = u64::from(pixel[3]);
+                        for k in 0..3 {
+                            let colour = u64::from(pixel[k]);
+                            sum[k] += weight * colour;
+                            sum[4 + k] += weight * alpha * colour;
                         }
+                        sum[3] += weight * alpha;
                     }
                 }
                 held = Some(row);
@@ -126,11 +134,19 @@ pub(super) fn downscale(
                 *total += weight * sum;
             }
         }
-        out.extend(
-            totals
-                .iter()
-                .map(|total| ((2 * total + area) / (2 * area)) as u8),
-        );
+        let (totals, _) = totals.as_chunks::<LANES>();
+        for total in totals {
+            let seen = total[3];
+            for k in 0..3 {
+                let colour = if seen > 0 {
+                    (2 * total[4 + k] + seen) / (2 * seen)
+                } else {
+                    (2 * total[k] + area) / (2 * area)
+                };
+                out.push(colour as u8);
+            }
+            out.push(((2 * seen + area) / (2 * area)) as u8);
+        }
     }
     Some(out)
 }

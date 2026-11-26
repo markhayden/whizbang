@@ -110,7 +110,7 @@ None tried: the rule is rascal's, ported unchanged but for the differences its m
 
 | Limit | Example |
 |---|---|
-| At a small width the step windows are one column each, and a texture moves the step | `detail`, row 63: -22.32 for a step of -30 in red |
+| At a small width the step windows are one column each, and a texture moves the step. The scale is meant, as `fan`'s is: the windows are the profile's own, read at the picture's scale, and no floor is set | `detail`, row 63: -22.32 for a step of -30 in red; on the canvas of a panorama 800 wide, 160 pixels, the step is read on one column each side of the line (`fan`'s record, "Limits") |
 | One step a row for the whole band: a step that changes along the line within a row is averaged | The rule |
 
 ## Mark and history
@@ -126,5 +126,6 @@ this one does.
 
 **Gates.** None faced.
 
-**History.** Plan m3, task O3: ported from rascal's `ramp.rs` at the pinned commit.
+**History.** Plan m3, task O3: ported from rascal's `ramp.rs` at the pinned commit. Plan
+mE, task P1: the scale of the windows stated as meant.
 Plan m3, task D2: this record.

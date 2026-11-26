@@ -1176,7 +1176,7 @@ row on the panorama side of `view`):
    no set of panoramas to align, since the seam's check compares an edit with its source in
    place; re-owned with a line to the first such set, no milestone.
 
-- [ ] Done when: both pull requests are merged and each row has its line. Nothing paid.
+- [x] Done when: both pull requests are merged and each row has its line. Nothing paid.
 
 ## K1. The segmenters compared (the orchestrator's; nothing paid)
 

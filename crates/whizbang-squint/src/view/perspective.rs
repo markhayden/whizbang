@@ -3,7 +3,7 @@
 //!
 //! Ported from squint, `crates/squint-tools/src/builtin/view.rs` (`view_side`,
 //! `perspective`) and `raster.rs` (`sample`), at the commit `docs/sources.toml` pins: on
-//! canonical pixels, alpha sampled as the colours are, and through the core's statement of
+//! canonical pixels, each colour weighted by alpha, and through the core's statement of
 //! the mapping, whose functions are `libm`'s, so the same view has the same pixels on every
 //! machine.
 
@@ -56,9 +56,10 @@ pub fn looked(
 }
 
 /// The bilinear sample at a point of a panorama, between the centres of the four pixels
-/// around it: columns taken round the seam, rows held to the first and the last. Each of
-/// the four channels apart, rounded to the nearest level, a half away from zero. Squint's
-/// `raster::sample` with its wrap, on four channels.
+/// around it: columns taken round the seam, rows held to the first and the last. Alpha is
+/// the blend of the four alphas; each colour the blend weighted by alpha too, or the plain
+/// blend where all four are transparent. Each rounded to the nearest level, a half away
+/// from zero. Squint's `raster::sample` with its wrap, on four channels.
 fn sample(rgba: &[u8], width: u32, height: u32, x: f64, y: f64) -> [u8; 4] {
     let (w, h) = (f64::from(width), f64::from(height));
     let mut fx = (x - 0.5).rem_euclid(w);
@@ -77,12 +78,40 @@ fn sample(rgba: &[u8], width: u32, height: u32, x: f64, y: f64) -> [u8; 4] {
         let i = (y as usize * width as usize + x as usize) * 4;
         [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
     };
-    let (a, b, c, d) = (at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1));
+    let corners = [at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1)];
+    let weights = [
+        (1.0 - ax) * (1.0 - ay),
+        ax * (1.0 - ay),
+        (1.0 - ax) * ay,
+        ax * ay,
+    ];
+    // The plain blend of one channel, as squint's `sample` and the first version of this
+    // one worked it: across, then down. Alpha is always this; so is each colour where the
+    // four alphas are equal or all 0, so that an opaque view has those pixels to the bit.
+    let lerp = |k: usize| {
+        let (a, b, c, d) = (corners[0][k], corners[1][k], corners[2][k], corners[3][k]);
+        let top = f64::from(a) * (1.0 - ax) + f64::from(b) * ax;
+        let bottom = f64::from(c) * (1.0 - ax) + f64::from(d) * ax;
+        top * (1.0 - ay) + bottom * ay
+    };
+    // Otherwise each colour is the blend weighted by alpha as well, so a colour under a
+    // transparent pixel shows nowhere (plan mE, task P1, item 6).
+    let seen: f64 = (corners.iter().zip(weights))
+        .map(|(p, w)| w * f64::from(p[3]))
+        .sum();
+    let uniform = corners.iter().all(|p| p[3] == corners[0][3]);
+    let level = |v: f64| v.round().clamp(0.0, 255.0) as u8;
     let mut out = [0u8; 4];
-    for (k, o) in out.iter_mut().enumerate() {
-        let top = f64::from(a[k]) * (1.0 - ax) + f64::from(b[k]) * ax;
-        let bottom = f64::from(c[k]) * (1.0 - ax) + f64::from(d[k]) * ax;
-        *o = (top * (1.0 - ay) + bottom * ay).round().clamp(0.0, 255.0) as u8;
+    for (k, o) in out.iter_mut().take(3).enumerate() {
+        *o = level(if uniform || seen == 0.0 {
+            lerp(k)
+        } else {
+            let weighted: f64 = (corners.iter().zip(weights))
+                .map(|(p, w)| w * f64::from(p[3]) * f64::from(p[k]))
+                .sum();
+            weighted / seen
+        });
     }
+    out[3] = level(lerp(3));
     out
 }

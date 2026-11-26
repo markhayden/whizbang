@@ -24,7 +24,7 @@ pub use binding::{Binding, BindingId, Destination, Direction};
 pub use digest::{Digest, FileDigest, PixelDigest};
 pub(crate) use digest::{Encoder, FieldSource, Fields};
 pub use mapping::Mapping;
-pub use perspective::{Basis, Perspective};
+pub use perspective::{Basis, Perspective, panorama_direction};
 pub use pixels::{
     CanonicalPixels, DecodeLimits, Identified, ImageIdentity, Profile, Stored, identify,
 };

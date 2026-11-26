@@ -13,7 +13,11 @@ back a series; the summaries (mean, median, 95th percentile, largest, rows skipp
 drift's means by zone are said in the journal.
 
 - **Continuity**: the mean difference across the line over the row's mean difference
-  between neighbouring columns. **Tone step**: the step windows' mean colours in CIE Lab,
+  between neighbouring columns. A ratio with no unit: 0 where the line has no step, 1 where
+  it steps as much as the row does on average between two columns, and at most the width
+  less one, where all of the row's change is at the line. Of five-pixel rows with the line
+  at column 3: `0 0 0 90 90` gives 4, the most; `0 10 20 30 40` gives 1; `0 30 30 30 30`
+  gives 0 (`continuity_is_a_ratio_from_zero_to_one_less_than_the_width`). **Tone step**: the step windows' mean colours in CIE Lab,
   right minus left, as dL, dchroma and dhue. **Transition**: the Sobel magnitude within the
   band over outside it. **Texture match**: the same inside the core over the columns one
   to two half-widths out. **Drift**: the mean difference between `before` and `after`,
@@ -143,4 +147,5 @@ this one does.
 **Gates.** None faced.
 
 **History.** Plan m3, task O5: ported from rascal's `measure.rs` at the pinned commit.
+Plan mE, task P1: continuity's unit and range stated, with a vector.
 Plan m3, task D2: this record.
