@@ -7,6 +7,7 @@
 
 pub mod baseline;
 pub mod bootstrap;
+pub mod edit_gate;
 pub mod gate;
 mod json;
 pub mod lab;

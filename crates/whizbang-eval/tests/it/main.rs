@@ -4,6 +4,7 @@
 mod baseline;
 mod bootstrap;
 mod decode;
+mod edits_gate;
 mod eval_tool;
 mod gate;
 mod matrix;
