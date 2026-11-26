@@ -837,8 +837,10 @@ pull request adds it with the tools that use it.
    hints reach a tool file as its declared arguments of text; `ingest` refuses a call id
    taken; a label is quoted; the evidence items' places are kept in the checklist. Arm C
    sends what it sent (`cli::squint_check_with_nothing_set_is_the_control_arm` holds the
-   digest of its first request). `labels` frozen beside `segment` under `check` waits for
-   T2's first pull request.
+   digests of its two requests). From the review of #326: `check` is 1.9.0; v3's schema
+   has one form of item whatever the checklist (the instances a finding may list are those
+   of every item of several), held within 12 KiB at its largest checklist; and a tool file
+   may ask `labels` under `check`, frozen beside `segment`.
 
 - [x] Done when: the tests pass. **Reviewer reads hardest:** that v3 read back to v1's form can
   never give a verdict v1 could not, and that every rule of v1 it no longer needs to check is

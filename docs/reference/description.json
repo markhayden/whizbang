@@ -17,7 +17,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "kit": "squint",

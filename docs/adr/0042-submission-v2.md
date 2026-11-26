@@ -161,15 +161,18 @@ exemption, or no mandatory one, or one that does not judge the finding's image.
    `whizbang squint check --submission v3`, a matrix arm (`C;submission=v3`) and the
    playground's choices, from `check`'s descriptor; the default stays `v1`.
 2. **v1's list of items, each with its checklist id**, written as an enum of the checklist's
-   ids (no keyed object: Flash faulted 14 times under v2's larger tool). A finding on an
-   item is written inside its answer, under `findings`, and cites nothing: it bears on the
-   item's instances. An item of one instance names it; an item of more than one (a
-   reference's, an evidence item's) has a form of its own in the schema, whose findings'
-   `instances` is an enum of its instances, none listed meaning all
-   (`use_case::submit_tool_v3`). The items of one instance share one form; more than one
-   form is given as `anyOf`. A finding keeps its own disposition (`violation`,
-   `allowed_change`, `cant_tell`), confidence, reason, `allowed_by`, location and
-   evidence.
+   ids (no keyed object: Flash's 14 faults under v2 came with its larger tool). A finding on
+   an item is written inside its answer, under `findings`, and cites nothing: it bears on
+   the item's instances. An item of one instance names it; a finding inside an item of more
+   than one (a reference's, an evidence item's) may list which of them it bears on, none
+   listed meaning all, from `instances`, an enum of every instance of such an item
+   (`use_case::submit_tool_v3`). The schema has one form of item whatever the checklist, so
+   it grows by an id or an instance at a time, never by a form: at its largest checklist
+   (nine references and 24 evidence items) it stays within 12 KiB with its definitions
+   written in place, as the Google adapter writes them
+   (`submission::v3s_tool_stays_small_at_its_largest_checklist`). A finding keeps its own
+   disposition (`violation`, `allowed_change`, `cant_tell`), confidence, reason,
+   `allowed_by`, location and evidence.
 3. **Observed findings** stay v1's, in the separate `findings`, their disposition
    `observed` in the schema, citing observe rules.
 4. **Read back to v1's form, and decided by v1's rules** (`use_case::read_back`): each
@@ -181,9 +184,10 @@ exemption, or no mandatory one, or one that does not judge the finding's image.
    0`), and the verdict's reason does too.
 5. **What nesting makes impossible, and what is refused.** A citation that is missing or
    not of the list cannot be written. A finding inside an item that lists an instance the
-   item does not hold, or an item's findings that are no list, is refused under a new class,
-   `item_findings`, counted in `rejections/2` (whose contract is unchanged; a reader of an
-   earlier build counts the name as unknown). An exemption has no item: an answer under an
+   item does not hold (another item's, among the enum's), or an item's findings that are
+   no list, is refused under a new class, `item_findings`, counted in `rejections/2` (whose
+   contract is unchanged; a reader of an earlier build counts the name as unknown) and on
+   its own row of `runs stats --rejections` (`class item_findings`). An exemption has no item: an answer under an
    id that names one is refused as unknown, and its findings as v1 refuses a finding that
    cites an exemption, in v1's words; so is a listed instance that names an exemption. No
    new rule between an item's answer and its findings is added.
@@ -201,6 +205,10 @@ Nesting moves the citation from the judge to the checklist, and the read-back ke
 verdict v1's.
 
 ## Consequences
+
+- **Amended with v3:** `check` is 1.9.0, for the value `v3`, the evidence items a tool file's
+  regions add and the hints given it, so every key of the decision cache made by 1.8.0
+  misses.
 
 - A run's arguments now hold `submission`, so every key of the decision cache made by 1.7.0
   misses, as any version change of `check` makes it do.
