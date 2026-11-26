@@ -520,7 +520,7 @@ reported in its pull request. Every test that calls a provider or a real model i
     alone (`gate.rs`) and the paired scorer gives no interval of a catch-rate difference
     (`metrics.rs`). `gate::a_catch_rate_gate_resamples_the_families_with_a_failure`.
 
-- [ ] Done when: both pull requests are merged and their tests pass. **Reviewer reads
+- [x] Done when: both pull requests are merged and their tests pass. **Reviewer reads
   hardest:** that a version 2 gate and a matrix without lists score exactly as before; that a
   gate cannot read a cell outside its two arms or sets.
 

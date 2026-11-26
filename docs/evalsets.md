@@ -61,8 +61,10 @@ items are judged under.
   repository is (`<dir>/<set id>/<path>`), by the same pins, and nothing is fetched.
 - `whizbang eval matrix --matrix <file> --store <dir> --config <file>` runs a matrix (below).
 - `whizbang eval judges --matrix <file> [--matrix <file> ...] --store <dir> --labels <dir>
-  --mode judges|arms [--arm <arm>] [--rule judge-pick/1|submission/1] --out <file>` scores
-  the runs matrices made ("Scoring judges", below).
+  --mode judges|arms [--arm <arm>] [--rule judge-pick/1|judge-pick/2|submission/1|submission/2]
+  [--set <id> ...] --out <file>` scores the runs matrices made ("Scoring judges", below).
+- `whizbang eval admitted [--receipts gates]` lists what the receipts of the gates admitted
+  ("Several gates on one matrix", below).
 
 ## Building a set
 
@@ -209,6 +211,21 @@ arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]
 Arm `C` may take the second look (`C;second_look=on`), which is one more turn after a
 submission that left an item tentative, forecast at three times arm C; details stay arm F's.
 
+An arm may freeze a tool file's method: `C+regions@eomt`, or `{ arm = "C", tools = [{ tool =
+"regions", method = "eomt" }] }`, in its identity; `check` gives every call of that tool the
+method, and refuses a judge's call that names another.
+
+`eval matrix --past-forecast` prints the forecast of the cells still to run and runs anyway:
+each run is admitted against the store's allowance as any run is, the first the allowance
+refuses ends the matrix with the cells left named by count, and the matrix run again after a
+new allowance resumes. A resumed matrix or gate never runs a failed cell again (ADR 0052): a
+failure counts as an error.
+
+**Held-out sets.** `--held-out` on `eval sets check`, `eval sets fetch`, `eval matrix`, `eval
+run --gate` and `eval judges` makes every refusal name only the set's id, an item's place in
+the set (from 1, never its id) and the kind of problem: no path, no parser's text, no job's
+text.
+
 `matrices/` holds squint's study matrices, ported, with the models of the Google and OpenAI
 judges named, the matrix of E1's evidence, and the matrix of plan e1's format round
 (`e-submission.toml`: v1 against v2 under arm C, each arm naming its format).
@@ -239,8 +256,21 @@ file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix inst
   label differs between them is counted in the receipt (`relabelled`) and scored under
   neither version's truth.
 - **Hypotheses.** Each gate's `[confidence] hypotheses` is the count over every gate the
-  matrix names, one for each judge a gate compares. Its `[repetitions] count` is the most of
-  any cell it reads.
+  matrix names, one for each judge a gate compares. A matrix may state the round's whole
+  count at its top, `hypotheses = 21`, in its identity: at least its gates' comparisons, with
+  room for the judge's rule beside them; every gate then corrects for that count and
+  resamples as it needs, the larger of 20,000 and 20 × 2 × H ÷ 0.05 rounded up to a thousand
+  (each tail at least 20 draws). Its `[repetitions] count` is the most of any cell it reads.
+- **A catch-rate gate.** `[measure] primary = "catch_rate"` gates on the gain in the share of
+  expected failures caught, resampled over the families with at least one; with
+  `[repetitions] combine = "mean"` each item's catch is its mean over the repetitions. The
+  guardrails are read as the file states them, on repetition 1.
+- **What it admits.** A gate may state `[admits]`: `rung` (3 or 4), `kind` (`tool`,
+  `use_case`, `format`, `wording` or `judge`) and `name`. Its receipt holds it, the split of
+  each set it read and the day its last cell ended. `whizbang eval admitted [--receipts
+  gates]` lists each thing a receipt admitted: an admitted outcome of a rung 4 gate whose sets
+  are all `blind` or `heldout`, with the receipt's digest and date. A rung 3 gate, or one on a
+  dev or exposed set, admits nothing.
 - **Running and scoring.** `whizbang eval matrix` runs the cells, and refuses before anything
   runs when a gate file the matrix names is missing, is not the bytes its digest names, does
   not name the matrix back, or does not hold (its arms, its count, its repetitions).
@@ -304,6 +334,16 @@ in code. It reads the store only, and never runs or sends anything.
   judge's balanced accuracy falls, nor its false-reject or false-accept rate rises, by more
   than 2 points. The treatment is adopted when (a), (b) and (c) hold; the record names the
   clause that settled it.
+- **`judge-pick/2`** (plan mE, task M1, item 6): `judge-pick/1`'s clauses at the level the
+  matrix's correction gives (the matrix states `hypotheses`, at least its gates' comparisons
+  and one for each judge of the arm), at the resamples that count needs; inconclusive below
+  20 families, or with a tail the resamples cannot resolve.
+- **`submission/2`** (task M1, item 5): `submission/1`'s clauses over the items each judge
+  scored under both arms; (a) pooled over the judges, (b) and (c) for each, (c) read on the
+  family-resampled 95% interval of each change at its bound toward harm (balanced
+  accuracy's lower, the rates' upper).
+- **`--set <id>`**, repeatable: only those sets are scored, and completeness is over the cells
+  the matrices name for them.
 - **What it writes** (`judges/1`, TOML): per judge, arm and scope the measures with counts
   beside each rate and intervals for balanced accuracy and decided correctly; the comparisons;
   the rule's outcome; the matrices' names and identities; each set's split and the SHA-256 of
