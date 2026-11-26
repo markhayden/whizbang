@@ -1813,6 +1813,20 @@ P1 ──────────────────┘
 5. **I need a yes or no: may the study's results by kind of failure be published?** The kinds
    are your private grouping of `blind-v3`.
 
+**The owner's answers (2026-11-25).**
+1. Yes. The orchestrator makes E's store before O1.2 and gives the owner the reset command;
+   the figure is the owner's to confirm then (55.5, or, with item 2's yes, one reset to what
+   is left of 145 less the builder's 8).
+2. Yes: E may spend up to 145 dollars in all, so tier 2 runs and neither cut of "Spend" is
+   made. With it, the owner's condition: **every paid round and every paid walkthrough runs one
+   at a time on the owner's go**, after the orchestrator has said what it reads, what it is
+   expected to cost and its cap, and its result is brought to the owner before the next starts.
+   No round is run back to back with another, or by a script that runs several.
+3. Yes. `SPEC.md` row E gains the sentence A0 left out.
+4. Yes: the fresh set is used once, in R4, for the hypotheses its gate files state.
+5. Not decided. Until the owner says yes, the results by kind of failure stay unpublished;
+   the orchestrator asks again after E's last round, since R3 reads `blind-v3`.
+
 ## Review rounds
 
 ### Review round 1
