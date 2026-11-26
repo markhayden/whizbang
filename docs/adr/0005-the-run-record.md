@@ -659,7 +659,7 @@ kept beside it. The words are those `whizbang eval loop score` and
 `scripts/loop-evidence.py` read an older record's sentences as, so a count by word and a
 count by sentence agree. Its schema is `crates/whizbang-core/schemas/run-8.json`.
 
-A loop says the word with its sentence (`RunFacts::attempts_ended`), and only a loop that
+A loop says the word with its sentence (`RunFacts::attempts_ended_as`), and only a loop that
 said it has one: a record holds `reason` in `run/8` alone, and a `run/8` record holds it.
 A loop stopped before it said why its attempts ended has no word, and its record is
 written as before, with the sentence of `ATTEMPTS_NOT_ENDED`. The rule of the versions
@@ -667,7 +667,11 @@ before it holds: a record without the word is written in the oldest version that
 all of it, byte for byte as before, so this build reads `run/8` and every version before
 it, and a store written before it reads as it did. A build before this one refuses a
 `run/8` record as another version, and reads every other run of the same store.
-`runs stats` counts a `run/8` record by its word and an older one by its sentence.
+`runs stats` counts a `run/8` record by its word and an older one by the word its sentence
+reads as (`loop_score::reason_of`), or by the sentence where it reads as none. An offline
+replay compares the word only where the original holds one, so a loop run recorded
+before `run/8` replays as reproduced
+(`record::a_loop_run_recorded_before_run_8_replays_as_reproduced`; ADR 0049).
 
 Test: `record::run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_they_did`.
 

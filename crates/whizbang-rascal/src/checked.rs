@@ -1511,10 +1511,10 @@ impl<'a> Looping<'a> {
         // A run cancelled by now commits nothing, and its record then says that no
         // attempt was kept, whatever is said here: the record holds that of every run
         // that does not complete.
-        context.facts().attempts_ended(
+        context.facts().attempts_ended_as(
             Some(best.number),
             &line(&ended, ATTEMPT_TEXT_LIMIT),
-            Some(reason),
+            reason,
         );
         let limits = DecodeLimits::default();
         let read = |artifact_type: ArtifactType, id: ArtifactId| {

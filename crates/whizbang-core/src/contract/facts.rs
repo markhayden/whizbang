@@ -209,18 +209,19 @@ impl RunFacts {
     }
 
     /// Notes which of a loop's attempts was kept, by its number, and why the attempts
-    /// ended, in one line with the executor's secrets taken out (`run/6`), and as a word
-    /// of a closed set when one is given (`run/8`). False, and nothing is noted: when it
-    /// was said already, when a record would not hold it, and when the run's end has
-    /// begun.
-    pub fn attempts_ended(
-        &self,
-        kept: Option<u32>,
-        why: &str,
-        reason: Option<AttemptsEnded>,
-    ) -> bool {
+    /// ended, in one line with the executor's secrets taken out (`run/6`). False, and
+    /// nothing is noted: when it was said already, when a record would not hold it,
+    /// and when the run's end has begun.
+    pub fn attempts_ended(&self, kept: Option<u32>, why: &str) -> bool {
         let why = self.shared.secrets.redact(why);
-        self.note(|facts| facts.attempts_ended(kept, why, reason))
+        self.note(|facts| facts.attempts_ended(kept, why, None))
+    }
+
+    /// The same, with why the attempts ended also as a word of a closed set, which makes
+    /// the record `run/8` (ADR 0005, "run/8").
+    pub fn attempts_ended_as(&self, kept: Option<u32>, why: &str, reason: AttemptsEnded) -> bool {
+        let why = self.shared.secrets.redact(why);
+        self.note(|facts| facts.attempts_ended(kept, why, Some(reason)))
     }
 
     /// Notes what one paid request of the run cost, in whatever order requests are

@@ -2121,7 +2121,7 @@ fn a_run_that_did_not_complete_never_says_an_attempt_was_kept() {
         fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
             let facts = context.facts();
             assert!(facts.attempt(Attempt::judged(1, Decision::Fail)));
-            assert!(facts.attempts_ended(Some(1), "the last attempt the plan allows", None));
+            assert!(facts.attempts_ended(Some(1), "the last attempt the plan allows"));
             match self.1 {
                 "completes" => Ok(Produced::nothing()),
                 "fails" => Err(Failure::error(
@@ -2216,9 +2216,9 @@ fn run_6_holds_a_plan_a_start_findings_and_a_loops_attempts() {
             let third = Attempt::unchecked(3, "the check ended in an error");
             assert!(facts.attempt(third.changed(Changed::Located { crops })));
             // The attempt kept is one of them; the end is said once, and ends the list.
-            assert!(!facts.attempts_ended(Some(4), "the last attempt the plan allows", None));
-            assert!(facts.attempts_ended(Some(2), "the last attempt the plan allows", None));
-            assert!(!facts.attempts_ended(Some(1), "again", None));
+            assert!(!facts.attempts_ended(Some(4), "the last attempt the plan allows"));
+            assert!(facts.attempts_ended(Some(2), "the last attempt the plan allows"));
+            assert!(!facts.attempts_ended(Some(1), "again"));
             assert!(!facts.attempt(Attempt::judged(4, Decision::Pass)));
             Ok(Produced::nothing().with_findings(super::findings::document()))
         }
@@ -2586,6 +2586,27 @@ fn run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_th
     // Writing it: a loop that says the word is `run/8`
     // (`record::a_loops_record_lists_each_attempt…` of the binary's tests); one that
     // does not is written as before (`run_6_holds_a_plan_a_start_findings_and_a_loops_attempts`).
+}
+
+/// A loop run recorded before the word replays as reproduced: the replay, written by
+/// this build, holds the word, and it is compared only where the original holds one.
+/// Between two records that both hold it, another word is a difference.
+#[test]
+fn a_loop_run_recorded_before_run_8_replays_as_reproduced() {
+    use whizbang_core::contract::replay::{Placed, report};
+    let placed = |text: &str| Placed {
+        place: "0".to_owned(),
+        record: RunRecord::from_bytes(text.as_bytes()).unwrap(),
+        kept: Default::default(),
+    };
+    let (older, newer) = (placed(&of_run_6()), placed(&of_run_8()));
+    let said = |was: &Placed, now: &Placed| {
+        report(std::slice::from_ref(was), std::slice::from_ref(now), None).name()
+    };
+    assert_eq!(said(&older, &newer), "reproduced");
+    assert_eq!(said(&newer, &newer), "reproduced");
+    let other = of_run_8().replacen("last_attempt_of_the_plan", "passed", 1);
+    assert_eq!(said(&newer, &placed(&other)), "differs");
 }
 
 // --- run/7: a model's card and the run replayed (plan m7, task B1, item 6; ADR 0048) -----------
