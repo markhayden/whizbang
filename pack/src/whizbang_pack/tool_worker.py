@@ -18,8 +18,11 @@ process's privileges: it is given no key and no home of the user's (whizbang cle
 environment), but it is not kept from the network or the disk.
 
 **What a tool reaches.** Its `run(context)` is given a `Context`: the run's arguments,
-the images it declared, and `segment`, which asks whizbang for the capability and waits
-for its answer. Whizbang answers it as a nested call of the tool's run.
+the images it declared, `segment`, which asks whizbang for the capability and waits for
+its answer, and `labels`, which asks a fixed-class segmenter for the classes of every pixel
+(plan mE, task T2; ADR 0052). Either may name a model of the catalogue, `model=`, which
+whizbang routes to the segment backend of its config that is that model. Whizbang answers
+each as a nested call of the tool's run.
 
 **How it ends.** Whizbang starts it as the leader of a process group of its own. At the
 end of its input, at its lifetime, and at a frame it refuses, it ends every process of
@@ -52,6 +55,8 @@ NAME_LIMIT = 64
 ASKS_LIMIT = 64
 INSTANCES_LIMIT = 64
 PHRASE_LIMIT = 512
+CLASSES_LIMIT = 255
+MODEL_LIMIT = 64
 # The most bytes of a result's header: the output, and room for the rest.
 OUTPUT_LIMIT = HEADER_LIMIT - 1024
 
@@ -179,6 +184,38 @@ class Instance:
         self.mask = mask
 
 
+class Labels:
+    """A picture's labels: its size, the classes some pixel has, each `(name, confidence)`,
+    and one byte for each pixel, row by row: 0 where no class asked labels it, and `k` where
+    the `k`th of `classes` does."""
+
+    def __init__(self, width, height, classes, plane):
+        self.width = width
+        self.height = height
+        self.classes = classes
+        self.plane = plane
+
+    def name_at(self, x, y):
+        """The class of the pixel at `x`, `y`, or `None`."""
+        k = self.plane[y * self.width + x]
+        return self.classes[k - 1][0] if k else None
+
+
+def _model(model):
+    """A model's name as an ask gives one, or `None`; `ValueError` for any other."""
+    if model is None:
+        return None
+    model = str(model)
+    named = (
+        1 <= len(model) <= MODEL_LIMIT
+        and "a" <= model[0] <= "z"
+        and all("a" <= c <= "z" or "0" <= c <= "9" or c in "-_" for c in model)
+    )
+    if not named:
+        raise ValueError("a model is named by 1 to %d lower-case letters, digits, - and _" % MODEL_LIMIT)
+    return model
+
+
 class Context:
     """What a tool's `run` is given: its arguments, its images, and the capabilities it
     may ask whizbang for. Each ask waits for whizbang's answer."""
@@ -197,9 +234,10 @@ class Context:
             raise KeyError("the tool declared no image " + clean(name, NAME_LIMIT))
         return self.images[name]
 
-    def segment(self, image, phrase=None, point=None, box=None, most=4):
+    def segment(self, image, phrase=None, point=None, box=None, most=4, model=None):
         """The instances whizbang's segmenter finds in the image of this name for one
-        query: a phrase, a point `(x, y)` or a box `(left, top, right, bottom)` in pixels.
+        query: a phrase, a point `(x, y)` or a box `(left, top, right, bottom)` in pixels;
+        of the default segmenter, or of the model of the catalogue `model` names.
         `CapabilityRefused` when whizbang refuses or the call does not complete."""
         given = [(kind, value) for kind, value in (("phrase", phrase), ("point", point), ("box", box)) if value is not None]
         if len(given) != 1:
@@ -214,16 +252,39 @@ class Context:
         self.image(image)
         if type(most) is not int or not 1 <= most <= INSTANCES_LIMIT:
             raise ValueError("most is a whole number from 1 to %d" % INSTANCES_LIMIT)
+        ask = {"capability": "segment", "image": image, "query": {kind: value}, "most": most}
+        header, payloads = self._ask(ask, _model(model))
+        return _instances(header, payloads)
+
+    def labels(self, image, classes, model=None):
+        """The labels a fixed-class segmenter gives every pixel of the image of this name:
+        of the classes asked, 1 to 255 phrases, each one of the segmenter's own; of the
+        default segmenter, or of the model of the catalogue `model` names. `Labels`;
+        `CapabilityRefused` when whizbang refuses, the segmenter labels nothing so, or the
+        call does not complete."""
+        classes = [str(name) for name in classes]
+        if not 1 <= len(classes) <= CLASSES_LIMIT or len(set(classes)) != len(classes):
+            raise ValueError("classes are 1 to %d phrases, none twice" % CLASSES_LIMIT)
+        if any(not 1 <= len(name) <= PHRASE_LIMIT or "\n" in name for name in classes):
+            raise ValueError("a class is 1 to %d characters of one line" % PHRASE_LIMIT)
+        self.image(image)
+        header, payloads = self._ask({"capability": "labels", "image": image, "classes": classes}, _model(model))
+        return _labels(header, payloads, len(classes))
+
+    def _ask(self, asked, model):
+        """Sends an ask and waits for its answer: the answer's header and payloads."""
         with self._lock:
             if self._asked >= ASKS_LIMIT:
                 raise CapabilityRefused("a run asks at most %d times" % ASKS_LIMIT)
             self._asked += 1
             number = self._asked
-        ask = {"type": "ask", "id": self._id, "ask": number, "capability": "segment", "image": image, "query": {kind: value}, "most": most}
+        ask = dict(asked, type="ask", id=self._id, ask=number)
+        if model is not None:
+            ask["model"] = model
         header, payloads = self._worker.ask(self._id, number, ask)
         if header["type"] == "refused":
             raise CapabilityRefused(clean(header.get("sentence", ""), SENTENCE_LIMIT))
-        return _instances(header, payloads)
+        return header, payloads
 
 
 def _instances(header, payloads):
@@ -240,6 +301,19 @@ def _instances(header, payloads):
         score = entry.get("score")
         made.append(Instance(None if score is None else float(score), [float(n) for n in entry["box"]], width, height, mask))
     return made
+
+
+def _labels(header, payloads, asked):
+    width, height = header.get("width"), header.get("height")
+    listed = header.get("labels")
+    if type(width) is not int or type(height) is not int or not isinstance(listed, list):
+        raise Refused("an answer gives no size or no labels")
+    if len(payloads) != 1 or len(payloads[0]) != width * height or len(listed) > asked:
+        raise Refused("an answer's labels are not one plane of its image")
+    classes = [(str(entry["name"]), float(entry["score"])) for entry in listed]
+    if any(k > len(classes) for k in payloads[0]):
+        raise Refused("a pixel's label names no class of the answer")
+    return Labels(width, height, classes, payloads[0])
 
 
 def compiled(code, digest):

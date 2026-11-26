@@ -39,7 +39,11 @@
 //!
 //! **A capability a tool asks for** comes as an `ask` and is answered by the caller's
 //! `answer`, which makes it a nested call of the tool's run (ADR 0008), under the run's
-//! allowance and policy. One is open at a time: an `ask` heard while another is being
+//! allowance and policy. Two capabilities: `segment`, one query of a picture, answered
+//! with masks; and `labels` (plan mE, task T2; ADR 0052), the classes a fixed-class
+//! segmenter labels a picture's pixels with, answered with one plane of each pixel's class
+//! and each class's confidence. Either may name a model of the catalogue, which the caller
+//! routes to. One is open at a time: an `ask` heard while another is being
 //! answered is refused, and a run asks at most [`ASKS_LIMIT`] times. The worker's frames
 //! carry no payload: a header of at most [`HEADER_LIMIT`] bytes is all whizbang reads.
 
@@ -72,8 +76,13 @@ pub const IMAGES_LIMIT: usize = 8;
 pub const ASKS_LIMIT: u64 = 64;
 /// The most instances a tool asks one query for.
 pub const MOST_LIMIT: u64 = 64;
-/// The most characters of a phrase a tool asks for.
+/// The most characters of a phrase a tool asks for, and of a class.
 pub const PHRASE_LIMIT: usize = 512;
+/// The most classes a tool asks labels of: what one byte of a pixel tells apart, beside
+/// none.
+pub const CLASSES_LIMIT: usize = 255;
+/// The most characters of a model's name an ask gives.
+pub const MODEL_LIMIT: usize = 64;
 /// The most characters of a sentence a worker's `error` gives that are kept.
 pub const SENTENCE_LIMIT: usize = 240;
 /// How long a tool worker has to start and say hello.
@@ -115,21 +124,52 @@ pub struct ToolImage {
     pub rgba: Vec<u8>,
 }
 
-/// What a tool asked one query of.
+/// What a tool asked: one query of `segment`, or the classes of `labels`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Sought {
     Phrase(String),
     Point([f64; 2]),
     Box([f64; 4]),
+    /// The pixels a fixed-class segmenter labels with each of these classes, 1 to
+    /// [`CLASSES_LIMIT`], each a phrase.
+    Labels(Vec<String>),
 }
 
-/// A capability a tool asked for: `segment`, the only one at this version, on the image
-/// of this name, for one query, at most `most` instances.
+/// A capability a tool asked for, on the image of this name: `segment`, one query, at
+/// most `most` instances; or `labels`, its classes, `most` then 1. `model` is the model of
+/// the catalogue the tool named, when it named one: a name of 1 to [`MODEL_LIMIT`]
+/// lower-case letters, digits, `-` and `_`, starting with a letter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Asked {
     pub image: String,
     pub sought: Sought,
     pub most: u32,
+    pub model: Option<String>,
+}
+
+/// What answers a `labels` ask: the image's size, the classes some pixel has with each
+/// one's confidence, and one byte for each pixel, row by row: 0 where no class asked
+/// labels it, and `k` where the `k`th of `classes` does.
+#[derive(Clone, PartialEq)]
+pub struct Labelled {
+    pub width: u32,
+    pub height: u32,
+    pub classes: Vec<(String, f64)>,
+    pub plane: Vec<u8>,
+}
+
+/// What the caller answers an ask with: masks, for `segment`; a picture's labels, for
+/// `labels`.
+#[derive(Clone, PartialEq)]
+pub enum Answered {
+    Masks(Vec<Mask>),
+    Labels(Labelled),
+}
+
+impl From<Vec<Mask>> for Answered {
+    fn from(masks: Vec<Mask>) -> Answered {
+        Answered::Masks(masks)
+    }
 }
 
 /// One instance that answers an ask: its score, its box in pixels, and its mask on the
@@ -484,12 +524,12 @@ impl ToolWorker {
     }
 
     /// Runs a tool: its output, or why there is none. Each ask is handed to `answer`,
-    /// whose masks, or whose refusal, go back to the tool.
+    /// whose masks or labels, or whose refusal, go back to the tool.
     pub fn run(
         &mut self,
         run: ToolRun,
         limits: &ToolLimits<'_>,
-        answer: &mut dyn FnMut(&Asked) -> Result<Vec<Mask>, String>,
+        answer: &mut dyn FnMut(&Asked) -> Result<Answered, String>,
     ) -> Result<Json, ToolFault> {
         let ended_before = |clock: &dyn Clock| {
             if limits.cancellation.is_cancelled() {
@@ -539,7 +579,7 @@ impl ToolWorker {
         payloads: Vec<Vec<u8>>,
         names: &[String],
         limits: &ToolLimits<'_>,
-        answer: &mut dyn FnMut(&Asked) -> Result<Vec<Mask>, String>,
+        answer: &mut dyn FnMut(&Asked) -> Result<Answered, String>,
     ) -> Result<Json, ToolFault> {
         let broke = |why: &str| ToolFault::Unavailable(format!("broke tool/1: {why}"));
         send(running, &header, payloads).map_err(|why| ToolFault::Unavailable(why.to_owned()))?;
@@ -770,12 +810,8 @@ fn run_frame(run: &ToolRun, number: u64) -> Result<(Json, Vec<Vec<u8>>), ToolFau
     Ok((header, payloads))
 }
 
-/// The answer to an ask: its masks, or its refusal.
-fn answer_frame(
-    id: &str,
-    number: u64,
-    answered: Result<Vec<Mask>, String>,
-) -> (Json, Vec<Vec<u8>>) {
+/// The answer to an ask: its masks, its labels, or its refusal.
+fn answer_frame(id: &str, number: u64, answered: Result<Answered, String>) -> (Json, Vec<Vec<u8>>) {
     let refused = |why: &str| {
         let sentence = clean(why, SENTENCE_LIMIT);
         (
@@ -784,7 +820,26 @@ fn answer_frame(
         )
     };
     let masks = match answered {
-        Ok(masks) => masks,
+        Ok(Answered::Masks(masks)) => masks,
+        Ok(Answered::Labels(labelled)) => {
+            let fits = labelled.plane.len() as u64
+                == u64::from(labelled.width) * u64::from(labelled.height)
+                && labelled.classes.len() <= CLASSES_LIMIT
+                && (labelled.plane.iter()).all(|k| usize::from(*k) <= labelled.classes.len())
+                && labelled
+                    .classes
+                    .iter()
+                    .all(|(_, score)| (0.0..=1.0).contains(score));
+            if !fits {
+                return refused("the labels found are not of one image's size and its classes");
+            }
+            let classes: Vec<Json> = (labelled.classes.iter())
+                .map(|(name, score)| json!({"name": name, "score": score}))
+                .collect();
+            let header = json!({"type": "answer", "id": id, "ask": number,
+                "width": labelled.width, "height": labelled.height, "labels": classes});
+            return (header, vec![labelled.plane]);
+        }
         Err(why) => return refused(&why),
     };
     let (width, height) = masks.first().map_or((0, 0), |m| (m.width, m.height));
@@ -813,25 +868,74 @@ fn exactly(frame: &Map<String, Json>, fields: &[&str]) -> Result<(), &'static st
     }
 }
 
-/// An ask, held to `tool/1`: its number, and what it asks.
+/// An ask, held to `tool/1`: its number, and what it asks. A `segment` holds its `query`
+/// and its `most`; a `labels` its `classes`; either may hold `model`.
 fn asked_of(frame: &Map<String, Json>, names: &[String]) -> Result<(u64, Asked), &'static str> {
-    exactly(
-        frame,
-        &["type", "id", "ask", "capability", "image", "query", "most"],
-    )?;
+    let labels = match frame.get("capability").and_then(Json::as_str) {
+        Some("segment") => false,
+        Some("labels") => true,
+        _ => return Err("an ask is of a capability a tool cannot ask for"),
+    };
+    let mut fields = vec!["type", "id", "ask", "capability", "image"];
+    fields.extend(if labels {
+        &["classes"][..]
+    } else {
+        &["query", "most"][..]
+    });
+    if frame.contains_key("model") {
+        fields.push("model");
+    }
+    exactly(frame, &fields)?;
     let number = frame
         .get("ask")
         .and_then(Json::as_u64)
         .ok_or("an ask has no number")?;
-    if frame.get("capability") != Some(&json!("segment")) {
-        return Err("an ask is of a capability a tool cannot ask for");
-    }
+    let model = match frame.get("model") {
+        None => None,
+        Some(model) => {
+            let model = model.as_str().ok_or("an ask's model is no text")?;
+            let named = model.len() <= MODEL_LIMIT
+                && model.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+                && (model.bytes()).all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
+                });
+            if !named {
+                return Err("an ask's model is not a model's name");
+            }
+            Some(model.to_owned())
+        }
+    };
     let image = frame
         .get("image")
         .and_then(Json::as_str)
         .ok_or("an ask names no image")?;
     if !names.iter().any(|name| name == image) {
         return Err("an ask names an image the run did not hand its tool");
+    }
+    if labels {
+        let listed = (frame.get("classes").and_then(Json::as_array))
+            .ok_or("an ask's classes are no list")?;
+        if listed.is_empty() || listed.len() > CLASSES_LIMIT {
+            return Err("an ask's classes are 1 to 255");
+        }
+        let mut classes: Vec<String> = Vec::new();
+        for class in listed {
+            let text = class.as_str().ok_or("a class is no text")?;
+            if text.is_empty() || text.chars().count() > PHRASE_LIMIT || text.contains('\n') {
+                return Err("a class is 1 to 512 characters of one line");
+            }
+            if classes.iter().any(|given| given == text) {
+                return Err("a class is asked twice");
+            }
+            classes.push(text.to_owned());
+        }
+        let asked = Asked {
+            image: image.to_owned(),
+            sought: Sought::Labels(classes),
+            most: 1,
+            model,
+        };
+        return Ok((number, asked));
     }
     let most = frame
         .get("most")
@@ -873,6 +977,7 @@ fn asked_of(frame: &Map<String, Json>, names: &[String]) -> Result<(u64, Asked),
         image: image.to_owned(),
         sought,
         most: most as u32,
+        model,
     };
     Ok((number, asked))
 }

@@ -11,11 +11,12 @@
 # It refuses, before it builds or starts anything, unless the local environment names the
 # models directory: WHIZBANG_MODELS_DIR, an absolute path to a folder that holds the model
 # installed by `whizbang models get sam3` and the pack installed by `whizbang setup --extra
-# torch`, and `tiny` by `whizbang models get tiny` (plan 1D, task T1). Set it where it
-# lasts, as AGENTS.md says of the word list.
+# torch`, `tiny` by `whizbang models get tiny` (plan 1D, task T1), and `eomt-ade20k` by
+# `whizbang models get eomt-ade20k` (plan mE, task T2). Set it where it lasts, as AGENTS.md
+# says of the word list.
 #
-# One argument may name a part of the tier: `model_tier` (the tests of SAM 3's and Tiny's
-# requests, which scripts/model-evidence.sh runs), `parity` (the parity fixtures on the GPU and
+# One argument may name a part of the tier: `model_tier` (the tests of SAM 3's, Tiny's and
+# the fixed-class segmenter's requests, which scripts/model-evidence.sh runs), `parity` (the parity fixtures on the GPU and
 # the CPU, plan 1D, task V1) or `coverage` (the timings of plan 1D, task V1); with none, all
 # three run. Any other argument is refused before anything runs.
 #
@@ -163,7 +164,7 @@ fi
 shared=$target/tmp/model-tier
 mkdir -p "$shared/out"
 rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt" "$shared/out/tiny.txt" \
-  "$shared/out/parity.txt" "$shared/out/coverage.txt"
+  "$shared/out/eomt.txt" "$shared/out/parity.txt" "$shared/out/coverage.txt"
 printf '%s\n' "$dir" >"$shared/models-dir"
 
 cd "$root"

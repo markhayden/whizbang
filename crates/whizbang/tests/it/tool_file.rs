@@ -631,3 +631,120 @@ fn the_rules_hints_are_given_to_a_tool_as_the_arguments_of_text_it_declares() {
     assert!(hinted_arguments(&declared("per_subject", &["phrases"]), &hints).is_empty());
     assert!(hinted_arguments(&declared("regions", &["preserve"]), &Hints::default()).is_empty());
 }
+
+// --- a model by name, and labels (plan mE, task T2, item 2) --------------------------------
+
+/// A kind named `labelling` whose fake is a fixed-class segmenter: it declares `phrase` and
+/// `labels`, and labels the top 200 rows of the fixture `sky` and the 280 below `floor`.
+/// It is a remote backend's kind, as [`Finding`] is (a local one is a model of the
+/// catalogue, installed), at an address of the reserved `.example` domain, which nothing
+/// contacts, and states the same price.
+struct Labelling;
+
+impl Kind for Labelling {
+    fn name(&self) -> &str {
+        "labelling"
+    }
+
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
+        let model = ModelIdentity::new("labelling", "eomt-ade20k", "1");
+        let address = table.backend().address().expect("a url");
+        let declaration = Declared::new(model, &[feature::PHRASE, feature::LABELS])
+            .unwrap()
+            .sending_to(whizbang_core::egress::Recipient::new(
+                address.origin().clone(),
+            ))
+            .priced(whizbang_core::capability::Price::at_most(1000.0).unwrap());
+        let fake = FakeSegmenter::new()
+            .declared_as(declaration)
+            .finding("sky", [0, 0, 640, 200])
+            .finding("floor", [0, 200, 640, 480]);
+        Ok(Made::Segment(Arc::new(fake)))
+    }
+}
+
+/// The config of the routing test: the default, the test's `finding`; `eomt`, the
+/// fixed-class fake, whose model is `eomt-ade20k`; and `sam`, of `finding` again, whose
+/// model is `sam3` and which declares no `labels`.
+const ROUTED: &str = "[backends.segment]\ndefault = \"finding\"\n\n\
+     [backends.segment.finding]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
+     [backends.segment.eomt]\nkind = \"labelling\"\nurl = \"https://labels.example.org/v1\"\nmodel = \"eomt-ade20k\"\n\n\
+     [backends.segment.sam]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\nmodel = \"sam3\"\n\n\
+     [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n\n\
+     [egress.recipients.labels]\norigin = \"https://labels.example.org\"\nclasses = [\"prompts\"]\n";
+
+/// A tool that asks the labels of its source of the model its argument `phrase` names,
+/// and a segment of `sky` of it, and reports what it was answered as its subject.
+const LABELLED: &str = r#"from whizbang_pack.tool_worker import CapabilityRefused
+def run(context):
+    model = context.arguments.get('phrase')
+    try:
+        found = context.labels('source', ['sky', 'floor', 'wall'], model=model)
+        counts = {name: found.plane.count(k + 1) for k, (name, _) in enumerate(found.classes)}
+        said = 'labels %dx%d %s; at 0,0 %s; at 0,479 %s' % (found.width, found.height, sorted(counts.items()), found.name_at(0, 0), found.name_at(0, 479))
+        said += '; sky %d' % len(context.segment('source', phrase='sky', model=model))
+    except CapabilityRefused as refused:
+        said = 'refused: ' + refused.sentence
+    return {'readings': [{'subject': said[:200], 'values': {'covered': 0.0}}]}
+"#;
+
+#[test]
+fn a_tool_asks_a_model_by_name_and_reads_each_pixels_class() {
+    let dir = Scratch::new("tool-file-labels");
+    let (root, image) = with_picture(&dir);
+    // It declares segments enough for its asks, which its admission reserves.
+    let text = tool_text("labelled", BOUNDS, LABELLED).replace(
+        "# time_limit_s = 20\n",
+        "# time_limit_s = 20\n# segments_most = 16\n",
+    );
+    let path = write_tool(dir.path(), "labelled.py", &text);
+    let config = dir.path().join("whizbang.toml");
+    let text = format!("{ROUTED}\n[tools]\npaths = [\"{}\"]\n", path.display());
+    std::fs::write(&config, text).unwrap();
+    let worker = guarded_tools();
+    let mut kinds = wiring::kinds(&worker);
+    kinds.register(Arc::new(Finding(None))).unwrap();
+    kinds.register(Arc::new(Labelling)).unwrap();
+    let over = Over::nothing()
+        .config(Some(&config))
+        .kinds(kinds)
+        .pack((*worker).clone());
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let registry = wiring::registry_over(&over, false).unwrap();
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    // The routing: a model is its backend's, the default first when it is that model.
+    let files = over.tool_files().unwrap().unwrap();
+    assert_eq!(files.backend_for("eomt-ade20k").unwrap(), "eomt");
+    assert_eq!(files.backend_for("sam3").unwrap(), "sam");
+    let id = whizbang_core::artifact::ArtifactId(image.parse().unwrap());
+    let said = |model: &str| {
+        let call = Call::new("labelled")
+            .input("source", id)
+            .input("candidate", id)
+            .argument("phrase", Value::text(model));
+        let (run, outcome) = ran(&executor, &call);
+        assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+        let report = whizbang::door::diagnostic(&root, &run, REPORT).unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+        report["readings"][0]["subject"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    // Named, the fixed-class model labels every pixel: the classes some pixel has, a plane
+    // of the picture's size, each pixel's class; and its phrase is a class.
+    assert_eq!(
+        said("eomt-ade20k"),
+        "labels 640x480 [('floor', 179200), ('sky', 128000)]; at 0,0 sky; at 0,479 floor; sky 1"
+    );
+    // A model no backend of the config is, and one whose backend declares no labels, are
+    // refused to the tool, which goes on.
+    let none = said("tiny");
+    assert!(
+        none.starts_with("refused: the tool asked for the model tiny"),
+        "{none}"
+    );
+    let plain = said("sam3");
+    assert!(plain.starts_with("refused: labels was refused"), "{plain}");
+    assert!(plain.contains("labels"), "{plain}");
+}

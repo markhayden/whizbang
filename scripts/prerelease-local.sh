@@ -9,7 +9,8 @@
 # It needs, in the environment: WHIZBANG_ENV_FILE, the path of the env file that holds the
 # providers' keys, which this script never opens and hands to the installed binary by
 # name (`--env-file`); and WHIZBANG_MODELS_DIR, the models directory that holds SAM 3
-# (`whizbang models get sam3`), as `just test-models` needs it. And on the path: git, gh,
+# (`whizbang models get sam3`), Tiny and the fixed-class segmenter, as `just test-models`
+# needs it. And on the path: git, gh,
 # jq, perl, and the `uv` and the Python `whizbang setup` needs.
 #
 # It keeps two things apart, and the receipt names them so.

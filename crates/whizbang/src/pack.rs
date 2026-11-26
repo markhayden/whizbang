@@ -84,7 +84,7 @@ use whizbang_backends::models::{
 };
 use whizbang_backends::pack::proto::{self, Answer, Ask, Scalar};
 use whizbang_backends::pack::queue::{Request, Sent, Status, Supervisor};
-use whizbang_backends::pack::tool::{Asked, Mask, ToolFault, ToolLimits, ToolRun};
+use whizbang_backends::pack::tool::{Answered, Asked, ToolFault, ToolLimits, ToolRun};
 use whizbang_backends::pack::worker::CALL_LIMIT;
 use whizbang_backends::pack::{
     Called, Ended, Launch, Limits, Said, ToolLaunch, ToolWorker, Worker,
@@ -307,7 +307,7 @@ impl OneWorker {
         secrets: &Secrets,
         run: ToolRun,
         limits: &ToolLimits<'_>,
-        answer: &mut dyn FnMut(&Asked) -> Result<Vec<Mask>, String>,
+        answer: &mut dyn FnMut(&Asked) -> Result<Answered, String>,
     ) -> Result<serde_json::Value, ToolFault> {
         let clock = SystemClock;
         let mut held = loop {

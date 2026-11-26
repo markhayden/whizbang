@@ -206,6 +206,12 @@ run's: nothing is rebuilt or installed. A tool file runs in the tool worker, a s
 process of the pack's runtime that `whizbang setup` installed, so the config needs a local
 backend for whizbang to open the models directory it is in.
 
+**A model by name.** A tool's `segment` and `labels` may name a model of the catalogue
+(`model="eomt-ade20k"`). Whizbang asks the segment backend of this config whose `model` is
+that name: the default when it is one of them, otherwise the first of them by name. A model
+no backend here names is refused to the tool, and so is one whose backend is not ready or
+does not answer what was asked (`labels` needs a fixed-class segmenter; ADR 0052).
+
 **A tool file is your code, and runs with your privileges.** Whizbang gives it no key, no
 token and no home of yours, and reaches it only through its context, and it holds what
 comes back to the declaration's bounds; but nothing stops the file from reading your files,
