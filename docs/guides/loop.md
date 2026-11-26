@@ -45,11 +45,17 @@ judge said where.
   the loop was given, not the fill, is cut to the place, a twentieth wider on each side;
   the segmenter is asked the same phrase inside the crop, for at most four instances; and
   each mask it finds is carried onto the picture and joined to the mask of the attempt
-  before. A place where the segmenter finds nothing joins as it is, the whole box: the
-  judge said with confidence that the thing is there. That holds only for a place of at
+  before. A place where the segmenter finds nothing joins as it is, the whole box, or the
+  pixels inside the polygon when the judge drew one: the judge said with confidence that
+  the thing is there. That holds only for a place of at
   most a tenth of the picture's pixels: a larger one that nothing is found in is not
   joined, so that one finding cannot have a large part of the picture painted. Then the mask is shaped, filled and
-  checked as in the first attempt. At most eight places are looked into in one retry, and
+  checked as in the first attempt. A place whose cut is over 1,024 pixels a side, which
+  `view` would scale down, is cut in tiles of at most that, the picture's own pixels, at
+  most four, so up to 2,048 a side. A retry cuts at most eight crops, a tile counted as
+  one, and asks the segmenter once for each; the places are taken in the order the judge
+  gave them, and a place whose tiles no longer fit, or whose cut is over 2,048 a side, is
+  left out. At most eight crops are looked into in one retry, and
   only the places of the findings that say the named thing remains: a place the judge
   named for anything else is never cut, asked about or painted.
 - **It named none.** The retry shapes the same found mask again, grown twice as far, once
@@ -57,11 +63,13 @@ judge said where.
 
 When some findings name places and some do not, the retry looks into the places. A place
 counts as none when it is on another picture than the fill the judge was shown; when it
-covers no pixel; when its cut would be over 1,024 pixels on a side, which `view` would
-scale down, and a mask on a scaled crop is not carried; when its cut would be the whole
-picture; and always when the picture is a panorama, since `view` cuts flat pictures only.
-A polygon is used by the box around it. When the places were looked into and nothing
-joined, the retry is the wider mask.
+covers no pixel; when its cut would be the whole picture in one tile; and always when the
+picture is a panorama, since `view` cuts flat pictures only. A polygon is cut by the box
+around it, and joins as the pixels inside it. When the places were looked into and
+nothing joined, or every place was left out, the retry is the wider mask. What became of
+each place the judge named, those left out and why among them, and how long each took,
+are in the run's diagnostic `located-a<n>.txt`, `n` the attempt the retry made
+(`whizbang runs show`).
 
 A retry whose mask covers the same pixels as the one before it is not filled or checked
 again. When that retry looked into places, the wider mask is tried next, if it has not
@@ -323,8 +331,8 @@ outside the work tree, and are never committed.
 
 ## What it does not do yet
 
-- A place whose cut would be over 1,024 pixels on a side is not looked into, and a
-  polygon is used by the box around it (`docs/carry-over.md`).
+- A place whose cut would be over 2,048 pixels on a side is not looked into: it would
+  need more than four tiles (`docs/carry-over.md`).
 - The segmenter is asked inside a crop as it is asked about the picture: with the same
   phrase and no lower threshold.
 - The loop is marked experimental. Its tool record,

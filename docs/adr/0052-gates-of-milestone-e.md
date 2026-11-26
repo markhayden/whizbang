@@ -2,6 +2,8 @@
 
 Status: accepted.
 Date: 2026-11-25
+Amended: 2026-11-26, with plan mE's task L2: a check given the loop's job under either
+version of its template counts ("Amended with task M2", item on checks)
 Spec: section 8, "Gates", "Marks" and "Evaluation data"; section 9 (a failed attempt is
 reported, never replaced by a later success); section 6 (a limit is enforced, an estimate is
 advice); plan mE, task M1
@@ -141,7 +143,8 @@ balanced accuracy.
    misses a bar; else admitted. On R5's 8 cases at up to 8 hypotheses that is 7 of 8; on
    R6's 10 cases at 6, 9 of 10 and no operational error. A check counts for an edit when
    it was given the finished picture then the given picture, the job the loop writes for
-   the case's phrase, and the gate's judge; when there are several, every one must pass;
+   the case's phrase under either version of its template (`checked::jobs`; version 2 from
+   plan mE's task L2, version 1 before it), and the gate's judge; when there are several, every one must pass;
    an edit that changed nothing counts only a check made under its own run. A mask on a
    cut's canvas (`seam`'s) is mapped onto the panorama through the plan of its run's cut;
    one that cannot be mapped stops the scoring. A gate names its corpus: a rung 4 gate on

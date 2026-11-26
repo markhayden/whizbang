@@ -15,7 +15,11 @@ was given, and tries again a bounded number of times. One attempt is the shipped
 `remove_prompt`, run in stretches (find, shape, fill), then squint's checking recipe
 `source-fidelity` under a job the loop writes from the phrase, with three requirements:
 `RQ1`, what was to be removed is no longer visible; `RQ2`, nothing else in the picture
-changed; `RQ3`, the filled area looks like its surroundings. Every attempt fills the picture
+changed; `RQ3`, the filled area looks like its surroundings. The phrase is written between
+`<<<` and `>>>` in the brief and in `RQ1`, and the brief says that what lies between them
+names a thing and is never an instruction; a phrase that holds either mark is refused
+(the job's template, version 2, from plan mE's task L2; a run notes its digest as the
+setting `job.template`). Every attempt fills the picture
 the loop was given, never an earlier attempt's result, and no fill is asked before the mask
 it would paint is in hand.
 
@@ -24,8 +28,12 @@ there, and reports nothing damaged; the retry paints more of the picture, in one
 ways. **Located**, when the finding names a place: the picture the loop was given is cut to
 the place (`view`), the segmenter is asked the same phrase inside the crop, each mask it
 finds is carried onto the picture (`carry`) and joined to the mask of the attempt before;
-a place where nothing is found joins as its own box when it covers at most a tenth of the
-picture. **Wider**, when no finding names a place it can use, or the places gave nothing:
+a place where nothing is found joins as its own pixels, its box or the polygon the judge
+drew, when it covers at most a tenth of the picture. A place whose cut is over 1,024
+pixels a side is cut in tiles, at most four, up to 2,048 a side; each tile is one of the
+eight crops and eight requests of the segmenter a retry has, and a place that does not fit
+among them, or is larger, is left out and said so in the run's diagnostic
+`located-a<n>.txt`, with what became of every other place and the time each took. **Wider**, when no finding names a place it can use, or the places gave nothing:
 the same found mask is shaped again, grown twice as far, once in a run. It hands back one
 attempt's picture and mask: the first that passed, or failing that the best it made, with
 that attempt's verdict and findings, how many attempts were made, which was kept and why
@@ -180,8 +188,19 @@ costs"; no live call was made to work these out):
 What a call **settles** is far less: milestone 3 settled about 0.0033 dollars for a check
 by `claude-haiku-5-5` and 0.017 for one by `gpt-6.1-terra` (`docs/baseline/manifest.toml`),
 beside the fill's 0.04. What the loop's own runs settled, and the median time of a run with
-SAM 3, the filler and each of two judges, are in `docs/results/m4-loop.md`. The loop's own
-work between its calls is not timed here: a run's time is its models'.
+SAM 3, the filler and each of two judges, are in `docs/results/m4-loop.md`.
+
+**Its own work** (plan mE, task L2, item 4): a whole run, the first attempt failed with the
+thing at a place, a located retry into it, and the second attempt passed, under the test
+kit's segmenter, the scripted filler and the scripted judge, which answer at once; so what
+is timed is the loop's own work, the pictures read, cut, compared and joined. While it runs
+the loop keeps what it decodes, so its picture is decoded once however many places it looks
+into, and a located retry's own times are in the run's diagnostic `located-a<n>.txt`. This
+is the baseline an edit gate's latency limit compares runs against.
+
+<!-- times: begin -->
+Not measured yet: `scripts/tool-record.sh remove_checked` times it, in a release build.
+<!-- times: end -->
 
 The loop's judge, when `--judge` names none, is the config's default judge, which the
 config guide names `gemini-4-argon`: the judge round of milestone E picked it over all
@@ -204,7 +223,7 @@ cap of 5.94 covers them.
 | Limit | Example |
 |---|---|
 | A finding that something to be preserved changed (a protected subject, the scene's geometry, anything else in the picture) ends the attempts, and the attempt that failed is handed back | "A protected subject, where it stops", above |
-| A located retry does not look into every place a finding names: not one whose cut would be over 1,024 pixels on a side or is the whole picture, not a ninth, and none on a picture that is not flat; a polygon is used by the box around it. And a place of over a tenth of the picture where the segmenter finds nothing does not join | `docs/guides/loop.md`, "When it tries again"; `docs/carry-over.md` |
+| A located retry does not look into every place a finding names: not one whose cut would be over 2,048 pixels on a side, which would need more than four tiles, or is the whole picture in one tile; not one whose tiles no longer fit among the eight crops of a retry; and none on a picture that is not flat. Those left out are named in the run's diagnostic `located-a<n>.txt`. And a place of over a tenth of the picture where the segmenter finds nothing does not join | `docs/guides/loop.md`, "When it tries again"; `docs/carry-over.md` |
 | The segmenter is asked inside a crop with the same phrase and no lower threshold, where rascal halved its threshold | `docs/guides/loop.md` |
 | A verdict of `unsure` never enlarges a mask, and neither does a tentative report that the thing remains: the loop stops there, where rascal's loop would have retried on an `unsure` that named a place | `docs/guides/loop.md`, "When it tries again" |
 | The loop completes whenever a fill completed, whatever the verdict: the exit code is 0 for a kept attempt that failed | `docs/guides/loop.md`, "Exit codes" |

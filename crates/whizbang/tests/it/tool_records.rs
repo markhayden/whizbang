@@ -14,7 +14,11 @@
 //!   the committed files are held to them pixel for pixel.
 //! - The part between the `measured` marks is the examples in words and numbers, the
 //!   same on every run and every machine.
-//! - `scripts/tool-record.sh remove_checked` writes both again (`writes::remove_checked`).
+//! - The part between the `times` marks is a whole run's local work timed at three sizes
+//!   of picture, a located retry among it, under the scripted filler and judge (plan mE,
+//!   task L2, item 4): the baseline the edit gates' latency limit compares runs against.
+//!   It is written only by a release build, and until it is it says so.
+//! - `scripts/tool-record.sh remove_checked` writes all three again (`writes::remove_checked`).
 
 use std::path::PathBuf;
 
@@ -306,6 +310,11 @@ fn hold(page: &Page) {
         );
     }
     let record = std::fs::read_to_string(tools().join(format!("{TOOL}.md"))).unwrap();
+    let times = between(&record, "times");
+    assert!(
+        times == NOT_TIMED || timed_rows(times).len() == TIMED.len(),
+        "the times of the record of {TOOL} are neither said to be not measured nor three rows: {again}\n{times}"
+    );
     assert!(
         between(&record, "measured") == page.measured,
         "the measurements of the record of {TOOL} are stale: {again}\n{}",
@@ -382,8 +391,49 @@ mod recipes {
     }
 }
 
+/// The sides of the square pictures a run's local work is timed on.
+const TIMED: [u32; 3] = [256, 1024, 2048];
+
+/// What the part between the `times` marks says until a release build has timed it.
+const NOT_TIMED: &str =
+    "Not measured yet: `scripts/tool-record.sh remove_checked` times it, in a release build.\n";
+
+/// The rows of the table between the `times` marks: each picture's side and its time.
+fn timed_rows(times: &str) -> Vec<(u32, u64)> {
+    (times.lines())
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            let side = cells.get(1)?.split(" by ").next()?.parse::<u32>().ok()?;
+            let ms = cells.get(2)?.strip_suffix(" ms")?.parse::<u64>().ok()?;
+            TIMED.contains(&side).then_some((side, ms))
+        })
+        .collect()
+}
+
+/// A whole run's local work on a square picture of `side` pixels: the first attempt
+/// fails with the thing at a place, a located retry looks into it, and the second
+/// passes; the median of three runs, in milliseconds. Everything a provider would do is
+/// the test kit's, answered at once, so what is timed is the loop's own work.
+fn local_work(side: u32) -> u64 {
+    let mut took: Vec<u64> = (0..3)
+        .map(|_| {
+            let mut setup = finding(vec![remains_at(PLACE), passes()]);
+            setup.size = (side, side);
+            let world = Looped::new("record-times", &setup);
+            let started = std::time::Instant::now();
+            let finished = world.run(&world.call());
+            let ms = started.elapsed().as_millis() as u64;
+            assert_eq!(finished.outcome().name(), "completed");
+            ms
+        })
+        .collect();
+    took.sort_unstable();
+    took[1]
+}
+
 /// What `scripts/tool-record.sh remove_checked` runs: it writes the record's pictures
-/// and the part between its `measured` marks again.
+/// and the part between its `measured` marks again, and, in a release build, the part
+/// between its `times` marks.
 mod writes {
     use super::*;
 
@@ -398,14 +448,20 @@ mod writes {
         }
         let path = tools().join(format!("{TOOL}.md"));
         let record = std::fs::read_to_string(&path).unwrap();
-        let old = between(&record, "measured");
-        let at = old.as_ptr() as usize - record.as_ptr() as usize;
-        let new = format!(
-            "{}{}{}",
-            &record[..at],
-            page.measured,
-            &record[at + old.len()..]
-        );
+        let replaced = |record: &str, name: &str, text: &str| {
+            let old = between(record, name);
+            let at = old.as_ptr() as usize - record.as_ptr() as usize;
+            format!("{}{}{}", &record[..at], text, &record[at + old.len()..])
+        };
+        let mut new = replaced(&record, "measured", &page.measured);
+        if !cfg!(debug_assertions) {
+            let mut table =
+                String::from("| Picture | A run's local work, the median of three |\n|---|---|\n");
+            for side in TIMED {
+                table.push_str(&format!("| {side} by {side} | {} ms |\n", local_work(side)));
+            }
+            new = replaced(&new, "times", &table);
+        }
         std::fs::write(path, new).unwrap();
     }
 }
