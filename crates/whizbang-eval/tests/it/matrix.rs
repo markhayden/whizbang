@@ -195,18 +195,16 @@ fn the_unsure_screen_and_its_gate_are_read() {
         let gate = whizbang_eval::gate::Gate::parse(&read(&format!("unsure-{use_case}.toml")))
             .unwrap_or_else(|e| panic!("{use_case}: {e}"));
         let matrix = Matrix::parse(&read(&gate.run.matrix)).unwrap();
-        assert_eq!(gate.run.matrix_identity, matrix.identity(), "{use_case}");
+        assert_eq!(
+            gate.run.matrix_identity,
+            Some(matrix.identity()),
+            "{use_case}"
+        );
         assert_eq!(matrix.matrix.sets, [format!("{use_case}/{set}")]);
         let arms: Vec<String> = matrix.matrix.arms.iter().map(ToString::to_string).collect();
         let treatment = format!("F;second_look=on@{use_case}");
         assert_eq!(arms, ["F".to_owned(), treatment.clone()]);
-        assert_eq!(
-            (
-                gate.baseline.control.as_str(),
-                gate.baseline.treatment.as_str()
-            ),
-            ("F", treatment.as_str())
-        );
+        assert_eq!(gate.compared().unwrap().sides(), ("F", treatment.as_str()));
         assert_eq!(matrix.matrix.arms[1].second_look_for(use_case), "on");
         assert_eq!(gate.guardrails.false_accept_increase_max, Some(0.03));
         assert_eq!(gate.guardrails.false_reject_increase_max, 0.03);
@@ -320,4 +318,228 @@ fn an_arm_without_submission_keeps_its_identity() {
         canonical.contains("\"arms\":[\"C\",\"F;second_look=on\"]"),
         "{canonical}"
     );
+}
+
+// --- only the cells a matrix names (plan mE, task M1, item 1) ----------------------------------
+
+/// The shape of plan mE's confirmation round: two sets, three arms, three judges; the plain
+/// twin under arm C and two judges alone; Flash under arm C, twice, and the format alone.
+const LISTED: &str = r#"
+[matrix]
+name = "confirm"
+sets = ["source-fidelity/confirm-v1", "source-fidelity/confirm-plain-v1"]
+arms = ["C", { arm = "C", submission = "v2" }, "C+per_subject"]
+repetitions = 1
+
+[matrix.set."source-fidelity/confirm-plain-v1"]
+arms = ["C"]
+judges = ["haiku", "terra"]
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"
+
+[[matrix.judges]]
+backend = "terra"
+model = "gpt-6.1-terra"
+
+[[matrix.judges]]
+backend = "flash"
+model = "gemini-3.8-flash"
+arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]
+"#;
+
+/// Two items of each set the matrix names.
+fn two_items(m: &Matrix) -> Vec<(String, Vec<String>)> {
+    (m.matrix.sets.iter())
+        .map(|set| (set.clone(), vec!["i1".to_owned(), "i2".to_owned()]))
+        .collect()
+}
+
+/// Each cell as set, judge, arm and repetition, the item left out.
+fn shape(cells: &[matrix::Cell]) -> Vec<(String, String, String, u32)> {
+    let mut out: Vec<_> = (cells.iter())
+        .filter(|c| c.item == "i1")
+        .map(|c| {
+            let set = c.set.rsplit('/').next().unwrap().to_owned();
+            (set, c.backend.clone(), c.arm.clone(), c.repetition)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn a_judge_runs_only_its_arms() {
+    let m = Matrix::parse(LISTED).unwrap();
+    let cells = m.cells(&two_items(&m));
+    let at = |set: &str, judge: &str, arm: &str, repetition: u32| {
+        (set.to_owned(), judge.to_owned(), arm.to_owned(), repetition)
+    };
+    let (v2, tool) = ("C;submission=v2", "C+per_subject");
+    assert_eq!(
+        shape(&cells),
+        [
+            at("confirm-plain-v1", "haiku", "C", 1),
+            at("confirm-plain-v1", "terra", "C", 1),
+            at("confirm-v1", "flash", "C", 1),
+            at("confirm-v1", "flash", "C", 2),
+            at("confirm-v1", "flash", v2, 1),
+            at("confirm-v1", "haiku", "C", 1),
+            at("confirm-v1", "haiku", tool, 1),
+            at("confirm-v1", "haiku", v2, 1),
+            at("confirm-v1", "terra", "C", 1),
+            at("confirm-v1", "terra", tool, 1),
+            at("confirm-v1", "terra", v2, 1),
+        ]
+    );
+    assert_eq!(cells.len(), 22);
+    // The forecast counts the cells named, and no other: each at its model's rate.
+    let (haiku, terra, flash) = (3_293, 17_233, 22_752);
+    let per_item = 3 * haiku + 3 * terra + 3 * flash + haiku + terra;
+    assert_eq!(matrix::forecast(&cells), Ok(2 * 2 * per_item));
+    // What a list names must be the matrix's, once, as it names it, and leave each set,
+    // judge and arm a cell.
+    for (from, to, says) in [
+        (
+            r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]"#,
+            r#"arms = ["C+outline"]"#,
+            "is not an arm of the matrix",
+        ),
+        (
+            r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]"#,
+            r#"arms = ["C", "C"]"#,
+            "named once",
+        ),
+        (
+            r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]"#,
+            "arms = []",
+            "at least one",
+        ),
+        (
+            r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]"#,
+            r#"arms = [{ arm = "C", repetitions = 11 }]"#,
+            "repetitions is 1 to 10",
+        ),
+        (
+            r#"[matrix.set."source-fidelity/confirm-plain-v1"]"#,
+            r#"[matrix.set."source-fidelity/other-v1"]"#,
+            "not a set of the matrix",
+        ),
+        (
+            r#"judges = ["haiku", "terra"]"#,
+            r#"judges = ["haiku", "sol"]"#,
+            "each judge it runs",
+        ),
+        (
+            r#"judges = ["haiku", "terra"]"#,
+            "judges = []",
+            "at least one",
+        ),
+        (
+            "arms = [\"C\"]\njudges = [\"haiku\", \"terra\"]",
+            "",
+            "a set's table lists arms or judges",
+        ),
+        (
+            r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]"#,
+            r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2", "C+per_subject"]
+[[matrix.judges]]
+backend = "sol"
+model = "gpt-6.1-sol"
+arms = ["C+per_subject"]
+[matrix.set."source-fidelity/confirm-v1"]
+judges = ["haiku", "terra", "flash"]"#,
+            "the judge sol has no cell",
+        ),
+    ] {
+        assert!(LISTED.contains(from), "{from}");
+        let refused = Matrix::parse(&LISTED.replacen(from, to, 1)).unwrap_err();
+        assert!(refused.contains(says), "{to}: {refused}");
+    }
+}
+
+#[test]
+fn an_arm_of_a_judge_repeats_on_its_own() {
+    // A judge's own repetitions hold for its arms that give none; an arm that gives its own
+    // repeats so, under that judge alone.
+    let three = LISTED.replace(
+        "model = \"gemini-3.8-flash\"\n",
+        "model = \"gemini-3.8-flash\"\nrepetitions = 3\n",
+    );
+    let m = Matrix::parse(&three).unwrap();
+    let flash = &m.matrix.judges[2];
+    assert_eq!(flash.repeated_under(&m.matrix, "C"), Some(2));
+    assert_eq!(flash.repeated_under(&m.matrix, "C;submission=v2"), Some(3));
+    assert_eq!(flash.repeated_under(&m.matrix, "C+per_subject"), None);
+    let haiku = &m.matrix.judges[0];
+    assert_eq!(haiku.repeated_under(&m.matrix, "C"), Some(1));
+    let cells = m.cells(&two_items(&m));
+    let flash_cells: Vec<(String, u32)> = (cells.iter())
+        .filter(|c| c.backend == "flash" && c.item == "i1")
+        .map(|c| (c.arm.clone(), c.repetition))
+        .collect();
+    assert_eq!(
+        flash_cells,
+        [
+            ("C".to_owned(), 1),
+            ("C".to_owned(), 2),
+            ("C;submission=v2".to_owned(), 1),
+            ("C;submission=v2".to_owned(), 2),
+            ("C;submission=v2".to_owned(), 3)
+        ]
+    );
+    // The other judges' cells are as they were.
+    let others = |m: &Matrix| -> Vec<matrix::Cell> {
+        (m.cells(&two_items(m)).into_iter())
+            .filter(|c| c.backend != "flash")
+            .collect()
+    };
+    assert_eq!(others(&m), others(&Matrix::parse(LISTED).unwrap()));
+    // A table that gives no repetitions is the arm's name alone.
+    let table = LISTED.replace(r#""C;submission=v2"]"#, r#"{ arm = "C;submission=v2" }]"#);
+    assert_ne!(table, LISTED);
+    assert_eq!(
+        Matrix::parse(&table).unwrap().identity(),
+        Matrix::parse(LISTED).unwrap().identity()
+    );
+    // An arm's repetitions are part of the identity.
+    let once = LISTED.replace(r#"{ arm = "C", repetitions = 2 }"#, r#""C""#);
+    assert_ne!(
+        Matrix::parse(&once).unwrap().identity(),
+        Matrix::parse(LISTED).unwrap().identity()
+    );
+}
+
+#[test]
+fn a_matrix_without_lists_keeps_its_cells_and_identity() {
+    // The committed gate of details first was frozen with its matrix's identity before
+    // matrices could list their cells: the identity is still that one.
+    let read = |name: &str| std::fs::read_to_string(repo().join("gates").join(name)).unwrap();
+    let gate = whizbang_eval::gate::Gate::parse(&read("details-first.toml")).unwrap();
+    let m = Matrix::parse(&read("details-first-matrix.toml")).unwrap();
+    assert!(!m.lists());
+    assert_eq!(gate.run.matrix_identity, Some(m.identity()));
+    let canonical = serde_json::to_string(&m).unwrap();
+    for absent in ["\"set\"", "\"gates\"", "\"arms\":null", "\"arms\":[{"] {
+        assert!(!canonical.contains(absent), "{absent}: {canonical}");
+    }
+    // Every set, item, judge, arm and repetition is a cell.
+    let cells = m.cells(&two_items(&m));
+    let repetitions: u32 = (m.matrix.judges.iter())
+        .map(|j| j.repeated(&m.matrix))
+        .sum();
+    assert_eq!(
+        cells.len(),
+        m.matrix.sets.len() * 2 * m.matrix.arms.len() * repetitions as usize
+    );
+    // A list that names every arm names the same cells, as a matrix of another identity.
+    let listed = read("details-first-matrix.toml").replace(
+        "model = \"gemini-3.8-flash\"",
+        "model = \"gemini-3.8-flash\"\narms = [\"C\", \"F\"]",
+    );
+    let listed = Matrix::parse(&listed).unwrap();
+    assert!(listed.lists());
+    assert_eq!(listed.cells(&two_items(&listed)), cells);
+    assert_ne!(listed.identity(), m.identity());
 }

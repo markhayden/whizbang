@@ -9,8 +9,18 @@
 //! A cell is one item of one set under one judge and one arm, once: its repetition is
 //! part of it. Each cell is one run of `check`, and an attempt of a cell that was
 //! interrupted is followed by another attempt of the same cell.
+//!
+//! **Only the cells a matrix names** (plan mE, task M1, item 1). A judge may list the arms
+//! it runs, each with its own repetitions where they are not the judge's; a set's table
+//! (`[matrix.set."<id>"]`) may list the arms and the judges it runs. A cell outside any of
+//! these lists is not a cell: it is not forecast, run, resumed or counted. A matrix without
+//! them names every cell, and its identity is the one it had before the lists.
+//!
+//! **Gates frozen on it** (plan mE, task M1, item 3): `[gates]` names each gate file frozen
+//! on the matrix, beside it, by the SHA-256 of its bytes. The table is in the matrix's
+//! identity, which every run holds, so a gate named there was frozen before the first cell.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use whizbang_core::identity::Digest;
@@ -27,6 +37,10 @@ pub const ARM_TOOLS_LIMIT: usize = 8;
 #[serde(deny_unknown_fields)]
 pub struct Matrix {
     pub matrix: Spec,
+    /// Each gate file frozen on the matrix, by its path beside the matrix, with the SHA-256
+    /// of its bytes. Left out of the identity when empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub gates: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,6 +55,73 @@ pub struct Spec {
     /// How many runs are admitted at once, each reserving its own bound.
     #[serde(default = "two")]
     pub concurrency: u32,
+    /// The arms and judges a set runs, by its id, where it does not run every one. Left out
+    /// of the identity when empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub set: BTreeMap<String, SetRuns>,
+}
+
+/// What one set runs: the arms, by name, and the judges, by backend; every one of either
+/// when it lists none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetRuns {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arms: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judges: Option<Vec<String>>,
+}
+
+/// An arm a judge runs, by its name, with its own repetitions where they are not the
+/// judge's. Written as the name alone, or as `{ arm = "<name>", repetitions = <n> }`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct JudgeArm {
+    pub arm: String,
+    pub repetitions: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum JudgeArmWritten {
+    Name(String),
+    Table(JudgeArmTable),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JudgeArmTable {
+    arm: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repetitions: Option<u32>,
+}
+
+impl Serialize for JudgeArm {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.repetitions {
+            None => JudgeArmWritten::Name(self.arm.clone()),
+            Some(repetitions) => JudgeArmWritten::Table(JudgeArmTable {
+                arm: self.arm.clone(),
+                repetitions: Some(repetitions),
+            }),
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for JudgeArm {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<JudgeArm, D::Error> {
+        Ok(match JudgeArmWritten::deserialize(d)? {
+            JudgeArmWritten::Name(arm) => JudgeArm {
+                arm,
+                repetitions: None,
+            },
+            // A table without repetitions is the arm's name alone, and the same identity.
+            JudgeArmWritten::Table(table) => JudgeArm {
+                arm: table.arm,
+                repetitions: table.repetitions,
+            },
+        })
+    }
 }
 
 fn two() -> u32 {
@@ -59,12 +140,27 @@ pub struct Judge {
     /// not given, so a matrix that gives none keeps its identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repetitions: Option<u32>,
+    /// The arms this judge runs, where it does not run every arm of the matrix (plan mE,
+    /// task M1, item 1). Left out of the identity when not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arms: Option<Vec<JudgeArm>>,
 }
 
 impl Judge {
-    /// How many times each cell of this judge is run.
+    /// How many times each cell of this judge is run, where its arms give none of their own.
     pub fn repeated(&self, matrix: &Spec) -> u32 {
         self.repetitions.unwrap_or(matrix.repetitions)
+    }
+
+    /// How many times this judge runs each cell of the arm of this name: none when it does
+    /// not run the arm.
+    pub fn repeated_under(&self, matrix: &Spec, arm: &str) -> Option<u32> {
+        match &self.arms {
+            None => Some(self.repeated(matrix)),
+            Some(arms) => (arms.iter())
+                .find(|a| a.arm == arm)
+                .map(|a| a.repetitions.unwrap_or_else(|| self.repeated(matrix))),
+        }
     }
 }
 
@@ -76,7 +172,9 @@ impl Judge {
 /// Beside its tools, an arm `F` has two settings (plan m3, task U1, item 2): `details`, the
 /// details measured first, each for the use cases it is named for, where `align` alone is
 /// measured otherwise; and `second_look`, `on` or `strict` for the use cases it is named for
-/// (every use case when it names none), `off` for the rest. Both are part of the arm's name,
+/// (every use case when it names none), `off` for the rest. Arm `C` may take the second look
+/// too (plan mE, task M1, item 2): it is one more turn after a submission that left an item
+/// tentative, not a detail measured first, so the control stays the control. Both are part of the arm's name,
 /// so of each cell's identity and of the matrix's: `F;details=tiles@reality-checks;second_look=on`,
 /// `F;second_look=on@reference-consistency|strict@reality-checks`.
 /// A matrix file may write an arm as that name, or as a table:
@@ -221,10 +319,9 @@ impl Arm {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if !self.first && (!self.details.is_empty() || self.looks()) {
+        if !self.first && !self.details.is_empty() {
             return Err(format!(
-                "arm {self}: details and the second look are settings of an arm F; C is the \
-                 control"
+                "arm {self}: details are a setting of an arm F; C is the control"
             ));
         }
         if let Some(submission) = &self.submission
@@ -535,7 +632,157 @@ impl Matrix {
         {
             return Err("a matrix names each set, judge and arm once".to_owned());
         }
+        self.validate_lists(&arms)?;
+        for (file, digest) in &self.gates {
+            let plain = |part: &str| {
+                !part.is_empty()
+                    && part != "."
+                    && part != ".."
+                    && (part.chars())
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            };
+            let hex = |c: char| c.is_ascii_digit() || ('a'..='f').contains(&c);
+            if !file.split('/').all(plain) || digest.len() != 64 || !digest.chars().all(hex) {
+                return Err(
+                    "[gates] names each gate file by a plain path beside the matrix, with the \
+                     SHA-256 of its bytes in 64 lowercase hex digits"
+                        .to_owned(),
+                );
+            }
+        }
         Ok(())
+    }
+
+    /// The judges' lists of arms and the sets' tables: each names what the matrix has, once,
+    /// and every one of them leaves at least one cell.
+    fn validate_lists(&self, arms: &BTreeSet<String>) -> Result<(), String> {
+        let m = &self.matrix;
+        let canonical = |name: &str| -> Result<String, String> {
+            let arm: Arm = name.parse()?;
+            let arm = arm.to_string();
+            if arms.contains(&arm) {
+                Ok(arm)
+            } else {
+                Err(format!("{arm} is not an arm of the matrix"))
+            }
+        };
+        for judge in &m.judges {
+            let Some(listed) = &judge.arms else { continue };
+            let mut seen = BTreeSet::new();
+            if listed.is_empty() {
+                return Err(format!(
+                    "the judge {}: a list of arms names at least one",
+                    judge.backend
+                ));
+            }
+            for one in listed {
+                let arm = canonical(&one.arm)
+                    .map_err(|why| format!("the judge {}: {why}", judge.backend))?;
+                if arm != one.arm || !seen.insert(arm) {
+                    return Err(format!(
+                        "the judge {}: each arm it runs is named once, as the matrix names it",
+                        judge.backend
+                    ));
+                }
+                if let Some(r) = one.repetitions
+                    && !(1..=REPETITIONS_LIMIT).contains(&r)
+                {
+                    return Err(format!("repetitions is 1 to {REPETITIONS_LIMIT}"));
+                }
+            }
+        }
+        for (id, runs) in &m.set {
+            if !m.sets.contains(id) {
+                return Err(format!(
+                    "[matrix.set] names {id:?}, which is not a set of the matrix"
+                ));
+            }
+            if let Some(listed) = &runs.arms {
+                let mut seen = BTreeSet::new();
+                for name in listed {
+                    let arm = canonical(name).map_err(|why| format!("the set {id}: {why}"))?;
+                    if arm != *name || !seen.insert(arm) {
+                        return Err(format!(
+                            "the set {id}: each arm it runs is named once, as the matrix names it"
+                        ));
+                    }
+                }
+            }
+            if let Some(listed) = &runs.judges {
+                let mut seen = BTreeSet::new();
+                for name in listed {
+                    let named = m.judges.iter().filter(|j| j.backend == *name).count();
+                    if named != 1 || !seen.insert(name) {
+                        return Err(format!(
+                            "the set {id}: each judge it runs is named once, by the backend of \
+                             one judge of the matrix"
+                        ));
+                    }
+                }
+            }
+            if runs.arms.is_none() && runs.judges.is_none() {
+                return Err(format!("the set {id}: a set's table lists arms or judges"));
+            }
+            if runs.arms.as_ref().is_some_and(Vec::is_empty)
+                || runs.judges.as_ref().is_some_and(Vec::is_empty)
+            {
+                return Err(format!("the set {id}: a list names at least one"));
+            }
+        }
+        // Every set, judge and arm the matrix names has a cell.
+        let named = |set: Option<&String>, judge: Option<&Judge>, arm: Option<&String>| {
+            (m.sets.iter().filter(|s| set.is_none_or(|one| one == *s))).any(|s| {
+                (m.judges
+                    .iter()
+                    .filter(|j| judge.is_none_or(|one| one == *j)))
+                .any(|j| {
+                    (arms.iter().filter(|a| arm.is_none_or(|one| one == *a)))
+                        .any(|a| self.runs(s, j, a).is_some())
+                })
+            })
+        };
+        let idle = (m
+            .sets
+            .iter()
+            .find(|s| !named(Some(s), None, None))
+            .map(|s| format!("the set {s}")))
+        .or_else(|| {
+            (m.judges.iter().find(|j| !named(None, Some(j), None)))
+                .map(|j| format!("the judge {}", j.backend))
+        })
+        .or_else(|| {
+            (arms.iter().find(|a| !named(None, None, Some(a)))).map(|a| format!("the arm {a}"))
+        });
+        if let Some(idle) = idle {
+            return Err(format!(
+                "{idle} has no cell: the lists leave it nothing to run"
+            ));
+        }
+        Ok(())
+    }
+
+    /// How many times the matrix runs each item of this set under this judge and arm: none
+    /// when the cell is not one it names.
+    pub fn runs(&self, set: &str, judge: &Judge, arm: &str) -> Option<u32> {
+        let m = &self.matrix;
+        if let Some(runs) = m.set.get(set) {
+            if runs
+                .arms
+                .as_ref()
+                .is_some_and(|arms| !arms.iter().any(|a| a == arm))
+            {
+                return None;
+            }
+            if (runs.judges.as_ref()).is_some_and(|judges| !judges.contains(&judge.backend)) {
+                return None;
+            }
+        }
+        judge.repeated_under(m, arm)
+    }
+
+    /// Whether the matrix names lists of what it runs: one that names none runs every cell.
+    pub fn lists(&self) -> bool {
+        !self.matrix.set.is_empty() || self.matrix.judges.iter().any(|j| j.arms.is_some())
     }
 
     /// The matrix's identity: the SHA-256 of its content in one canonical form, whatever
@@ -545,8 +792,9 @@ impl Matrix {
         Digest::of_bytes(canonical.as_bytes()).hex()
     }
 
-    /// Every cell over the items of each set, given in the matrix's order of sets: sets,
-    /// then items, then judges, then arms, then repetitions.
+    /// Every cell the matrix names over the items of each set, given in the matrix's order
+    /// of sets: sets, then items, then judges, then arms, then repetitions. A cell outside a
+    /// judge's or a set's list is none.
     pub fn cells(&self, items: &[(String, Vec<String>)]) -> Vec<Cell> {
         let m = &self.matrix;
         let mut out = Vec::new();
@@ -554,13 +802,17 @@ impl Matrix {
             for item in its {
                 for judge in &m.judges {
                     for arm in &m.arms {
-                        for repetition in 1..=judge.repeated(m) {
+                        let name = arm.to_string();
+                        let Some(times) = self.runs(set, judge, &name) else {
+                            continue;
+                        };
+                        for repetition in 1..=times {
                             out.push(Cell {
                                 set: set.clone(),
                                 item: item.clone(),
                                 backend: judge.backend.clone(),
                                 model: judge.model.clone(),
-                                arm: arm.to_string(),
+                                arm: name.clone(),
                                 repetition,
                             });
                         }
