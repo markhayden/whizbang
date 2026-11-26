@@ -125,7 +125,7 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 | Limit | Example |
 |---|---|
-| The band is measured on the cut's canvas: on a panorama far under 1,620 pixels wide `fan` reads one column a side | The examples here: 36 columns |
+| The band is measured on the cut's canvas: on a panorama far under 1,620 pixels wide `fan` reads one column a side. That scale is meant (the records of `fan` and `ramp`, "Limits"); `measure`'s continuity is a ratio from 0 to the width less one (its record) | The examples here: 36 columns |
 | Only the two strips change; a step that runs further into the picture stays | The examples |
 | Each run spends one fill | The round above |
 
