@@ -12,6 +12,16 @@ use super::perspective::Perspective;
 use super::space::{Point, SLACK, Space, Topology};
 use super::{IdentityError, Result};
 
+/// The most slack a computed point is given past an edge, in pixels of the space it lands
+/// in, however much a crop magnifies: a thousandth of a pixel.
+const MAX_SLACK: f64 = 1e-3;
+
+/// The slack past an edge for a mapping that magnifies this much: [`SLACK`] times it, at
+/// most [`MAX_SLACK`].
+fn slack(magnifies: f64) -> f64 {
+    (SLACK * magnifies).min(MAX_SLACK)
+}
+
 /// A 3 by 3 matrix, row-major.
 pub(super) type Matrix = [f64; 9];
 
@@ -219,7 +229,7 @@ impl Mapping {
                 Point::new(x, y)
             }
         };
-        to.land(mapped, SLACK * self.magnifies(from, true))
+        to.land(mapped, slack(self.magnifies(from, true)))
     }
 
     /// Maps a point of `to` back to its place in `from`: the inverse of
@@ -285,7 +295,7 @@ impl Mapping {
                 Point::new(x, y)
             }
         };
-        from.land(mapped, SLACK * self.magnifies(from, false))
+        from.land(mapped, slack(self.magnifies(from, false)))
     }
 
     /// The mapping as a matrix on pixels, from `from` to `to`, when it is one: the

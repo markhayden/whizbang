@@ -160,3 +160,26 @@ fn a_point_on_the_edge_of_a_magnified_crop_of_a_crop_lands() {
     }
     assert_eq!(landed, 260);
 }
+
+#[test]
+fn the_slack_past_an_edge_is_never_more_than_a_thousandth_of_a_pixel() {
+    // A crop a million million times magnified would be given a slack of a thousand
+    // pixels by its magnification alone; it is held to a thousandth (plan mE, task P1).
+    use whizbang_core::identity::{Mapping, Point};
+    let crop = Space::flat(1000, 1000).unwrap();
+    let root = Space::flat(100, 100).unwrap();
+    let mapping = Mapping::Crop {
+        left: 10.0,
+        top: 10.0,
+        right: 10.0 + 1e-9,
+        bottom: 10.0 + 1e-9,
+    };
+    mapping.check(&crop, &root).unwrap();
+    // A root point a few of its last bits past the box's right edge is pixels past the
+    // crop's.
+    let past = Point::new(10.0 + 1e-9 + 4e-15, 10.0);
+    assert!(matches!(
+        mapping.backward(&crop, &root, past),
+        Err(IdentityError::Outside(_))
+    ));
+}
