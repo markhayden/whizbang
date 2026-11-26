@@ -28,7 +28,21 @@ It is the action `view`, which `check` offers a judge as a tool, and the library
 | `image` | The image to look into: an image artifact, flat or a panorama. It may itself be a crop that `view` returned |
 | `also` | Optional. A second image to show the same region of. It has the projection of `image`, and is not the same picture |
 | `bbox` | Left, top, right and bottom, as fractions of each image from 0 to 1, with left under right and top under bottom. The same box names the same region of two images of different sizes. The action takes the four as `left`, `top`, `right` and `bottom` |
-| `yaw`, `pitch`, `fov` | Of a whole panorama only, all three together: degrees from the panorama's middle column, growing to the right, from -180 up to and not including 180; degrees above the horizon, from -90 to 90; and the field of view across and down, from 10 to 120 degrees |
+| `yaw`, `pitch`, `fov` | Of a whole panorama only, all three together: degrees from the panorama's middle column, growing to the right, from -180 to 180, where 180 is the seam and is taken as -180; degrees above the horizon, from -90 to 90; and the field of view across and down, from 10 to 120 degrees |
+
+**What a judge is told, and when.** `check` offers `view` to a judge as a tool, and tells it
+of the angles only in a run that shows a panorama among its images. A run of flat images is
+told what it was told before the panorama side, word for word: the schema requires `image`
+and `bbox`, has the properties `image`, `also` and `bbox`, and the description is "Shows a
+region of an image closer. image is the name of an image you were shown; bbox is left, top,
+right and bottom as fractions of the image; also is a second image to show the same region
+of." Its calls are read as before, so an angle there is refused as an argument the tool does
+not have. A run that shows a panorama is told of `yaw`, `pitch` and `fov` beside `bbox`, with
+`image` alone required, and the description says that the three together ask for a square
+perspective view of a panorama, with their units and ranges, and that `also` has the same
+projection. The decision cache keys `view` by its descriptor's version and the version of its
+pixels (`1.1.0+1`), so no decision kept before the panorama side answers a run after it
+(ADR 0031).
 
 **Outputs.** One crop, or two when `also` is given, in the order asked. Each is:
 

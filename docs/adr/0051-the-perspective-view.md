@@ -60,11 +60,14 @@ one IEEE 754 defines, so the same point maps to the same bits on every machine.
 **Composition.** A perspective view composes with the identity and with nothing else: the
 view is not affine, so a crop of a view, or a view of a rotated panorama, has its points
 mapped through each binding in turn, as a wrap does (ADR 0001). The reverse of a binding
-keeps the parameters and flips the direction, as for every kind.
+keeps the parameters and flips the direction, as for every kind. Until plan mE's task P1
+carries locations through this kind, `box_to_root` refuses a chain that holds one, as it
+refuses every mapping but a crop, and `carry` refuses it too.
 
 ### The view's pixels (`view`)
 
-`view` cuts a perspective view of a complete panorama `W` pixels wide as a square of side
+`view` takes yaw 180 as -180, the seam, which is how the mapping states it. It cuts a
+perspective view of a complete panorama `W` pixels wide as a square of side
 `round(W × fov / 360)`, held to 256 at least and 1024 at most, as squint's `view_side`
 did. Each pixel `(u, v)` shows the panorama at the forward mapping of its centre,
 `(u + 0.5, v + 0.5)`, sampled bilinearly between the centres of the four pixels around

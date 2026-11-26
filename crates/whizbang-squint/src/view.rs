@@ -57,8 +57,9 @@ pub enum Region {
     /// Left, top, right and bottom, as fractions of each image, so the same box names the
     /// same region of two images of different sizes. Of a flat image or of a panorama.
     Box([f64; 4]),
-    /// A square perspective view into a complete panorama: yaw from -180 up to 180, pitch
-    /// from -90 to 90, and a field of view from [`MIN_FOV`] to [`MAX_FOV`], in degrees.
+    /// A square perspective view into a complete panorama: yaw from -180 to 180, 180 taken
+    /// as -180, pitch from -90 to 90, and a field of view from [`MIN_FOV`] to [`MAX_FOV`],
+    /// in degrees.
     Perspective(Perspective),
 }
 
@@ -135,6 +136,15 @@ const FLAT: &str = "is flat: send bbox [left, top, right, bottom] as fractions o
 /// pixel for pixel and never enlarged. A perspective view is square, its side worked out
 /// from the panorama's width and the field of view ([`side`]).
 pub fn view(request: &Request<'_>, limits: &DecodeLimits) -> Result<Vec<Crop>, ViewError> {
+    // Yaw 180 is yaw -180, the panorama's seam, which is how the mapping states it.
+    let region = match request.region {
+        Region::Perspective(asked) if asked.yaw == 180.0 => Region::Perspective(Perspective {
+            yaw: -180.0,
+            ..asked
+        }),
+        region => region,
+    };
+    let request = &Request { region, ..*request };
     let images = [Some(request.image), request.also];
     if let Some(also) = request.also
         && also.space().projection() != request.image.space().projection()
@@ -198,7 +208,7 @@ fn projection(image: &Image) -> &'static str {
 fn angles(asked: Perspective) -> Result<(), ViewError> {
     let Perspective { yaw, pitch, fov } = asked;
     if !(-180.0..180.0).contains(&yaw) {
-        return invalid(format!("yaw {yaw} outside [-180, 180)"));
+        return invalid(format!("yaw {yaw} outside [-180, 180]"));
     }
     if !(-90.0..=90.0).contains(&pitch) {
         return invalid(format!("pitch {pitch} outside [-90, 90]"));

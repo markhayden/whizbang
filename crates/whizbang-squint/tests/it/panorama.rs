@@ -267,10 +267,11 @@ fn a_perspective_view_is_squints_stored_view_and_the_scene_it_shows() {
         );
         assert!(c.round_trip < 1e-6, "{:?}: {}", c.look, c.round_trip);
     }
-    // Squint's own view, against the file it stored: within two levels, as its test
-    // held it. The difference is the platform's functions against `libm`'s.
+    // Squint's own view, against the file it stored: squint's test allowed two levels,
+    // for the platform's functions against `libm`'s; there is not one, and `libm` gives
+    // the same on every machine, so none is allowed.
     let (largest, _) = compared[0].stored.unwrap();
-    assert!(largest <= 2, "the stored view differs by {largest}");
+    assert_eq!(largest, 0, "the stored view differs by {largest}");
     record::holds(2, &perspective_table(&compared));
 }
 
@@ -469,7 +470,7 @@ fn angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake() {
     let cases = [
         (on(&pano, 0.0, 0.0, 130.0), "fov 130"),
         (on(&pano, 0.0, 0.0, 9.5), "fov 9.5"),
-        (on(&pano, 180.0, 0.0, 60.0), "yaw 180"),
+        (on(&pano, 180.5, 0.0, 60.0), "yaw 180.5"),
         (on(&pano, f64::NAN, 0.0, 60.0), "yaw NaN"),
         (on(&pano, 0.0, 95.0, 60.0), "pitch 95"),
         // Angles on a flat image: the refusal says what to send instead, since a model
@@ -489,8 +490,18 @@ fn angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake() {
         region: Region::Box([0.9, 0.25, 1.1, 0.75]),
     });
     assert!(why.contains("fractions"), "{why}");
-    // The bounds themselves are in.
+    // The bounds themselves are in, and yaw 180 is the seam, stated as -180.
     for (yaw, pitch, fov) in [(-180.0, -90.0, 10.0), (179.5, 90.0, 120.0)] {
         seen(&pano, yaw, pitch, fov);
     }
+    let at_seam = seen(&pano, 180.0, 0.0, 60.0);
+    assert_eq!(at_seam, seen(&pano, -180.0, 0.0, 60.0));
+    assert_eq!(
+        *at_seam.binding.mapping(),
+        Mapping::Perspective {
+            yaw: -180.0,
+            pitch: 0.0,
+            fov: 60.0
+        }
+    );
 }

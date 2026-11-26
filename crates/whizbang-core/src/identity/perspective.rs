@@ -32,8 +32,9 @@ impl Perspective {
     /// `-90 <= pitch <= 90` and `0 < fov < 180`.
     pub fn check(&self) -> Result<()> {
         let Perspective { yaw, pitch, fov } = *self;
-        let finite = [yaw, pitch, fov].iter().all(|v| v.is_finite());
-        if !finite || !(-180.0..180.0).contains(&yaw) {
+        // A value that is not finite is outside every range below, so each angle is
+        // named by its own refusal.
+        if !(-180.0..180.0).contains(&yaw) {
             return Err(IdentityError::Binding(format!(
                 "yaw {yaw} is not from -180 up to 180"
             )));
@@ -43,7 +44,7 @@ impl Perspective {
                 "pitch {pitch} is not from -90 to 90"
             )));
         }
-        if fov <= 0.0 || fov >= 180.0 {
+        if !(fov > 0.0 && fov < 180.0) {
             return Err(IdentityError::Binding(format!(
                 "fov {fov} is not between 0 and 180"
             )));
@@ -82,13 +83,13 @@ impl Basis {
     #[inline]
     pub fn to_panorama(&self, side: f64, width: f64, height: f64, x: f64, y: f64) -> (f64, f64) {
         let t = self.tan_half;
-        let cx = (2.0 * x / side - 1.0) * t;
-        let cy = (1.0 - 2.0 * y / side) * t;
+        let rightward = (2.0 * x / side - 1.0) * t;
+        let upward = (1.0 - 2.0 * y / side) * t;
         let (f, r, u) = (self.forward, self.right, self.up);
         let d = [
-            f[0] + cx * r[0] + cy * u[0],
-            f[1] + cx * r[1] + cy * u[1],
-            f[2] + cx * r[2] + cy * u[2],
+            f[0] + rightward * r[0] + upward * u[0],
+            f[1] + rightward * r[1] + upward * u[1],
+            f[2] + rightward * r[2] + upward * u[2],
         ];
         let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
         let lon = libm::atan2(d[1], d[0]);
@@ -124,8 +125,8 @@ impl Basis {
         if depth <= 1e-9 {
             return None;
         }
-        let cx = dot(self.right) / depth / self.tan_half;
-        let cy = dot(self.up) / depth / self.tan_half;
-        Some(((cx + 1.0) / 2.0 * side, (1.0 - cy) / 2.0 * side))
+        let rightward = dot(self.right) / depth / self.tan_half;
+        let upward = dot(self.up) / depth / self.tan_half;
+        Some(((rightward + 1.0) / 2.0 * side, (1.0 - upward) / 2.0 * side))
     }
 }

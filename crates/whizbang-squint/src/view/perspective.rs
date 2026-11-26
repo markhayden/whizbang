@@ -61,7 +61,12 @@ pub fn looked(
 /// `raster::sample` with its wrap, on four channels.
 fn sample(rgba: &[u8], width: u32, height: u32, x: f64, y: f64) -> [u8; 4] {
     let (w, h) = (f64::from(width), f64::from(height));
-    let fx = (x - 0.5).rem_euclid(w);
+    let mut fx = (x - 0.5).rem_euclid(w);
+    // A remainder of a small negative number can round to the width itself, which is
+    // column 0 in a wrapped space, as `Space::place` takes it.
+    if fx >= w {
+        fx = 0.0;
+    }
     let fy = (y - 0.5).clamp(0.0, h - 1.0);
     let x0 = (fx.floor() as u32).min(width - 1);
     let y0 = (fy.floor() as u32).min(height - 1);
