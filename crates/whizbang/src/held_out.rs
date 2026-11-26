@@ -91,32 +91,42 @@ pub fn ids_under(root: &Path) -> Vec<String> {
 }
 
 /// A refusal of a command over the sets `ids` under `root`, as a held-out set's may be
-/// shown: what is wrong with the first set that does not read; else the refusal itself when
-/// it names no path of the sets' folder and no item or family of theirs; else that it was
-/// refused, and the sets.
+/// shown: what is wrong with the first set that does not read; else the refusal itself only
+/// when it is of a form known to tell nothing ([`safe`]); else that it was refused, and the
+/// sets. What is passed is allowed, not what is caught: a path of any folder (the sets', the
+/// labels', the store's, the pictures'), a parser's text and a job's are all withheld alike.
 pub fn shown(root: &Path, ids: &[String], refused: &str) -> String {
     for id in ids {
         if let Some(said) = refusal(root, id) {
             return said;
         }
     }
-    let mut names: Vec<String> = vec![root.display().to_string()];
-    if let Ok(resolved) = root.canonicalize() {
-        names.push(resolved.display().to_string());
-    }
+    let mut names: Vec<String> = Vec::new();
     for id in ids {
         if let Ok(set) = sets::find(root, id) {
             names.extend(set.families_by_item().into_iter().flat_map(|(i, f)| [i, f]));
         }
     }
-    if names
-        .iter()
-        .any(|name| !name.is_empty() && refused.contains(name.as_str()))
-    {
-        let shown: Vec<String> = ids.iter().map(|id| printable(id)).collect();
-        return format!("{}: {WITHHELD}", shown.join(", "));
+    if safe(refused, ids, &names) {
+        return refused.to_owned();
     }
-    refused.to_owned()
+    let shown: Vec<String> = ids.iter().map(|id| printable(id)).collect();
+    format!("{}: {WITHHELD}", shown.join(", "))
+}
+
+/// The refusals that pass under `--held-out`: those about spend and counts (the allowance,
+/// the forecast, cells not ended or left to run), on one line, that hold no item or family
+/// id of the sets, and none of `/`, `\`, a quote, a backquote or a bar once the sets' own
+/// ids are taken out. A path, a TOML parser's text and a job's text each hold one of them.
+pub fn safe(refused: &str, ids: &[String], names: &[String]) -> bool {
+    const ABOUT: [&str; 4] = ["allowance", "forecast", "have not ended", "left to run"];
+    let mut rest = refused.trim_end().to_owned();
+    for id in ids {
+        rest = rest.replace(id.as_str(), "");
+    }
+    ABOUT.iter().any(|about| rest.contains(about))
+        && !rest.contains(['/', '\\', '"', '`', '|', '\n'])
+        && !(names.iter()).any(|name| !name.is_empty() && rest.contains(name.as_str()))
 }
 
 /// `eval sets fetch --from <dir> --held-out`: the pictures of a held-out set from a folder,

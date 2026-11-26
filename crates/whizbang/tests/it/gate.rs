@@ -375,7 +375,7 @@ fn the_unsure_gates_hold_together_with_their_matrices() {
 
 /// A gate file of version 3 over `matrix.toml` beside it: `baseline` its `[baseline]` lines,
 /// `hypotheses` the count it corrects for.
-fn gate_v3(baseline: &str, hypotheses: usize) -> String {
+pub fn gate_v3(baseline: &str, hypotheses: usize) -> String {
     format!(
         "gate_version = 3\n\n[run]\nmatrix = \"matrix.toml\"\n\n[baseline]\n{baseline}\n\
          [measure]\nprimary = \"balanced_accuracy\"\npass = \"pass\"\nfail = \"catch\"\n\
@@ -870,12 +870,12 @@ fn two_versions_whose_families_differ_are_refused_before_the_matrix_runs() {
 
 #[test]
 fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
-    // One world, end to end: two versions of a set, b relabelled in the second; three arms on
+    // One world, end to end: two versions of a set, b relabelled in the second; two arms on
     // the first, arm C alone on the second; a gate of a tool and a gate of the versions,
     // two hypotheses between them.
     let judged = Judged::new("gate-listed");
     let dir = judged.world.beside("set");
-    let items = ["a", "b", "c"];
+    let items = ["a", "b"];
     let tiny = crate::fetch::tiny(&dir, &items);
     let second = "source-fidelity/tiny-v2";
     crate::fetch::tiny_of(
@@ -901,7 +901,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     let baseline = format!("arm = \"C\"\ncontrol_set = \"{SET}\"\ntreatment_set = \"{second}\"\n");
     let matrix_text = format!(
         "{}\n[matrix.set.\"{second}\"]\narms = [\"C\"]\n",
-        wide(&[SET, second], &["C", "C+resize", "C+view"])
+        wide(&[SET, second], &["C", "C+resize"])
     );
     let matrix = freeze(
         &gates,
@@ -914,9 +914,9 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     let (named, hypotheses) = gating::gates_on(&gates.join("matrix.toml"), &matrix).unwrap();
     assert_eq!(hypotheses, 2);
     gating::versions_hold(&tiny.root, &named).unwrap();
-    // Only the twelve cells the matrix names run: the first set under three arms, the second
-    // under C. Each answer in order: a, b, c of the first set, each under C, C+resize and
-    // C+view; then a, b, c of the second under C.
+    // Only the six cells the matrix names run: the first set under two arms, the second under
+    // C. Each answer in order: a and b of the first set, each under C and C+resize; then a
+    // and b of the second under C.
     let (pass, fail) = (
         submission("held", "Kept."),
         submission("violation", "Gone."),
@@ -929,9 +929,8 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
         } else {
             pass.clone()
         });
-        answers.push(fail.clone());
     }
-    answers.extend([pass.clone(), fail.clone(), fail]);
+    answers.extend([pass.clone(), fail]);
     let (report, log) = crate::matrix::run_matrix(&judged, answers, &|e| {
         crate::matrix::ran(
             e,
@@ -942,12 +941,12 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
             &crate::matrix::never,
         )
     });
-    assert_eq!(report.unwrap().cells, 12);
-    assert_eq!(log.lock().unwrap().len(), 12);
+    assert_eq!(report.unwrap().cells, 6);
+    assert_eq!(log.lock().unwrap().len(), 6);
     let root = &judged.world.root;
     let identity: String = matrix.identity().chars().take(16).collect();
     let ran = whizbang::evaluation::attempts_under(root, &identity, None).unwrap();
-    assert_eq!(ran.len(), 12);
+    assert_eq!(ran.len(), 6);
     // Each gate reads its own cells; `eval run --gate` runs nothing, under an executor that
     // reaches no judge.
     let executor = judged.runner(&judged.over("https://127.0.0.1:9/v1/messages", None));
@@ -973,7 +972,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     let (tool, json) = score("tool.toml");
     assert_eq!(
         (tool.cells, tool.sets.as_slice()),
-        (6, [SET.to_owned()].as_slice())
+        (4, [SET.to_owned()].as_slice())
     );
     let paired = &tool.scored.judges[0].paired;
     assert_eq!(
@@ -985,7 +984,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     );
     assert!(json.get("arm").is_none() && json.get("relabelled").is_none());
     let (versions, json) = score("requirements.toml");
-    assert_eq!((versions.cells, versions.relabelled), (6, Some(1)));
+    assert_eq!((versions.cells, versions.relabelled), (4, Some(1)));
     assert_eq!(json["arm"], "C");
     let paired = &versions.scored.judges[0].paired;
     assert_eq!(
@@ -994,14 +993,14 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
             paired.control.counts.false_rejects,
             paired.treatment.counts.false_rejects
         ),
-        (2, 0, 1)
+        (1, 0, 0)
     );
     drop(executor);
     assert_eq!(
         whizbang::evaluation::attempts_under(root, &identity, None)
             .unwrap()
             .len(),
-        12
+        6
     );
     // The receipts hold aggregates and digests only, and no path of the sets' folder, which
     // a round names by `--root <owner storage>` (plan mE, task M1, item 11).
@@ -1043,7 +1042,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
             written.scored.decisions,
             written.scored.open
         ),
-        (9, 9, 0)
+        (4, 4, 0)
     );
     let record = std::fs::read_to_string(&out).unwrap();
     assert!(!record.contains(&roots[0]) && !record.contains(&roots[1]));

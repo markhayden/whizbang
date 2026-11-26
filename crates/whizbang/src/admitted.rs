@@ -2,8 +2,9 @@
 //! which tools a gate admitted): what the receipts of the gates run admitted, read from the
 //! receipts alone. A receipt admits what its gate file's `[admits]` names when its outcome
 //! is admitted, its gate is of rung 4, and every set it read is of split `blind` or
-//! `heldout`, data that admits (`SPEC.md` section 8, "Evaluation data"). A receipt of a rung
-//! 3 gate, of a gate on a dev or exposed set, of a gate that names nothing it admits, or of
+//! `heldout` and not exposed ([`whizbang_eval::gate::EXPOSED`]: `blind-v3`, whose split is
+//! `blind`, never admits; `SPEC.md` section 8, "Evaluation data"). A receipt of a rung 3
+//! gate, of a gate on a dev or exposed set, of a gate that names nothing it admits, or of
 //! version 1, admits nothing.
 
 use std::path::{Path, PathBuf};
@@ -49,8 +50,11 @@ pub fn admits(digest: &str, receipt: &serde_json::Value) -> Option<Admission> {
         return None;
     }
     let splits = receipt.get("splits")?.as_object()?;
+    let exposed = |id: &str| whizbang_eval::gate::EXPOSED.contains(&id);
     let admitting = !splits.is_empty()
-        && (splits.values()).all(|s| s.as_str().is_some_and(|s| ADMITTING_SPLITS.contains(&s)));
+        && (splits.iter()).all(|(id, s)| {
+            !exposed(id) && s.as_str().is_some_and(|s| ADMITTING_SPLITS.contains(&s))
+        });
     if !admitting {
         return None;
     }

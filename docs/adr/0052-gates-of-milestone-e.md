@@ -37,7 +37,10 @@ resumed matrix kept a failed cell failed without a rule written down for it.
 5. **One correction for the round.** Every gate on a matrix corrects for the same count of
    hypotheses: its gates' comparisons, one for each judge a gate compares, or, where the
    matrix states `hypotheses`, that count, which leaves room for the judge's rule's beside
-   them (21 in R4's tier 1, 27 with tier 2). A matrix that states a count resamples at
+   them, one for each judge in each scope it picks over. A round states its final count up
+   front, before its first cell: R4 states 27 if tier 2 may run, 21 otherwise, and a count
+   is never raised once a cell has run, since the count is in the matrix's identity. A
+   matrix that states a count resamples at
    `resamples_for(count)`, the larger of 20,000 and 20 × 2 × H ÷ 0.05 rounded up to a
    thousand, so each tail holds at least 20 draws; every gate of the round states it.
 6. **`judge-pick/2`** is `judge-pick/1`'s clauses at the level the matrix's correction gives,
@@ -53,7 +56,9 @@ resumed matrix kept a failed cell failed without a rule written down for it.
    comparison that excluded zero.
 8. **A tool file's method is frozen in an arm** (`C+regions@eomt`, or `{ tool = "regions",
    method = "eomt" }` in a table), in the arm's identity. `check` is given it as `methods`,
-   gives it to every call of that tool, and refuses a judge's call that names another.
+   gives it to every call of that tool, and refuses a judge's call that names another. A
+   tool file must declare a `method` argument for an arm to name one: `regions` gains its
+   methods with plan mE's task T2, and `C+regions@eomt` runs only after it.
 9. **A matrix may run past its forecast** (`eval matrix --past-forecast`): the forecast is
    printed and the matrix runs, each run admitted against the allowance; the first run the
    allowance refuses ends the matrix, the cells left named by count, and a run after a new
@@ -61,13 +66,21 @@ resumed matrix kept a failed cell failed without a rule written down for it.
    before.
 10. **Refusals tell nothing of a held-out set.** Under `--held-out`, every refusal of `eval
     sets check`, `eval sets fetch`, `eval matrix`, `eval run --gate` and `eval judges` names
-    only the set's id, an item's place in the set and the kind of problem.
+    only the set's id, an item's place in the set and the kind of problem. Anything else is
+    withheld but a refusal of a form known to tell nothing (about the allowance, the
+    forecast or cells left, on one line, with no path, quote or id of an item): what passes
+    is allowed, not what is caught.
 11. **What was admitted is read from the receipts.** A gate file of version 3 may state
     `[admits]` (its rung, and the tool, use case, format, wording or judge on trial); its
     receipt holds it, its sets' splits and the day its last cell ended. `whizbang eval
     admitted` lists what a receipt admitted: an admitted outcome of a rung 4 gate whose sets
-    are all `blind` or `heldout`. A rung 3 gate, or one on a dev or exposed set, admits
-    nothing. Each record that states its tool admitted names the receipt that admitted it.
+    are all `blind` or `heldout` and none exposed. A sealed set's split cannot be edited, so
+    the exposed sets are a committed list (`whizbang_eval::gate::EXPOSED`): `blind-v3`, of
+    split `blind`, and `blind-v1` and `blind-v2`, of split `heldout`, each used before. A
+    held-out set joins the list after its one round (R4 adds `confirm-v1` and its twin). A
+    rung 4 gate on an exposed set is refused when its matrix is read, and its receipt admits
+    nothing; so does a rung 3 gate, or one on a dev set. Each record that states its tool
+    admitted names the receipt that admitted it.
 12. **No retry of a failed cell.** A resumed matrix or gate never runs a failed cell again,
     by section 9: a failure counts as an error, which the 2% guardrail sees. Retrying when a
     failure follows the item would bias the measurement toward the items a judge can do.

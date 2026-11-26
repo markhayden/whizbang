@@ -101,3 +101,135 @@ fn a_held_out_refusal_names_no_path_no_item_and_no_text() {
     // Every set under the folder, as `eval sets check --held-out` names them.
     assert_eq!(held_out::ids_under(&set.root), ids);
 }
+
+/// A matrix of the held-out set under one judge, arm C, beside `dir`: its file.
+fn matrix_of_the_set(dir: &std::path::Path) -> std::path::PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    let file = dir.join("matrix.toml");
+    std::fs::write(
+        &file,
+        format!(
+            "[matrix]\nname = \"held\"\nsets = [\"{ID}\"]\narms = [\"C\"]\nrepetitions = 1\n\
+             [[matrix.judges]]\nbackend = \"default\"\nmodel = \"claude-haiku-5-5\"\n"
+        ),
+    )
+    .unwrap();
+    file
+}
+
+#[test]
+fn the_held_out_flag_withholds_what_eval_matrix_and_eval_judges_would_say() {
+    // Through the binary, so the wiring of each command's flag is what is held.
+    let world = crate::wired::World::new("held-out-commands");
+    let dir = world.beside("owner");
+    let set = crate::fetch::tiny_of(
+        &dir,
+        ID,
+        "source-fidelity",
+        &["candidate", "source"],
+        &["zebra-hidden", "okapi-hidden"],
+    );
+    let root = set.root.to_str().unwrap();
+    let matrix = matrix_of_the_set(&world.beside("matrices"));
+    let matrix = matrix.to_str().unwrap();
+    // eval matrix, over a set whose second job is malformed.
+    let job = set.root.join(ID).join("items/okapi-hidden/job.toml");
+    let kept = std::fs::read_to_string(&job).unwrap();
+    std::fs::write(&job, "[job\nbrief = \"the lion behind the fence\"\n").unwrap();
+    let args = ["eval", "matrix", "--matrix", matrix, "--root", root];
+    let plain = crate::wired::whizbang(&args, &world.root);
+    assert_ne!(plain.code, Some(0));
+    let held = crate::wired::whizbang(&[&args[..], &["--held-out"]].concat(), &world.root);
+    assert_ne!(held.code, Some(0));
+    assert!(
+        held.err.contains(&format!(
+            "{ID}: item 2: its job cannot be read as one check takes"
+        )),
+        "{}",
+        held.err
+    );
+    assert_eq!(
+        told(&held.err, &set.root),
+        Vec::<String>::new(),
+        "{}",
+        held.err
+    );
+    assert!(!held.err.contains(&world.root.display().to_string()));
+    std::fs::write(&job, kept).unwrap();
+    // eval judges, over the set made blind, its labels missing from the labels' folder: the
+    // plain refusal names that folder, the held-out one nothing.
+    let manifest = set.root.join(ID).join("set.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let labels_file = set.root.join(ID).join("labels.toml");
+    let digest =
+        whizbang_core::identity::Digest::of_bytes(&std::fs::read(&labels_file).unwrap()).hex();
+    std::fs::remove_file(&labels_file).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace("split = \"dev\"", "split = \"blind\"")
+            .replace(
+                "labels = \"labels.toml\"",
+                &format!("labels_sha256 = \"{digest}\""),
+            ),
+    )
+    .unwrap();
+    let labels = world.beside("labels-of-the-owner");
+    std::fs::create_dir_all(&labels).unwrap();
+    let out = world.beside("judges.toml");
+    let args = [
+        "eval",
+        "judges",
+        "--matrix",
+        matrix,
+        "--labels",
+        labels.to_str().unwrap(),
+        "--mode",
+        "judges",
+        "--arm",
+        "C",
+        "--out",
+        out.to_str().unwrap(),
+        "--root",
+        root,
+    ];
+    let plain = crate::wired::whizbang(&args, &world.root);
+    assert!(plain.err.contains("labels-of-the-owner"), "{}", plain.err);
+    let held = crate::wired::whizbang(&[&args[..], &["--held-out"]].concat(), &world.root);
+    assert_ne!(held.code, Some(0));
+    assert!(
+        held.err.contains(&format!("{ID}: {}", held_out::WITHHELD)),
+        "{}",
+        held.err
+    );
+    assert!(!held.err.contains("labels-of-the-owner"), "{}", held.err);
+    assert_eq!(
+        told(&held.err, &set.root),
+        Vec::<String>::new(),
+        "{}",
+        held.err
+    );
+    assert!(!out.exists());
+}
+
+#[test]
+fn only_refusals_known_to_tell_nothing_pass_under_held_out() {
+    let ids = [ID.to_owned()];
+    let names = ["zebra-hidden".to_owned(), "house".to_owned()];
+    for passes in [
+        "the matrix's forecast for its 3 runs still to run is 9 millionths of a dollar, more than the 1 the store's allowance has left; nothing was run",
+        "2 of the gate's 6 cells have not ended; run its matrix (`whizbang eval matrix`) to finish them",
+    ] {
+        let passes = passes.replace("(`whizbang eval matrix`) ", "");
+        assert!(held_out::safe(&passes, &ids, &names), "{passes}");
+    }
+    for withheld in [
+        "/owner/labels/source-fidelity/secret-v1/labels.toml: No such file or directory",
+        "a run of the matrix was refused: the allowance: /store/books",
+        "TOML parse error at line 1, column 5\n  |\n1 | [job",
+        "the allowance is spent for zebra-hidden",
+        "the job \"a lion\" was refused",
+        "a matrix's judges are the config's: name it with --config",
+    ] {
+        assert!(!held_out::safe(withheld, &ids, &names), "{withheld}");
+    }
+}

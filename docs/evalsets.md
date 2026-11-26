@@ -267,7 +267,9 @@ submission that left an item tentative, forecast at three times arm C; details s
 
 An arm may freeze a tool file's method: `C+regions@eomt`, or `{ arm = "C", tools = [{ tool =
 "regions", method = "eomt" }] }`, in its identity; `check` gives every call of that tool the
-method, and refuses a judge's call that names another.
+method, and refuses a judge's call that names another. The tool file must declare a `method`
+argument: `regions` gains its methods with plan mE's task T2, and `C+regions@eomt` runs only
+after it.
 
 `eval matrix --past-forecast` prints the forecast of the cells still to run and runs anyway:
 each run is admitted against the store's allowance as any run is, the first the allowance
@@ -278,7 +280,9 @@ failure counts as an error.
 **Held-out sets.** `--held-out` on `eval sets check`, `eval sets fetch`, `eval matrix`, `eval
 run --gate` and `eval judges` makes every refusal name only the set's id, an item's place in
 the set (from 1, never its id) and the kind of problem: no path, no parser's text, no job's
-text.
+text. Any other refusal is withheld unless it is of a form known to tell nothing: one line
+about the allowance, the forecast or cells not ended or left to run, with no item or family
+id and none of `/`, `\`, a quote, a backquote or a bar.
 
 `matrices/` holds squint's study matrices, ported, with the models of the Google and OpenAI
 judges named, the matrix of E1's evidence, and the matrix of plan e1's format round
@@ -311,7 +315,7 @@ file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix inst
   neither version's truth.
 - **Hypotheses.** Each gate's `[confidence] hypotheses` is the count over every gate the
   matrix names, one for each judge a gate compares. A matrix may state the round's whole
-  count at its top, `hypotheses = 21`, in its identity: at least its gates' comparisons, with
+  count at its top, `hypotheses = 27`, in its identity, stated once before the first cell: at least its gates' comparisons, with
   room for the judge's rule beside them; every gate then corrects for that count and
   resamples as it needs, the larger of 20,000 and 20 × 2 × H ÷ 0.05 rounded up to a thousand
   (each tail at least 20 draws). Its `[repetitions] count` is the most of any cell it reads.
@@ -323,8 +327,11 @@ file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix inst
   `use_case`, `format`, `wording` or `judge`) and `name`. Its receipt holds it, the split of
   each set it read and the day its last cell ended. `whizbang eval admitted [--receipts
   gates]` lists each thing a receipt admitted: an admitted outcome of a rung 4 gate whose sets
-  are all `blind` or `heldout`, with the receipt's digest and date. A rung 3 gate, or one on a
-  dev or exposed set, admits nothing.
+  are all `blind` or `heldout` and none exposed, with the receipt's digest and date. The
+  exposed sets are a committed list (`whizbang_eval::gate::EXPOSED`, ADR 0052): `blind-v3`,
+  whose split is `blind`, and `blind-v1` and `blind-v2`, both used before; a held-out set
+  joins it after its one round. A rung 4 gate on an exposed set is refused when its matrix is
+  read. A rung 3 gate, or one on a dev set, admits nothing.
 - **Running and scoring.** `whizbang eval matrix` runs the cells, and refuses before anything
   runs when a gate file the matrix names is missing, is not the bytes its digest names, does
   not name the matrix back, or does not hold (its arms, its count, its repetitions).
@@ -390,7 +397,8 @@ in code. It reads the store only, and never runs or sends anything.
   clause that settled it.
 - **`judge-pick/2`** (plan mE, task M1, item 6): `judge-pick/1`'s clauses at the level the
   matrix's correction gives (the matrix states `hypotheses`, at least its gates' comparisons
-  and one for each judge of the arm), at the resamples that count needs; inconclusive below
+  and one for each judge of the arm in each scope the rule picks over: one scope when every
+  set scored is source fidelity's, two otherwise), at the resamples that count needs; inconclusive below
   20 families, or with a tail the resamples cannot resolve.
 - **`submission/2`** (task M1, item 5): `submission/1`'s clauses over the items each judge
   scored under both arms; (a) pooled over the judges, (b) and (c) for each, (c) read on the

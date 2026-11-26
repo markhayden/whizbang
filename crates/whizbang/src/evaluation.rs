@@ -608,8 +608,9 @@ pub fn run_past_forecast(
             let report = summary(planned, labels, running.root, &identity, None)?;
             let left = report.not_run + report.interrupted;
             Err(format!(
-                "{why}; {left} of the matrix's {} cells are left to run: run it again after a \
-                 new allowance to resume",
+                "{why}; the matrix ran past its forecast {forecast} millionths of a dollar, and \
+                 {left} of the matrix's {} cells are left to run: run it again after a new \
+                 allowance to resume",
                 report.cells
             ))
         }

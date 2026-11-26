@@ -111,3 +111,54 @@ fn the_records_marks_are_the_receipts() {
         }
     }
 }
+
+#[test]
+fn an_exposed_set_admits_nothing_whatever_its_split() {
+    // `blind-v3` is of split `blind` and exposed (`SPEC.md` section 8): it never admits.
+    let digest = "cd".repeat(32);
+    let mut exposed = receipt("admitted", Some(4), "blind");
+    exposed["splits"] = serde_json::json!({"source-fidelity/blind-v3": "blind"});
+    assert_eq!(admitted::admits(&digest, &exposed), None);
+    exposed["splits"] = serde_json::json!({
+        "source-fidelity/confirm-v1": "heldout",
+        "source-fidelity/blind-v2": "heldout",
+    });
+    assert_eq!(admitted::admits(&digest, &exposed), None);
+    // The list holds every committed set of split blind or held out: each was seen or used
+    // before, so none admits.
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = repository.join("evalsets");
+    let mut found = Vec::new();
+    for id in whizbang::held_out::ids_under(&root) {
+        let set = whizbang_eval::sets::find(&root, &id).unwrap();
+        let split = set.manifest.set.split.to_string();
+        if split == "blind" || split == "heldout" {
+            found.push(id);
+        }
+    }
+    assert_eq!(found, whizbang_eval::gate::EXPOSED);
+    // A rung 4 gate on one is refused when its matrix is read.
+    let world = crate::wired::World::new("admitted-exposed");
+    let dir = world.beside("gates");
+    std::fs::create_dir_all(&dir).unwrap();
+    let gate = crate::gate::gate_v3("control = \"C\"\ntreatment = \"C+resize\"\n", 1)
+        + "\n[admits]\nrung = 4\nkind = \"tool\"\nname = \"resize\"\n";
+    std::fs::write(dir.join("tool.toml"), &gate).unwrap();
+    let matrix = format!(
+        "[matrix]\nname = \"exposed\"\nsets = [\"source-fidelity/blind-v3\"]\n\
+         arms = [\"C\", \"C+resize\"]\nrepetitions = 1\n\
+         [[matrix.judges]]\nbackend = \"default\"\nmodel = \"claude-haiku-5-5\"\n\
+         [gates]\n\"tool.toml\" = \"{}\"\n",
+        Digest::of_bytes(gate.as_bytes()).hex()
+    );
+    std::fs::write(dir.join("matrix.toml"), matrix).unwrap();
+    let refused = whizbang::gating::frozen(&dir.join("tool.toml")).unwrap_err();
+    assert!(refused.contains("blind-v3 is exposed"), "{refused}");
+    // A rung 4 gate across two versions names them: one exposed is refused as the file reads.
+    let versions = crate::gate::gate_v3(
+        "arm = \"C\"\ncontrol_set = \"source-fidelity/blind-v3\"\ntreatment_set = \"source-fidelity/confirm-v1\"\n",
+        1,
+    ) + "\n[admits]\nrung = 4\nkind = \"wording\"\nname = \"full\"\n";
+    let refused = whizbang_eval::gate::Gate::parse(&versions).unwrap_err();
+    assert!(refused.contains("exposed"), "{refused}");
+}

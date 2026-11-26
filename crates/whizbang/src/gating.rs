@@ -288,6 +288,22 @@ fn not_versions(control: &str, treatment: &str) -> String {
     )
 }
 
+/// A gate that would admit on rung 4 reads no exposed set
+/// ([`whizbang_eval::gate::EXPOSED`]): such a set never admits.
+fn refuse_exposed(gate: &Gate, comparisons: &[Comparison]) -> Result<(), String> {
+    let rung_4 = gate.admits.as_ref().is_some_and(|a| a.rung == 4);
+    let exposed = (comparisons.iter())
+        .flat_map(|c| &c.sets)
+        .find(|set| whizbang_eval::gate::EXPOSED.contains(&set.as_str()));
+    match (rung_4, exposed) {
+        (true, Some(set)) => Err(format!(
+            "a rung 4 gate admits, and {} is exposed: it admits nothing",
+            printable(set)
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// A gate file a matrix names: its path, its gate and what it compares.
 pub type Named = (PathBuf, Gate, Vec<Comparison>);
 
@@ -330,6 +346,7 @@ pub fn gates_on(matrix_file: &Path, matrix: &Matrix) -> Result<(Vec<Named>, usiz
             ));
         }
         let compared = comparisons(&gate, matrix).map_err(|why| format!("{shown}: {why}"))?;
+        refuse_exposed(&gate, &compared).map_err(|why| format!("{shown}: {why}"))?;
         let most = most_repetitions(&gate, matrix, &compared)?;
         if most != gate.repetitions.count {
             return Err(format!(
@@ -776,6 +793,7 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
 /// them is counted apart and scored under neither. Reads and writes nothing.
 pub fn score_read(frozen: &Frozen, read: &Read) -> Result<Receipt, String> {
     let gate = &frozen.gate;
+    refuse_exposed(gate, &frozen.comparisons)?;
     let matrix = &frozen.matrix;
     let compared = gate.compared()?;
     let ids = frozen.sets();

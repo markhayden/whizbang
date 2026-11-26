@@ -1830,10 +1830,19 @@ fn corrected(
             .filter(|(cell, of)| **of == at && cell.arm == arm)
             .map(|(cell, _)| (cell.backend.as_str(), cell.model.as_str()))
             .collect();
-        if gates + judges.len() > declared {
+        // The rule picks over all the sets scored and over source fidelity's: one family of
+        // intervals when every set scored is source fidelity's (the two scopes are one),
+        // two otherwise.
+        let scopes = if (expected.keys()).all(|cell| cell.set.starts_with("source-fidelity/")) {
+            1
+        } else {
+            2
+        };
+        let rule = judges.len() * scopes;
+        if gates + rule > declared {
             return Err(format!(
                 "the matrix {} states {declared} hypotheses, under its gates' {gates} and the \
-                 {} judges of the rule",
+                 rule's {rule}, {} judges in {scopes} scopes",
                 printable(&m.matrix.name),
                 judges.len()
             ));

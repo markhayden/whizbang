@@ -84,6 +84,17 @@ pub struct Admits {
     pub name: String,
 }
 
+/// The sets that are exposed (`SPEC.md` section 8, "Evaluation data"): seen, or scored
+/// before, whatever split their sealed manifests say, so a rung 4 gate on one admits nothing.
+/// `blind-v3` is the exposed regression set; `blind-v1` and `blind-v2`, of split `heldout`,
+/// were each used before. A held-out set joins this list after its one round (plan mE, task
+/// R4, adds `source-fidelity/confirm-v1` and its plain twin with its records).
+pub const EXPOSED: [&str; 3] = [
+    "source-fidelity/blind-v1",
+    "source-fidelity/blind-v2",
+    "source-fidelity/blind-v3",
+];
+
 /// The kinds of thing a gate may admit.
 pub const ADMITTED_KINDS: [&str; 5] = ["tool", "use_case", "format", "wording", "judge"];
 
@@ -364,7 +375,22 @@ impl Gate {
         if !r.matrix.split('/').all(plain) {
             return Err("the gate file: matrix is a plain path beside the gate".into());
         }
-        gate.compared()?;
+        // A rung 4 gate across two versions of a set names them: neither may be exposed.
+        if let (
+            Some(a),
+            Compared::Sets {
+                control, treatment, ..
+            },
+        ) = (&gate.admits, gate.compared()?)
+            && a.rung == 4
+            && [control, treatment]
+                .iter()
+                .any(|id| EXPOSED.contains(&id.as_str()))
+        {
+            return Err(
+                "the gate file: a rung 4 gate admits, and an exposed set admits nothing".into(),
+            );
+        }
         let f = &gate.families;
         if f.minimum == 0 || f.resamples == 0 || gate.repetitions.count == 0 {
             return Err("the gate file: families, resamples and repetitions are positive".into());

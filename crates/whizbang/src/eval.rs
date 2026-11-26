@@ -374,10 +374,16 @@ pub fn run(command: &Command) -> Result<String, String> {
 
 /// Under `--held-out`, the sets' folder and the ids of the sets the command reads.
 fn held_out_of(command: &Command) -> Option<(PathBuf, Vec<String>)> {
+    // The matrix read as `eval matrix` reads it, at most its limit of bytes.
     let sets_of = |file: &Path| -> Vec<String> {
-        std::fs::read_to_string(file)
-            .ok()
-            .and_then(|text| Matrix::parse(&text).ok())
+        use std::io::Read;
+        let mut text = String::new();
+        let read = std::fs::File::open(file)
+            .and_then(|opened| opened.take(MATRIX_FILE_LIMIT + 1).read_to_string(&mut text));
+        if read.is_err() || text.len() as u64 > MATRIX_FILE_LIMIT {
+            return Vec::new();
+        }
+        Matrix::parse(&text)
             .map(|m| m.matrix.sets)
             .unwrap_or_default()
     };
