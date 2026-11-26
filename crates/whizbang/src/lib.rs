@@ -6,6 +6,7 @@ pub mod backend_status;
 pub mod baseline;
 pub mod baseline_live;
 pub mod bundling;
+pub mod clicked;
 pub mod door;
 pub mod edits;
 pub mod edits_gate;

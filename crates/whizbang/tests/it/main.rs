@@ -12,6 +12,7 @@ mod catalogue;
 mod check;
 mod checked;
 mod cli;
+mod clicked;
 mod coverage;
 mod credential;
 mod describe;

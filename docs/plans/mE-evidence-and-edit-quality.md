@@ -1165,7 +1165,9 @@ Mac is the orchestrator's, and the box is ticked once it has passed there.
    pictures of `segmentation/segment-01`, SAM 3 on the Mac: a point request at a point inside
    each truth mask, one instance, its mask unshaped, against the same mask grown, closed and
    feathered as `remove` shapes a location's. Mask coverage of the truth mask, as
-   `eval loop score` reads it (plan e1's measure, under-covered below 0.95).
+   `eval loop score` reads it (plan e1's measure, under-covered below 0.95). The command:
+   `whizbang eval clicked` (`crates/whizbang/src/clicked.rs`), which says how the point is
+   chosen and prints the counts and the rule's outcome.
 2. **The rule, frozen here**: the recipe is built when the shaped mask is under-covered on at
    least 3 fewer pictures than the unshaped one. Otherwise the row closes with the counts.
 3. **If built**: a recipe that removes a thing from a mask a caller gives, shaped as `remove`
