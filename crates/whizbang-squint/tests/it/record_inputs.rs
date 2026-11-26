@@ -53,7 +53,10 @@ fn constructed() -> Vec<(&'static str, &'static str, &'static str, Image)> {
 #[test]
 fn the_inputs_written_are_the_images_the_records_tests_construct() {
     type Row = (&'static str, &'static str, &'static str, ArtifactId);
-    let written: Vec<Row> = inputs()
+    let tools = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/reference/tools");
+    let find = |path: &str| std::fs::read(tools.join(path)).ok();
+    let written: Vec<Row> = inputs(&find)
+        .unwrap()
         .into_iter()
         .map(|input| (input.tool, input.example, input.port, input.artifact.id()))
         .collect();
@@ -62,8 +65,8 @@ fn the_inputs_written_are_the_images_the_records_tests_construct() {
         .map(|(tool, example, port, image)| (tool, example, port, image.id()))
         .collect();
     assert_eq!(written, made);
-    let tools: Vec<&str> = written.iter().map(|row| row.0).collect();
+    let listed: Vec<&str> = written.iter().map(|row| row.0).collect();
     for tool in TOOLS {
-        assert!(tools.contains(&tool), "{tool} has no inputs");
+        assert!(listed.contains(&tool), "{tool} has no inputs");
     }
 }

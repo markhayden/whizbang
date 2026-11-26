@@ -629,6 +629,17 @@ pub fn tighten_strokes() -> [(&'static str, Vec<Point>, f64); 2] {
     ]
 }
 
+/// The box of `protect`'s first pass: `mask_rect`'s `box` "24 16 56 44", and the location
+/// `remove` is given.
+pub fn protect_box() -> Shape {
+    Shape::Box {
+        left: 24.0,
+        top: 16.0,
+        right: 56.0,
+        bottom: 44.0,
+    }
+}
+
 // --- every record's inputs ------------------------------------------------------------------------
 
 /// One input of a record's example: the tool, the example, the port of the example's call
@@ -902,20 +913,19 @@ fn of(tool: &str) -> Vec<Given> {
         // `protect` is given a first pass's composite and mask, which a fill makes: what is
         // written is what the first pass takes, the scene and, for `remove`, the box.
         "protect" => {
-            let shape = Shape::Box {
-                left: 24.0,
-                top: 16.0,
-                right: 56.0,
-                bottom: 44.0,
-            };
-            let location = fixed(Location::new(scene.binding(), shape, made_by("rect")));
+            let location = fixed(Location::new(
+                scene.binding(),
+                protect_box(),
+                made_by("rect"),
+            ));
             vec![
-                ("block", "image of the first pass", scene.clone().into()),
-                ("feathered", "image of the first pass", scene.clone().into()),
-                ("feathered", "location of the first pass", location.into()),
+                ("block", "image", scene.clone().into()),
+                ("feathered", "image", scene.clone().into()),
+                ("feathered", "location", location.into()),
             ]
         }
-        other => panic!("{other} has no record whose inputs are made here"),
+        // Every record of `TOOLS` is above; `inputs` gives no other.
+        _ => Vec::new(),
     }
 }
 
@@ -937,14 +947,17 @@ fn seams() -> Vec<(&'static str, &'static str, &'static str, Artifact)> {
             ("fan", "line", line.clone()),
             ("profile", "band", band.into()),
             ("profile", "image of band", canvas.clone()),
-            ("profile", "line of band", line),
+            ("profile", "line of band", line.clone()),
             ("ramp", "image", canvas.clone()),
             ("ramp", "mask", banded),
+            ("ramp", "line of mask", line.clone()),
             ("apply", "image", canvas.clone()),
             ("apply", "mask", ramped.clone()),
+            ("apply", "line of mask", line.clone()),
             ("measure", "after", image_of(&working).into()),
             ("measure", "before", canvas),
             ("measure", "mask", ramped),
+            ("measure", "line of mask", line),
         ];
         out.extend(
             given
