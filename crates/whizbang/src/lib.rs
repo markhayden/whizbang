@@ -8,6 +8,7 @@ pub mod baseline_live;
 pub mod bundling;
 pub mod door;
 pub mod edits;
+pub mod edits_gate;
 pub mod engining;
 pub mod evaluation;
 pub mod gating;

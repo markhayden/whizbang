@@ -40,6 +40,11 @@
 //! gave it can be worked out again (the carry-over list has the row: pictures whose size
 //! follows from their dimensions alone).
 //!
+//! The same page is drawn from runs already in the store (`--from-runs`, plan mE, task M2;
+//! [`pairs_from_runs`]): each case's finished run against the picture it was given or
+//! against another cases file's run of it, so a round that did not run through the lab,
+//! the loop's among them, is picked as a lab round is.
+//!
 //! The folder: by default `pairs/<a>-vs-<b>` under the corpus's folder, which the owner
 //! names and which is outside any repository. Refused inside the store, and inside a git
 //! work tree unless forced (`--force`); a link where the folder, `pictures` or a file is
@@ -59,6 +64,7 @@ use whizbang_eval::lab::decode::{Shown, Subset};
 use whizbang_eval::lab::digest_of;
 use whizbang_eval::lab::focus::{Changes, Focus};
 use whizbang_eval::lab::pairs::{self, Candidate, Share};
+use whizbang_eval::lab::protocol::Protocol;
 
 use crate::harness::{self, Ended};
 use crate::laboratory::{LabCell, Prepared};
@@ -494,31 +500,63 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
             b: shown[&(b.clone(), image.clone())].0.clone(),
         })
         .collect();
+    let drawn = Drawn {
+        protocol,
+        protocol_digest: &validated.protocol_digest,
+        candidates,
+        by_cell: (shown.values())
+            .map(|(s, id)| (s.cell.clone(), *id))
+            .collect(),
+        sources: prepared.pictures.clone(),
+        limit: asked.limit,
+    };
+    write_drawn(&drawn, asked.root, &out)
+}
+
+/// Pairs drawn and ready to be written: the shared end of [`pairs`] and
+/// [`pairs_from_runs`].
+struct Drawn<'a> {
+    protocol: &'a Protocol,
+    protocol_digest: &'a str,
+    /// In the order [`pairs::chosen`] gives.
+    candidates: Vec<Candidate>,
+    /// The picture each side's cell shows.
+    by_cell: BTreeMap<String, ArtifactId>,
+    /// The picture each pair's results started from, by the pair's id.
+    sources: BTreeMap<String, ArtifactId>,
+    limit: Option<u32>,
+}
+
+/// Draws the order and sides of the pairs and writes the page, its pictures and the
+/// assignment in `out` (the module's description says what).
+fn write_drawn(drawn: &Drawn<'_>, root: &Path, out: &Path) -> Result<Written, String> {
+    let protocol = drawn.protocol;
+    let candidates = &drawn.candidates;
     let of = protocol.images().count();
-    let subset = asked.limit.map(|limit| Subset {
+    let subset = drawn.limit.map(|limit| Subset {
         limit,
         of: of as u32,
     });
-    let assignment = pairs::draw(protocol, &validated.protocol_digest, &candidates, subset);
-    let shares = match asked.limit {
+    let assignment = pairs::draw(protocol, drawn.protocol_digest, candidates, subset);
+    let shares = match drawn.limit {
         Some(limit) => pairs::shares(protocol, limit)?,
         None => Vec::new(),
     };
-    folder(&out)?;
+    folder(out)?;
     folder(&out.join("pictures"))?;
     let text = serde_json::to_string_pretty(&assignment).map_err(|e| e.to_string())? + "\n";
     let mut bytes = write_new(&out.join("assignment.json"), text.as_bytes())?;
     let digest = digest_of(text.as_bytes());
-    let reader = Reader::open(asked.root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
-    let by_cell: BTreeMap<&str, ArtifactId> = (shown.values())
-        .map(|(s, id)| (s.cell.as_str(), *id))
-        .collect();
+    let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+    let by_cell = &drawn.by_cell;
     let mut on_page = Vec::new();
     for (n, pair) in assignment.pair.iter().enumerate() {
         let file = format!("{:03}", n + 1);
         let (left, topology) = picture(&reader, by_cell[pair.left.cell.as_str()])?;
         let (right, _) = picture(&reader, by_cell[pair.right.cell.as_str()])?;
-        let (source, _) = picture(&reader, prepared.pictures[&pair.id])?;
+        let source = (drawn.sources.get(&pair.id))
+            .ok_or("a pair has no picture its results started from; no page was finished")?;
+        let (source, _) = picture(&reader, *source)?;
         let (width, height) = (left.width(), left.height());
         if (right.width(), right.height()) != (width, height) {
             return Err(format!(
@@ -575,7 +613,7 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
     let summary = format!(
         "{} pairs; protocol {}.",
         assignment.pair.len(),
-        validated.protocol_digest
+        drawn.protocol_digest
     );
     let subset_words = match subset {
         Some(Subset { limit, of }) => format!(
@@ -596,4 +634,101 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
         min_decided: protocol.min_decided,
         bytes,
     })
+}
+
+/// What `whizbang lab pairs --from-runs` is given (plan mE, task M2, item 4).
+pub struct FromRuns<'a> {
+    /// The cases file whose runs are arm `a`, the recipe.
+    pub cases: &'a Path,
+    /// The protocol: its arms, its seed and its groups of case ids.
+    pub protocol: &'a Path,
+    /// Another cases file whose runs of the same cases are arm `b`; without it, arm `b` is
+    /// the picture each of arm `a`'s runs was given.
+    pub reference: Option<&'a Path>,
+    pub root: &'a Path,
+    pub out: &'a Path,
+    pub limit: Option<u32>,
+    pub force: bool,
+}
+
+/// Each case's finished run, by case id: its run's id, the picture it was given and its
+/// finished picture. A case of the protocol whose run did not finish is refused.
+fn finished_of(
+    file: &Path,
+    root: &Path,
+    chosen: &[(String, String)],
+) -> Result<BTreeMap<String, (String, ArtifactId, ArtifactId)>, String> {
+    let bytes = crate::loop_score::read_limited(file, "the cases")?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| "the cases are not UTF-8")?;
+    let cases = whizbang_eval::edit_gate::Cases::parse(text)?;
+    let held = crate::edits_gate::case_runs(root, &cases)?;
+    let mut out = BTreeMap::new();
+    for r in &held.runs {
+        if let (Some(run), true, Some(given), Some(image)) = (&r.run, r.finished, r.given, r.image)
+        {
+            out.insert(r.case.id.clone(), (run.clone(), given, image));
+        }
+    }
+    let unfinished = (chosen.iter())
+        .filter(|(id, _)| !out.contains_key(id))
+        .count();
+    if unfinished > 0 {
+        return Err(format!(
+            "{unfinished} cases the protocol judges have no finished run in the store; no \
+             page was written"
+        ));
+    }
+    Ok(out)
+}
+
+/// Writes the blinded pairs of runs already in the store, as [`pairs`] writes a round's:
+/// for each case the protocol judges, arm `a` the finished picture of its run (a recipe's,
+/// or the loop's kept one), arm `b` the picture that run was given or the finished picture
+/// of the reference cases' run of the same case, drawn by the protocol's seed. A side names
+/// its run by its id; the picture given, by `source.<case>`. `whizbang lab decode` reads
+/// what it writes unchanged.
+pub fn pairs_from_runs(asked: &FromRuns<'_>) -> Result<Written, String> {
+    let out = checked_out(asked.out, asked.root, asked.force)?;
+    let bytes = crate::loop_score::read_limited(asked.protocol, "the protocol")?;
+    let (protocol, digest) = Protocol::parse(&bytes)?;
+    let chosen = pairs::chosen(&protocol, asked.limit)?;
+    let ours = finished_of(asked.cases, asked.root, &chosen)?;
+    let reference = match asked.reference {
+        Some(file) => Some(finished_of(file, asked.root, &chosen)?),
+        None => None,
+    };
+    let (mut by_cell, mut sources) = (BTreeMap::new(), BTreeMap::new());
+    let mut candidates = Vec::new();
+    for (case, group) in &chosen {
+        let (run, given, image) = &ours[case];
+        by_cell.insert(run.clone(), *image);
+        sources.insert(case.clone(), *given);
+        let b = match &reference {
+            Some(reference) => {
+                let (other, _, finished) = &reference[case];
+                by_cell.insert(other.clone(), *finished);
+                shown_as(other, 0)
+            }
+            None => {
+                let source = format!("source.{case}");
+                by_cell.insert(source.clone(), *given);
+                shown_as(&source, 0)
+            }
+        };
+        candidates.push(Candidate {
+            image: case.clone(),
+            group: group.clone(),
+            a: shown_as(run, 0),
+            b,
+        });
+    }
+    let drawn = Drawn {
+        protocol: &protocol,
+        protocol_digest: &digest,
+        candidates,
+        by_cell,
+        sources,
+        limit: asked.limit,
+    };
+    write_drawn(&drawn, asked.root, &out)
 }

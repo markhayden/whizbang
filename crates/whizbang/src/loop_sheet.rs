@@ -29,6 +29,9 @@
 //! - `assignment.json`: the seed, and each picture's place, key, item, run and attempt.
 //!   The page never reads it, and the person does not open it.
 //!
+//! `--cases` makes the same sheet of any recipe's runs ([`sheet_of_cases`]; plan mE, task
+//! M2): one picture a case, its run's finished one, beside the picture that run was given.
+//!
 //! What an inspecting person could still find: `assignment.json` beside the page; and
 //! that a picture whose phrase and original appear more than once was a run that made
 //! more than one fill.
@@ -141,24 +144,31 @@ fn pixels_of(reader: &Reader, id: ArtifactId) -> Result<CanonicalPixels, String>
     }
 }
 
-/// Writes the contact sheet (the module's description says what). Refused, with nothing
-/// written, when `--out` is inside a git work tree.
-pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
-    if crate::edits::inside_a_work_tree(asked.out) {
+/// Refused, with nothing written, when the sheet's folder is inside a git work tree, or is
+/// there and not empty.
+fn fresh(out: &Path) -> Result<(), String> {
+    if crate::edits::inside_a_work_tree(out) {
         return Err(
             "the contact sheet's folder is inside a git work tree; its pictures are never \
              committed, so name a folder outside it; nothing was written"
                 .to_owned(),
         );
     }
-    let occupied = std::fs::read_dir(asked.out).is_ok_and(|mut e| e.next().is_some());
-    if occupied || asked.out.is_file() {
+    let occupied = std::fs::read_dir(out).is_ok_and(|mut e| e.next().is_some());
+    if occupied || out.is_file() {
         return Err(
             "the contact sheet's folder is there and not empty; name a new or empty folder; \
              nothing was written"
                 .to_owned(),
         );
     }
+    Ok(())
+}
+
+/// Writes the contact sheet (the module's description says what). Refused, with nothing
+/// written, when `--out` is inside a git work tree.
+pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
+    fresh(asked.out)?;
     let (manifest, _): (Manifest, String) = Manifest::read(asked.manifest)?;
     let runs = loop_score::runs_of(asked.root, &manifest, asked.judge)?;
     let mut fills = Vec::new();
@@ -207,6 +217,82 @@ pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
             file,
             key,
             phrase: entry.phrase.clone(),
+        });
+    }
+    let assignment = loop_score::Assignment {
+        seed,
+        pictures: assigned,
+    };
+    let text = serde_json::to_string_pretty(&assignment).map_err(|e| e.to_string())? + "\n";
+    bytes += write_new(&asked.out.join("assignment.json"), text.as_bytes())?;
+    let summary = format!(
+        "{} pictures, in an order drawn from a seed; sheet {}.",
+        on_sheet.len(),
+        &digest_of(text.as_bytes())[7..23]
+    );
+    let html = page(&summary, &loop_score::sheet_id(seed), &on_sheet);
+    bytes += write_new(&asked.out.join("index.html"), html.as_bytes())?;
+    Ok(Written {
+        pictures: on_sheet.len(),
+        bytes,
+    })
+}
+
+/// What `eval loop sheet --cases` is given (plan mE, task M2, item 3).
+pub struct AskedCases<'a> {
+    /// The cases file, `edit-cases/1`: any action's runs, by request id.
+    pub cases: &'a Path,
+    pub root: &'a Path,
+    pub out: &'a Path,
+}
+
+/// The contact sheet of any recipe's runs: for each case whose run finished, the picture
+/// it was given and its finished picture (its output `image`), both from the store, with
+/// what the case says was to be removed or mended, in an order drawn from a seed drawn for
+/// this sheet, and the same marks to set. A picture goes by the key of its run and the
+/// attempt 0, which stands for the run's finished picture; `eval edits gate --labels`
+/// reads the marks with the assignment. Refused as [`sheet`] is.
+pub fn sheet_of_cases(asked: &AskedCases<'_>) -> Result<Written, String> {
+    fresh(asked.out)?;
+    let bytes = loop_score::read_limited(asked.cases, "the cases")?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| "the cases are not UTF-8")?;
+    let cases = whizbang_eval::edit_gate::Cases::parse(text)?;
+    let held = crate::edits_gate::case_runs(asked.root, &cases)?;
+    let finished: Vec<_> = (held.runs.iter())
+        .filter_map(|r| match (&r.run, r.finished, r.given, r.image) {
+            (Some(run), true, Some(given), Some(image)) => Some((r.case, run, given, image)),
+            _ => None,
+        })
+        .collect();
+    if finished.is_empty() {
+        return Err("the store holds no finished run of these cases; nothing was written".into());
+    }
+    let reader = Reader::open(asked.root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+    let seed = fresh_seed()?;
+    folder(asked.out)?;
+    let pictures = asked.out.join("pictures");
+    folder(&pictures)?;
+    let (mut bytes, mut on_sheet, mut assigned) = (0, Vec::new(), Vec::new());
+    for (place, at) in order(finished.len(), seed).into_iter().enumerate() {
+        let (case, run, given, image) = finished[at];
+        let file = format!("{:03}", place + 1);
+        for (side, id) in [("source", given), ("edited", image)] {
+            let pixels = pixels_of(&reader, id)?;
+            let encoded = png(pixels.rgba(), pixels.width(), pixels.height())?;
+            bytes += write_new(&pictures.join(format!("{file}-{side}.png")), &encoded)?;
+        }
+        let key = loop_score::key(seed, run, 0);
+        assigned.push(loop_score::Assigned {
+            picture: file.clone(),
+            key: key.clone(),
+            item: case.id.clone(),
+            run: run.clone(),
+            attempt: 0,
+        });
+        on_sheet.push(OnSheet {
+            file,
+            key,
+            phrase: case.what.clone().unwrap_or_default(),
         });
     }
     let assignment = loop_score::Assignment {

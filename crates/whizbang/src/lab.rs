@@ -58,13 +58,34 @@ pub enum Command {
     /// only as a file you save (`picks.json`); open a saved one on it to resume. Takes the
     /// round's own matrix, corpus folder and config, and reads the store; refused while a
     /// cell has no completed attempt. Prints counts and the assignment's digest.
+    ///
+    /// With --from-runs, the pairs of runs already in the store, any action's (plan mE,
+    /// task M2): for each case the protocol judges, the finished picture of the run its
+    /// cases file names against the picture that run was given, or against the finished
+    /// picture of --reference-runs' run of the same case. Refused while a case the protocol
+    /// judges has no finished run.
     Pairs {
         /// The matrix file; the corpus manifest and the protocol it names are beside it.
-        #[arg(long, value_name = "FILE")]
-        matrix: PathBuf,
+        #[arg(long, value_name = "FILE", required_unless_present = "from_runs")]
+        matrix: Option<PathBuf>,
         /// The folder the corpus manifest's files are relative to.
-        #[arg(long, value_name = "DIR")]
-        corpus: PathBuf,
+        #[arg(long, value_name = "DIR", required_unless_present = "from_runs")]
+        corpus: Option<PathBuf>,
+        /// The cases (`edit-cases/1`) whose runs are the protocol's arm a.
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with_all = ["matrix", "corpus"],
+            requires_all = ["protocol", "out"]
+        )]
+        from_runs: Option<PathBuf>,
+        /// With --from-runs: the protocol the pairs are drawn under.
+        #[arg(long, value_name = "FILE", requires = "from_runs")]
+        protocol: Option<PathBuf>,
+        /// With --from-runs: the cases whose runs of the same cases are arm b; without it,
+        /// arm b is the picture each run was given.
+        #[arg(long, value_name = "FILE", requires = "from_runs")]
+        reference_runs: Option<PathBuf>,
         /// The folder the page, its pictures and the assignment are written in: by default
         /// `pairs/<a>-vs-<b>` in the corpus's folder. Never the store's; never inside a git
         /// work tree unless --force.
@@ -164,13 +185,36 @@ pub fn run(command: &Command, platform: Platform) -> Result<(String, Option<Stri
             Ok((report.text(), report.failure()))
         }
         Command::Pairs {
-            matrix,
-            corpus,
+            from_runs: Some(cases),
+            protocol: Some(protocol),
+            reference_runs,
+            out: Some(out),
+            limit,
+            force,
+            at,
+            ..
+        } => {
+            let asked = whizbang::pairs_page::FromRuns {
+                cases,
+                protocol,
+                reference: reference_runs.as_deref(),
+                root: at.root(),
+                out,
+                limit: *limit,
+                force: *force,
+            };
+            let written = whizbang::pairs_page::pairs_from_runs(&asked)?;
+            Ok((written.text(), None))
+        }
+        Command::Pairs {
+            matrix: Some(matrix),
+            corpus: Some(corpus),
             out,
             limit,
             force,
             at,
             under,
+            ..
         } => {
             let over = under.over(Some(platform), Uses::Every)?;
             // A folder named that cannot be written is refused before the round is read.
@@ -198,6 +242,10 @@ pub fn run(command: &Command, platform: Platform) -> Result<(String, Option<Stri
             )?;
             Ok((written.text(), None))
         }
+        Command::Pairs { .. } => Err(
+            "lab pairs takes --matrix and --corpus, or --from-runs with --protocol and --out"
+                .to_owned(),
+        ),
         Command::Decode {
             protocol,
             assignment,
