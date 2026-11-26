@@ -16,6 +16,7 @@ mod job;
 mod locate;
 mod panorama;
 mod record;
+mod record_inputs;
 mod replay;
 mod resize;
 mod resize_record;

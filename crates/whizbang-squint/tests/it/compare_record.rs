@@ -16,7 +16,7 @@ use super::support::*;
 
 /// The `before` scene with a box made grey at the same luminance (Rec. 601, rounded):
 /// its colour taken away, its structure kept.
-fn desaturated() -> Image {
+pub fn desaturated() -> Image {
     let pixels = fixture("before").pixels(&limits()).unwrap();
     let rgba = pixels.rgba().to_vec();
     let width = pixels.width();
