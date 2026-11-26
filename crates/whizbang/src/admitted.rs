@@ -5,7 +5,8 @@
 //! `heldout` and not exposed ([`whizbang_eval::gate::EXPOSED`]: `blind-v3`, whose split is
 //! `blind`, never admits; `SPEC.md` section 8, "Evaluation data"). A receipt of a rung 3
 //! gate, of a gate on a dev or exposed set, of a gate that names nothing it admits, or of
-//! version 1, admits nothing.
+//! version 1, admits nothing. An edit gate's receipt (`edit-receipt/1`, plan mE, task M2)
+//! admits its recipe when it is admitted on rung 4 with task success read from marks.
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +25,7 @@ pub const DEPTH_LIMIT: usize = 4;
 /// One thing a receipt admitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Admission {
-    /// `tool`, `use_case`, `format`, `wording` or `judge`.
+    /// `tool`, `use_case`, `format`, `wording`, `judge` or, of an edit gate, `recipe`.
     pub kind: String,
     pub name: String,
     /// The SHA-256 of the receipt's bytes.
@@ -37,6 +38,9 @@ pub struct Admission {
 /// What one receipt admits: its digest and its JSON.
 pub fn admits(digest: &str, receipt: &serde_json::Value) -> Option<Admission> {
     let text = |key: &str| receipt.get(key).and_then(serde_json::Value::as_str);
+    if text("receipt") == Some(whizbang_eval::edit_gate::RECEIPT) {
+        return admits_an_edit(digest, receipt);
+    }
     if receipt
         .get("receipt_version")
         .and_then(serde_json::Value::as_u64)
@@ -56,6 +60,28 @@ pub fn admits(digest: &str, receipt: &serde_json::Value) -> Option<Admission> {
             !exposed(id) && s.as_str().is_some_and(|s| ADMITTING_SPLITS.contains(&s))
         });
     if !admitting {
+        return None;
+    }
+    Some(Admission {
+        kind: admits.get("kind")?.as_str()?.to_owned(),
+        name: admits.get("name")?.as_str()?.to_owned(),
+        receipt_sha256: digest.to_owned(),
+        gate_sha256: text("gate_sha256")?.to_owned(),
+        date: text("date")?.to_owned(),
+    })
+}
+
+/// What an edit gate's receipt admits (plan mE, task M2): its recipe, when its outcome is
+/// admitted, its gate and what it admits are of rung 4, and its task success was read from
+/// a person's marks (`SPEC.md` section 8, "Scoring edits": a rung 4 result rests on labels
+/// or blinded review that squint did not produce).
+fn admits_an_edit(digest: &str, receipt: &serde_json::Value) -> Option<Admission> {
+    let text = |key: &str| receipt.get(key).and_then(serde_json::Value::as_str);
+    let rung = |value: Option<&serde_json::Value>| value.and_then(serde_json::Value::as_u64);
+    let admits = receipt.get("admits")?;
+    let marked = receipt.get("success")?.get("from")?.as_str() == Some("marks");
+    let fourth = rung(receipt.get("rung")) == Some(4) && rung(admits.get("rung")) == Some(4);
+    if text("outcome") != Some("admitted") || !marked || !fourth {
         return None;
     }
     Some(Admission {
