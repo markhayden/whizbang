@@ -374,3 +374,106 @@ fn median_u64(v: &mut [u64]) -> u64 {
         (v[n / 2 - 1] + v[n / 2]) / 2
     }
 }
+
+/// Two arms compared by the share of expected failures caught (plan mE, task M1, item 14;
+/// the study's measure, `docs/results/2026-11-tool-study.md`, "Method"): over the items
+/// labelled fail that both arms scored, resampled over the families that hold one.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CatchPaired {
+    /// Items labelled fail scored under both arms.
+    pub items: usize,
+    /// Families with at least one of them: what is resampled.
+    pub families: usize,
+    pub control: f64,
+    pub treatment: f64,
+    /// Treatment minus control in the share caught; `None` without an item labelled fail.
+    pub gain: Option<Interval>,
+}
+
+/// The catch-rate comparison of two arms. An item's catch is whether its verdict is a fail:
+/// repetition 1 alone, or, with `mean`, the mean over every repetition each arm scored.
+pub fn paired_catch(
+    control: &[Row],
+    treatment: &[Row],
+    how: Resampling,
+    mean: bool,
+) -> Result<CatchPaired, String> {
+    // Each item's share caught under one arm, with its family.
+    let shares = |rows: &[Row]| -> BTreeMap<(String, String), (String, f64)> {
+        let mut by: BTreeMap<(String, String), (String, usize, usize)> = BTreeMap::new();
+        for r in rows.iter().filter(|r| r.expected == Expected::Fail) {
+            if !mean && r.repetition != 1 {
+                continue;
+            }
+            let entry = (by.entry((r.set.clone(), r.item.clone())))
+                .or_insert_with(|| (r.family.clone(), 0, 0));
+            entry.1 += usize::from(r.computed == Computed::Fail);
+            entry.2 += 1;
+        }
+        (by.into_iter())
+            .map(|(key, (family, caught, seen))| (key, (family, caught as f64 / seen as f64)))
+            .collect()
+    };
+    let (c, x) = (shares(control), shares(treatment));
+    // By family: the control's catches, the treatment's, and the items.
+    let mut families: BTreeMap<String, (f64, f64, usize)> = BTreeMap::new();
+    for (key, (family, caught)) in &c {
+        let Some((other, treated)) = x.get(key) else {
+            continue;
+        };
+        if other != family {
+            return Err(format!(
+                "the item {}/{} is in two families in the two arms",
+                key.0, key.1
+            ));
+        }
+        let entry = families.entry(format!("{}/{family}", key.0)).or_default();
+        entry.0 += caught;
+        entry.1 += treated;
+        entry.2 += 1;
+    }
+    let families: Vec<(f64, f64, usize)> = families.into_values().collect();
+    let total = |drawn: &mut dyn Iterator<Item = &(f64, f64, usize)>| {
+        let (mut c, mut t, mut n) = (0.0, 0.0, 0usize);
+        for (fc, ft, fn_) in drawn {
+            c += fc;
+            t += ft;
+            n += fn_;
+        }
+        (c, t, n)
+    };
+    let (sc, st, n) = total(&mut families.iter());
+    let rate = |v: f64| if n == 0 { 0.0 } else { v / n as f64 };
+    let gain = if n == 0 {
+        None
+    } else {
+        let mut estimates = Vec::with_capacity(how.resamples);
+        for picks in bootstrap::resample_indices(how.seed, families.len(), how.resamples)? {
+            let (dc, dt, dn) = total(&mut picks.iter().map(|&i| &families[i]));
+            estimates.push(if dn == 0 { 0.0 } else { (dt - dc) / dn as f64 });
+        }
+        estimates.sort_by(f64::total_cmp);
+        let lower_percentile = how.alpha / 2.0 / how.hypotheses.max(1) as f64;
+        Some(Interval {
+            seed: how.seed,
+            resamples: how.resamples,
+            hypotheses: how.hypotheses,
+            families: families.len(),
+            differing_families: (families.iter()).filter(|(fc, ft, _)| fc != ft).count(),
+            point: (st - sc) / n as f64,
+            lower_percentile,
+            upper_percentile: 1.0 - lower_percentile,
+            lower: bootstrap::quantile_type7(&estimates, lower_percentile),
+            upper: bootstrap::quantile_type7(&estimates, 1.0 - lower_percentile),
+            insufficient_tail: lower_percentile * (how.resamples as f64)
+                < bootstrap::MIN_TAIL_RESAMPLES,
+        })
+    };
+    Ok(CatchPaired {
+        items: n,
+        families: families.len(),
+        control: rate(sc),
+        treatment: rate(st),
+        gain,
+    })
+}

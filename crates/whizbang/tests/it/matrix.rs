@@ -973,3 +973,108 @@ fn the_submission_round_is_1320_cells_forecast_within_its_store_and_capped_by_it
     let cap = bounds.iter().max().unwrap() + 10_000;
     assert_eq!(cap, 977_680);
 }
+
+/// An executor whose ledger admits `admits` runs, and declines every later one for the
+/// allowance, as the store's does once it is spent.
+struct Allowance<'a> {
+    inner: &'a dyn Executor,
+    admits: Mutex<usize>,
+}
+
+impl Executor for Allowance<'_> {
+    fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
+        self.inner.prepare(call)
+    }
+    fn submit(&self, call: &Call) -> Result<whizbang_core::contract::Finished, CallError> {
+        self.inner.submit(call)
+    }
+    fn request(&self, request: &Request) -> Result<Answer, CallError> {
+        self.inner.request(request)
+    }
+    fn start(&self, request: &Request) -> Result<Answer, CallError> {
+        let mut left = self.admits.lock().unwrap();
+        if *left == 0 {
+            return Err(CallError::Refused(
+                whizbang_core::contract::Refusal::OverAllowance {
+                    action: "check".to_owned(),
+                    asked_micros: 112_768,
+                    left_micros: 0,
+                },
+            ));
+        }
+        *left -= 1;
+        self.inner.start(request)
+    }
+    fn status(&self, run: &RunId) -> Result<Watched, CallError> {
+        self.inner.status(run)
+    }
+    fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
+        self.inner.wait(run)
+    }
+    fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
+        self.inner.cancel(run)
+    }
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
+        self.inner.request_id(text)
+    }
+}
+
+#[test]
+fn past_its_forecast_a_matrix_stops_at_the_allowance_and_resumes() {
+    // Plan mE, task M1, item 13: the forecast is advice, the allowance the limit.
+    let (judged, tiny) = world_with("matrix-past-forecast", &["a", "b", "c"]);
+    let matrix = matrix_of("C", 1, 1);
+    let (planned, labels): Planning =
+        evaluation::plan(&matrix, &tiny.root, &judged.world.root).unwrap();
+    let past = |e: &dyn Executor, admits: usize| {
+        let allowance = Allowance {
+            inner: e,
+            admits: Mutex::new(admits),
+        };
+        let running = Running {
+            executor: &allowance,
+            root: &judged.world.root,
+            // Under the forecast: without the flag, nothing would run.
+            left_micros: 1,
+            stop: &never,
+        };
+        evaluation::run_past_forecast(&matrix, &planned, &labels, &running)
+    };
+    // One judge on loopback for the three cells.
+    let (listener, log) = serving(&judged.pki, vec![submission("held", "Kept."); 3]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = judged.runner(&over);
+    // One run is admitted, the next declined: the matrix ends, two cells left by count, and
+    // the forecast it ran past said.
+    let refused = past(&executor, 1).unwrap_err();
+    assert!(
+        refused.contains(
+            "2 of the matrix's 3 cells are left to run: run it again after a new allowance"
+        ),
+        "{refused}"
+    );
+    assert!(
+        refused.contains(&format!("forecast {} millionths", 3 * 2 * 3_293)),
+        "{refused}"
+    );
+    // Run again under a new allowance, it resumes: the two left, and the forecast said.
+    let (forecast, report) = past(&executor, 10).unwrap();
+    assert_eq!(forecast, 2 * 2 * 3_293);
+    assert_eq!(
+        (report.started, report.completed, report.not_run),
+        (2, 3, 0)
+    );
+    // Without the flag, a matrix whose forecast passes the allowance is refused before a run.
+    let fresh = matrix_of("C", 2, 1);
+    let refused = ran(&executor, &judged, &tiny, &fresh, 1, &never).unwrap_err();
+    assert!(refused.contains("nothing was run"), "{refused}");
+    drop(executor);
+    listener.finish();
+    assert_eq!(log.lock().unwrap().len(), 3);
+}

@@ -41,6 +41,14 @@ pub enum Command {
         /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
         #[arg(long, value_name = "DIR", default_value = "evalsets")]
         root: PathBuf,
+        /// Print the forecast and run anyway: each run is admitted against the allowance as
+        /// any run is, and the first refused for it ends the matrix, the cells left to run
+        /// named by count; run again after a new allowance, it resumes.
+        #[arg(long)]
+        past_forecast: bool,
+        /// Every refusal names only a set's id, an item's place and the kind of problem.
+        #[arg(long)]
+        held_out: bool,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -66,6 +74,9 @@ pub enum Command {
         /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
         #[arg(long, value_name = "DIR", default_value = "evalsets")]
         root: PathBuf,
+        /// Every refusal names only a set's id, an item's place and the kind of problem.
+        #[arg(long)]
+        held_out: bool,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -115,9 +126,17 @@ pub enum Command {
         /// control (the first arm of the first matrix when not given).
         #[arg(long, value_name = "ARM")]
         arm: Option<String>,
-        /// The decision rule: judge-pick/1 (judges mode) or submission/1 (arms mode).
-        #[arg(long, value_name = "RULE", value_parser = ["judge-pick/1", "submission/1"])]
+        /// The decision rule: judge-pick/1 or judge-pick/2 (judges mode), submission/1 or
+        /// submission/2 (arms mode).
+        #[arg(long, value_name = "RULE", value_parser = whizbang::judges::RULES)]
         rule: Option<String>,
+        /// A set to score alone, by its id; give it again for more. Without it, every set of
+        /// the matrices.
+        #[arg(long = "set", value_name = "SET")]
+        sets: Vec<String>,
+        /// Every refusal names only a set's id, an item's place and the kind of problem.
+        #[arg(long)]
+        held_out: bool,
         /// Where the record is written: not under the sets' or the labels' folder.
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
@@ -126,6 +145,14 @@ pub enum Command {
         root: PathBuf,
         #[command(flatten)]
         at: Where,
+    },
+    /// What the receipts of the gates run admitted (plan mE, task M1, item 8): each tool,
+    /// use case, format, wording or judge a rung 4 gate on blind or held-out data admitted,
+    /// with the receipt's digest and date. Reads the receipts only.
+    Admitted {
+        /// The folder of the receipts, read to four folders down.
+        #[arg(long, value_name = "DIR", default_value = "gates")]
+        receipts: PathBuf,
     },
     /// The synthetic edit set of the edits' rung 2 (plan m3, task B1): drawing it from a
     /// set's pictures, and scoring a lab round of its recipes from the store.
@@ -305,6 +332,9 @@ pub enum SetsCommand {
         /// The folder of the evaluation sets.
         #[arg(long, value_name = "DIR", default_value = "evalsets")]
         root: PathBuf,
+        /// Every refusal names only a set's id, an item's place and the kind of problem.
+        #[arg(long)]
+        held_out: bool,
     },
     /// Bring a set's pictures into the store, each checked against the SHA-256 its job
     /// pins: fetched from the raw files of the repository and revision the set names, an
@@ -321,6 +351,9 @@ pub enum SetsCommand {
         /// (`<folder>/<set id>/<path>`): nothing is fetched.
         #[arg(long, value_name = "DIR")]
         from: Option<PathBuf>,
+        /// Every refusal names only the set's id, an item's place and the kind of problem.
+        #[arg(long)]
+        held_out: bool,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -332,10 +365,84 @@ pub enum SetsCommand {
 /// A matrix's executor is given no platform's data folder: a local model's directory is
 /// named by `--models-dir` or the config.
 pub fn run(command: &Command) -> Result<String, String> {
-    let recovery = whizbang::wiring::recovery();
+    let ran = run_command(command);
+    match (held_out_of(command), ran) {
+        (Some((root, ids)), Err(why)) => Err(whizbang::held_out::shown(&root, &ids, &why)),
+        (_, ran) => ran,
+    }
+}
+
+/// Under `--held-out`, the sets' folder and the ids of the sets the command reads.
+fn held_out_of(command: &Command) -> Option<(PathBuf, Vec<String>)> {
+    // The matrix read as `eval matrix` reads it, at most its limit of bytes.
+    let sets_of = |file: &Path| -> Vec<String> {
+        use std::io::Read;
+        let mut text = String::new();
+        let read = std::fs::File::open(file)
+            .and_then(|opened| opened.take(MATRIX_FILE_LIMIT + 1).read_to_string(&mut text));
+        if read.is_err() || text.len() as u64 > MATRIX_FILE_LIMIT {
+            return Vec::new();
+        }
+        Matrix::parse(&text)
+            .map(|m| m.matrix.sets)
+            .unwrap_or_default()
+    };
     match command {
         Command::Sets {
-            command: SetsCommand::Check { root },
+            command:
+                SetsCommand::Check {
+                    root,
+                    held_out: true,
+                },
+        } => Some((root.clone(), whizbang::held_out::ids_under(root))),
+        Command::Sets {
+            command:
+                SetsCommand::Fetch {
+                    set,
+                    root,
+                    held_out: true,
+                    ..
+                },
+        } => Some((root.clone(), vec![set.clone()])),
+        Command::Matrix {
+            matrix,
+            root,
+            held_out: true,
+            ..
+        } => Some((root.clone(), sets_of(matrix))),
+        Command::Run {
+            gate,
+            root,
+            held_out: true,
+            ..
+        } => {
+            let ids = (whizbang::gating::frozen(gate).ok())
+                .map(|frozen| frozen.matrix.matrix.sets)
+                .unwrap_or_default();
+            Some((root.clone(), ids))
+        }
+        Command::Judges {
+            matrices,
+            root,
+            held_out: true,
+            ..
+        } => Some((
+            root.clone(),
+            matrices.iter().flat_map(|m| sets_of(m)).collect(),
+        )),
+        _ => None,
+    }
+}
+
+fn run_command(command: &Command) -> Result<String, String> {
+    let recovery = whizbang::wiring::recovery();
+    match command {
+        Command::Admitted { receipts } => {
+            let (admitted, read) = whizbang::admitted::read(receipts)?;
+            Ok(whizbang::admitted::text(&admitted, read))
+        }
+        Command::Sets {
+            command: SetsCommand::Check { root, .. },
         } => {
             let report = sets::check(root, &evaluation::judging())?;
             Ok(format!(
@@ -349,12 +456,16 @@ pub fn run(command: &Command) -> Result<String, String> {
                     set,
                     root,
                     from,
+                    held_out,
                     at,
                     under,
                 },
         } => {
             let set = sets::find(root, set)?;
             if let Some(from) = from {
+                if *held_out {
+                    return whizbang::held_out::from_folder(&set, from, at.root(), &recovery);
+                }
                 return evaluation::from_folder(&set, from, at.root(), &recovery);
             }
             let (approved, secrets, least) = config_of(under)?;
@@ -372,18 +483,22 @@ pub fn run(command: &Command) -> Result<String, String> {
         Command::Matrix {
             matrix,
             root,
+            past_forecast,
             at,
             under,
-        } => run_matrix(matrix, root, at, under, recovery),
+            ..
+        } => run_matrix(matrix, root, at, under, recovery, *past_forecast),
         Command::Judges {
             matrices,
             labels,
             mode,
             arm,
             rule,
+            sets,
             out,
             root,
             at,
+            ..
         } => {
             use whizbang::judges::{self, Mode, Reading, Rule};
             let reading = Reading {
@@ -399,6 +514,7 @@ pub fn run(command: &Command) -> Result<String, String> {
                 },
                 arm: arm.as_deref(),
                 rule: rule.as_deref().map(Rule::named).transpose()?,
+                sets,
                 commit: crate::COMMIT,
             };
             judges::run(&reading).map(|written| judges::text(&written))
@@ -466,6 +582,7 @@ pub fn run(command: &Command) -> Result<String, String> {
             root,
             at,
             under,
+            ..
         } => {
             let frozen = whizbang::gating::frozen(gate)?;
             let gating = whizbang::gating::Gating {
@@ -650,6 +767,7 @@ fn run_matrix(
     at: &Where,
     under: &Under,
     recovery: Recovery,
+    past_forecast: bool,
 ) -> Result<String, String> {
     use std::io::Read;
     let mut text = String::new();
@@ -677,6 +795,14 @@ fn run_matrix(
         left_micros,
         stop: &|| false,
     };
+    if past_forecast {
+        let (forecast, report) =
+            evaluation::run_past_forecast(&matrix, &planned, &labels, &running)?;
+        return Ok(format!(
+            "forecast of the runs still to run: {forecast} millionths of a dollar\n{}",
+            report.text()
+        ));
+    }
     let report = evaluation::run(&matrix, &planned, &labels, &running)?;
     Ok(report.text())
 }

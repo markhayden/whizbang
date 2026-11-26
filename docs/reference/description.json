@@ -122,6 +122,15 @@
           "default": "v1"
         },
         {
+          "name": "methods",
+          "purpose": "The method each tool file named runs with, as tool:method separated by commas, frozen for the run: a call of the judge that names another method is refused.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "measured",
           "purpose": "What an earlier step of a recipe measured first, bound to its measurements alone: said to the judge before its first turn once held to the runs that made it.",
           "type": {

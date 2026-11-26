@@ -67,7 +67,36 @@ pub struct Gate {
     pub guardrails: Guardrails,
     pub limits: Limits,
     pub too_little_data: TooLittleData,
+    /// What a version 3 gate admits when its outcome is admitted: its rung and the thing on
+    /// trial (plan mE, task M1, item 8). A gate that states none admits nothing.
+    #[serde(default)]
+    pub admits: Option<Admits>,
 }
+
+/// What a gate admits: on rung 3 it decides only whether the thing goes on; only a rung 4
+/// gate on a set whose split is `blind` or `heldout` admits.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admits {
+    pub rung: u8,
+    /// `tool`, `use_case`, `format`, `wording` or `judge`.
+    pub kind: String,
+    pub name: String,
+}
+
+/// The sets that are exposed (`SPEC.md` section 8, "Evaluation data"): seen, or scored
+/// before, whatever split their sealed manifests say, so a rung 4 gate on one admits nothing.
+/// `blind-v3` is the exposed regression set; `blind-v1` and `blind-v2`, of split `heldout`,
+/// were each used before. A held-out set joins this list after its one round (plan mE, task
+/// R4, adds `source-fidelity/confirm-v1` and its plain twin with its records).
+pub const EXPOSED: [&str; 3] = [
+    "source-fidelity/blind-v1",
+    "source-fidelity/blind-v2",
+    "source-fidelity/blind-v3",
+];
+
+/// The kinds of thing a gate may admit.
+pub const ADMITTED_KINDS: [&str; 5] = ["tool", "use_case", "format", "wording", "judge"];
 
 /// The matrix a gate is run over: its file, relative to the gate file's folder, and, in
 /// version 2 alone, its identity (`Matrix::identity`, 64 hex digits).
@@ -137,6 +166,9 @@ pub struct Measure {
 #[serde(rename_all = "snake_case")]
 pub enum Primary {
     BalancedAccuracy,
+    /// The gain in the share of expected failures caught, resampled over the families with
+    /// at least one (plan mE, task M1, item 14; version 3 only).
+    CatchRate,
 }
 
 /// What an outcome is to the measure.
@@ -202,6 +234,8 @@ pub struct Repetitions {
 pub enum Combine {
     /// Repetition 1 decides; the others give the self-disagreement.
     First,
+    /// Each item's catch is its mean over the repetitions (a catch-rate gate only).
+    Mean,
 }
 
 /// The smallest gain worth having, in balanced accuracy (0.03 is 3 points), and the
@@ -277,6 +311,33 @@ impl Gate {
                     .into(),
             );
         }
+        if gate.gate_version < 3
+            && (m.primary != Primary::BalancedAccuracy
+                || gate.repetitions.combine != Combine::First
+                || gate.admits.is_some())
+        {
+            return Err(
+                "the gate file: catch_rate, combine = \"mean\" and [admits] are version 3's".into(),
+            );
+        }
+        if gate.repetitions.combine == Combine::Mean && m.primary != Primary::CatchRate {
+            return Err(
+                "the gate file: repetitions are combined by mean in a catch-rate gate".into(),
+            );
+        }
+        if let Some(a) = &gate.admits {
+            let plain = !a.name.is_empty()
+                && a.name.len() <= 64
+                && (a.name.chars())
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+            if !matches!(a.rung, 3 | 4) || !ADMITTED_KINDS.contains(&a.kind.as_str()) || !plain {
+                return Err(
+                    "the gate file: [admits] is rung 3 or 4, a kind of tool, use_case, format, \
+                     wording or judge, and a plain name"
+                        .into(),
+                );
+            }
+        }
         if gate.too_little_data.outcome != Outcome::Inconclusive {
             return Err("the gate file: too little data is inconclusive, never a pass".into());
         }
@@ -314,7 +375,22 @@ impl Gate {
         if !r.matrix.split('/').all(plain) {
             return Err("the gate file: matrix is a plain path beside the gate".into());
         }
-        gate.compared()?;
+        // A rung 4 gate across two versions of a set names them: neither may be exposed.
+        if let (
+            Some(a),
+            Compared::Sets {
+                control, treatment, ..
+            },
+        ) = (&gate.admits, gate.compared()?)
+            && a.rung == 4
+            && [control, treatment]
+                .iter()
+                .any(|id| EXPOSED.contains(&id.as_str()))
+        {
+            return Err(
+                "the gate file: a rung 4 gate admits, and an exposed set admits nothing".into(),
+            );
+        }
         let f = &gate.families;
         if f.minimum == 0 || f.resamples == 0 || gate.repetitions.count == 0 {
             return Err("the gate file: families, resamples and repetitions are positive".into());
@@ -403,11 +479,17 @@ impl Gate {
     /// Decides the gate on a comparison made with [`Gate::resampling`]. `failed` names
     /// each item that did not hold, in the order of the file.
     pub fn decide(&self, paired: &Paired) -> Verdict {
+        self.decide_on(paired, paired.gain.as_ref())
+    }
+
+    /// Decides the gate on a comparison, its admission read on `gain`, the primary
+    /// measure's interval: balanced accuracy's, or the catch rate's.
+    pub fn decide_on(&self, paired: &Paired, gain: Option<&crate::bootstrap::Interval>) -> Verdict {
         let mut short = Vec::new();
         if paired.families < self.families.minimum {
             short.push("families");
         }
-        let (Some(gain), Some(fr)) = (&paired.gain, &paired.false_reject_increase) else {
+        let (Some(gain), Some(fr)) = (gain, &paired.false_reject_increase) else {
             short.push("intervals");
             return Verdict::inconclusive(short);
         };
@@ -513,6 +595,9 @@ pub struct JudgeScore {
     pub outcome: Outcome,
     pub failed: Vec<String>,
     pub paired: Paired,
+    /// A catch-rate gate's comparison of the share caught.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catch_rate: Option<crate::metrics::CatchPaired>,
 }
 
 /// What the gate came to over every judge of its matrix.
@@ -538,13 +623,33 @@ impl Gate {
         let mut judges = Vec::new();
         for one in judged {
             let paired = crate::metrics::paired(&one.control, &one.treatment, self.resampling())?;
-            let verdict = self.decide(&paired);
+            let catch_rate = match self.measure.primary {
+                Primary::CatchRate => Some(crate::metrics::paired_catch(
+                    &one.control,
+                    &one.treatment,
+                    self.resampling(),
+                    self.repetitions.combine == Combine::Mean,
+                )?),
+                Primary::BalancedAccuracy => None,
+            };
+            let gain = match &catch_rate {
+                Some(c) => c.gain.as_ref(),
+                None => paired.gain.as_ref(),
+            };
+            let mut verdict = self.decide_on(&paired, gain);
+            if let Some(c) = &catch_rate
+                && c.families < self.families.minimum
+                && !verdict.failed.iter().any(|f| f == "families")
+            {
+                verdict = Verdict::inconclusive(vec!["families"]);
+            }
             judges.push(JudgeScore {
                 backend: one.backend.clone(),
                 model: one.model.clone(),
                 outcome: verdict.outcome,
                 failed: verdict.failed,
                 paired,
+                catch_rate,
             });
         }
         let any = |o: Outcome| judges.iter().any(|j| j.outcome == o);
@@ -585,6 +690,15 @@ pub struct Receipt {
     /// scored under neither version's truth (version 3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relabelled: Option<usize>,
+    /// Each set's split, by its id (version 3): what `eval admitted` reads beside `admits`.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub splits: std::collections::BTreeMap<String, String>,
+    /// What the gate admits when admitted, as its file states it (version 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admits: Option<Admits>,
+    /// The day, in UTC, the last cell the gate read ended (version 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
     #[serde(flatten)]
     pub scored: Scored,
 }
