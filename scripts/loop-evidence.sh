@@ -313,7 +313,15 @@ else
     say "entry $at of $count"
     looped "$(request_of "$id")" "$set/$picture" "$phrase" </dev/null
   done <"$work/entries"
-  tallied=(--records "$work/records" --manifest "$manifest" --judge "$judge" --commit "$commit" --whizbang "$version" --out "$out")
+  # Each located retry's diagnostic, by place (plan mE, task L2): fetched from the store,
+  # read by the tally, and never written anywhere else.
+  mkdir "$work/located"
+  tally located-names --records "$work/records" >"$work/located-names" || stop "the records' located diagnostics could not be listed"
+  while IFS=$'\t' read -r run diagnostic; do
+    "$binary" runs show "$run" --diagnostic "$diagnostic" --store "$store" </dev/null >"$work/located/${run}__${diagnostic#diagnostics/}" ||
+      stop "a located diagnostic could not be read"
+  done <"$work/located-names"
+  tallied=(--records "$work/records" --manifest "$manifest" --judge "$judge" --located "$work/located" --commit "$commit" --whizbang "$version" --out "$out")
   [ -z "$repetition" ] || tallied+=(--repetition "$repetition")
   tally tally "${tallied[@]}"
   say "started $ran runs of $count; wrote $out"

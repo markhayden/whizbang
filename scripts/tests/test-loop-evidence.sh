@@ -639,8 +639,10 @@ def loop(n, attempts, ended, reason=None):
     if reason:
         attempted["reason"] = reason
     one = record(top, "remove_checked", None, version="run/8" if reason else "run/6", attempts=attempted)
-    one["identity"]["request"] = "e-loop-terra-3-whole-%02d" % n
+    one["identity"]["request"] = "e-loop-terra-3-%s" % ("whole-%02d" % n if n <= 5 else "parts-01")
     one["asked"]["arguments"] = [{"name": "judge", "value": {"text": "terra"}}]
+    if n == 6:
+        one["diagnostics"] = [{"name": "diagnostics/located-a2.txt", "digest": digest("9"), "bytes": 9}]
 
 
 fail = ("fail", None, [], 0, None)
@@ -657,17 +659,28 @@ loop(4, [fail, ("unsure", "wider", [], 2, None)],
      "no finding of attempt 2 says with confidence that the named thing is still there")
 # A word the record holds is read before its sentence, whatever the sentence says.
 loop(5, [fail], "a sentence no set reads", "deadline_passed")
+# A retry whose run kept its located diagnostic (plan mE, task L2): two places looked into,
+# the first in two tiles, one left out for its size and one not reached; counted by place.
+loop(6, [fail, ("pass", "located", [digest("2"), None, None], 3, None)], "attempt 2 passed", "passed")
 with open(sys.argv[1], "w") as f:
     for one in made:
         f.write(json.dumps(one, separators=(",", ":")) + "\n")
 PY2
 out="$tmp/kept.toml"
+mkdir -p "$tmp/located"
+printf '%s\n' located/1 'place 1 tiles 2 found_something' 'place 2 tiles 1 joined_as_its_box' \
+  'place 3 left_out_for_size cut 2200 by 8' 'place 4 not_reached' 'time place 1 ms 40' 'time retry ms 90' \
+  >"$tmp/located/3006-1__located-a2.txt"
 expect_pass "the tally over kept runs" python3 -B scripts/loop-evidence.py tally --records "$tmp/kept.jsonl" \
-  --manifest "$seg_manifest" --judge terra --repetition 3 --commit "$commit" --whizbang 0.1.0 --out "$out"
+  --manifest "$seg_manifest" --judge terra --repetition 3 --located "$tmp/located" --commit "$commit" --whizbang 0.1.0 --out "$out"
+[ "$(python3 -B scripts/loop-evidence.py located-names --records "$tmp/kept.jsonl")" = "$(printf '3006-1\tdiagnostics/located-a2.txt')" ] ||
+  fail "kept runs: the located diagnostics a run kept are not listed for the script to fetch"
 table_of() { awk -v t="[$1]" '$0 == t { on = 1; next } /^\[/ { on = 0 } on && NF' "$out" | tr '\n' ' '; }
-[ "$(table_of stopped_by_reason)" = "passed = 2 findings_cut_short = 0 damaged_something_preserved = 0 nothing_says_it_remains = 1 last_attempt_of_the_plan = 1 wider_mask_already_used = 0 mask_is_the_one_before = 0 one_unchecked_pass = 0 check_could_not_run = 0 budget_ran_out = 0 deadline_passed = 1 retry_could_not_be_made = 0 never_said = 0 other = 0 no_attempt = 0 " ] ||
+[ "$(table_of stopped_by_reason)" = "passed = 3 findings_cut_short = 0 damaged_something_preserved = 0 nothing_says_it_remains = 1 last_attempt_of_the_plan = 1 wider_mask_already_used = 0 mask_is_the_one_before = 0 one_unchecked_pass = 0 check_could_not_run = 0 budget_ran_out = 0 deadline_passed = 1 retry_could_not_be_made = 0 never_said = 0 other = 0 no_attempt = 0 " ] ||
   fail "kept runs: why the attempts ended is not the record's word, or its sentence's: $(table_of stopped_by_reason)"
-[ "$(table_of places_by_verdict)" = "found_something_pass = 1 found_something_fail = 0 found_something_unsure = 0 found_something_unchecked = 1 joined_as_itself_pass = 1 joined_as_itself_fail = 0 joined_as_itself_unsure = 0 joined_as_itself_unchecked = 1 left_out_over_a_tenth_pass = 1 left_out_over_a_tenth_fail = 0 left_out_over_a_tenth_unsure = 2 left_out_over_a_tenth_unchecked = 0 " ] ||
+[ "$(table_of places_said)" = "looked_into = 2 found_something = 1 joined_as_itself = 0 joined_as_its_box = 1 left_out_over_a_tenth = 0 left_out_for_the_bound = 0 left_out_for_size = 1 not_reached = 1 attempts_said = 1 attempts_counted_by_cut = 4 " ] ||
+  fail "kept runs: the places of a located diagnostic are not counted by place: $(table_of places_said)"
+[ "$(table_of places_by_verdict)" = "found_something_pass = 2 found_something_fail = 0 found_something_unsure = 0 found_something_unchecked = 1 joined_as_itself_pass = 2 joined_as_itself_fail = 0 joined_as_itself_unsure = 0 joined_as_itself_unchecked = 1 left_out_over_a_tenth_pass = 1 left_out_over_a_tenth_fail = 0 left_out_over_a_tenth_unsure = 2 left_out_over_a_tenth_unchecked = 0 " ] ||
   fail "kept runs: the places are not counted against the verdict after them: $(table_of places_by_verdict)"
 [ "$(table_of located_added_nothing)" = "retries = 2 widened_after = 2 widened_after_pass = 1 widened_after_fail = 1 widened_after_unsure = 0 widened_after_unchecked = 0 " ] ||
   fail "kept runs: the located retries that added nothing are not counted: $(table_of located_added_nothing)"
