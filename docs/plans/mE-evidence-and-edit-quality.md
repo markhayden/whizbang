@@ -576,7 +576,8 @@ R5 and R6 need a scorer that `eval run --gate` is not: it gates balanced accurac
 
 Ported from squint's `scripts/sets/` (`squint-sets build`, `rebuild`, `promote`, and
 `scripts/sets-publish.sh`) at the commit `docs/sources.toml` pins, to `tools/sets/` here,
-with its own `uv` project and lock, run with `uv run whizbang-sets`. Every porting commit
+with its own `uv` project and lock, run from its folder as `uv run --locked --no-build --no-config --no-python-downloads python -m
+whizbang_sets` (`docs/evalsets.md`, "Building a set"). Every porting commit
 names the source path and commit.
 
 **First pull request: the port.**
@@ -818,7 +819,7 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
 3. **The fresh set, `source-fidelity/confirm-v1`, and its plain twin.** 22 families of new
    scene kinds, disjoint from every family of every set, about 5 items each, about half
    expected to fail, among them edits of colour, of count and of lettering. Drawn by B1's
-   seeded script into owner storage; built by `whizbang-sets build` with `--cap-usd 8`; the
+   seeded script into owner storage; built by the builder's `build` with `--cap-usd 8`; the
    owner reviews each family's contact sheet and confirms or strikes each label; promoted with
    `--labels-out` to owner storage. Both twins stay whole in owner storage (manifest, jobs,
    pictures, labels) and are read by `--root` and `eval sets fetch --from` until R4 has run.
@@ -1284,7 +1285,7 @@ How each kind is reached, as the code stands (`crates/whizbang/src/main.rs`, `ra
 | `change_map`, `edge_similarity` | A record's example: a one-step recipe file with the example's inputs as given, run by `whizbang rascal run <file>`. Then, as cases of their own: `whizbang try <name> --source <id> --candidate <id>`, which registers the candidate by `align` before the tool runs (`trying.rs`); `whizbang eval tool <name> --set <set>` | Their tool forms; for `try`'s case, the frame `align` gave it as the input |
 | A tool file | Listed under `[tools] paths` in the session's config, then: a record's example by a one-step recipe file, as for `change_map`; as cases of their own, `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config: it is not among the actions, and its mark is among the marks (`wiring.rs`, `describe_text`) | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
 | A setting of `check` | `squint check`'s flags: `--details first --detail <tools>`, `--details first --detail tiles`, `--second-look off\|on\|strict`, `--submission v1\|v2`, and `v3` once F1 adds it (F1, item 3) | `check`'s tool form; not the use cases' forms |
-| The set builder | `uv run whizbang-sets build\|rebuild\|promote` in `tools/sets/`; it writes set folders, not runs of a store | None: it is not an action |
+| The set builder | From `tools/sets/`: `uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets build\|rebuild\|promote` (`docs/evalsets.md`, "Building a set"); it writes set folders, not runs of a store | None: it is not an action |
 
 The 57 rows, by session. A session's config lists only the tool files that have landed.
 
@@ -1375,8 +1376,11 @@ if the record names one, and one refusal. A row is done only when every case has
    what it charged.
 6. For a case that spends: `whizbang spend status --store <store>` shows its charge.
 
-The set builder has no store runs: its steps 3 to 6 are, in O1.1, `build --fake`, `rebuild`
-and `promote` on a dev plan, `whizbang eval sets check` on what it wrote, and its refusals of
+The set builder has no store runs: its steps 3 to 6 are, in O1.1, on a dev plan, with a folder
+in the system temp folder as `--owner` and `--out` (never owner storage): `build --plan <plan>
+--out <dir> --owner <dir> --fake`; `rebuild`; the draft labels confirmed or struck by the owner
+in `labels-draft.toml`, as `docs/evalsets.md` says; `promote --draft <file> --set <dir>
+--attest <text>`; `whizbang eval sets check` on what it wrote, and its refusals of
 an owner folder inside the work tree and of live generation, which waits for the spend guard;
 in O1.3, one live build, a request past `--cap-usd` refused, and a request to an origin the
 config does not approve refused.
@@ -1391,7 +1395,10 @@ config:
    picture from the library. The library lists a mask, a location, a profile or a series only
    as an output of a run a person started (`Workspace.tsx`, `bindingsOf`), so an input made by
    the inputs' writer reaches the form only through a run that took it; before O1.1, one case
-   of each of those types is shown to reach a form so. Where the command line's run is a
+   of each of those types is shown to reach a form so, and `select`'s two examples, of two and
+   of three masks (`select.md`), each keep every mask: the draft keeps one identity for an
+   artifact field today (`play_result.rs`, `again`), so a form that cannot take several masks
+   is a finding, fixed before R5, whose recipes call `select`. Where the command line's run is a
    one-step recipe file's (`align`, `view`, `details`, `resize`, `change_map`,
    `edge_similarity`, a tool file, `check`'s `general`), whose inputs are all pictures, the
    action's own form takes the same pictures from the library. Run. A setting is given in
@@ -1749,10 +1756,10 @@ P1 ──────────────────┘
 
 ## What the owner is told, not asked
 
-- Twenty-four tasks, nine of them the orchestrator's rounds; squint's ladder first, then
-  rascal's. Among them O1 (added 2026-11-25): every tool, 57 rows to start, walked with you one
-  at a time on the command line and in the playground, in nine sessions, each before the
-  rounds that measure what it walks; about 5 dollars. Where a tool has no command or no form
+- Twenty-four tasks: nine evaluation rounds of the orchestrator's (D1, R2, R3, F2, R4, V1, K1,
+  R5, R6), squint's ladder first, then rascal's; and O1 (added 2026-11-25), every tool, 57
+  rows to start, walked with you one at a time on the command line and in the playground, in
+  nine sessions, each before the rounds that measure what it walks; about 5 dollars. Where a tool has no command or no form
   of its own, that is a finding for you to decide on.
 - One fresh set, for source fidelity, kept whole in owner storage until its one round, seen
   by no agent; published after it, as `blind-v3` was.
@@ -2292,3 +2299,18 @@ were right and taken.
 3. **Major: `try` aligns before the tool runs.** Right (`trying.rs`). Taken: a record's example
    of `change_map`, `edge_similarity` or a tool file runs by a one-step recipe file with its
    inputs as given; `try` is a case of its own, the frame it aligned given to the playground.
+
+### Review round O1-7
+
+Review round O1-7, on draft 7 of task O1. Verdict: revise. Round O1-6's fixes held but for its
+finding 1, completed here. Three findings: 2 majors, 1 minor. Each was checked against the
+code and the docs; all were right and taken.
+
+1. **Major: Run again keeps one mask, and `select`'s examples take two and three.** Right
+   (`play_result.rs`, `again`; `select.md`). Taken: both examples shown before O1.1 to keep
+   every mask; a form that cannot is a finding fixed before R5.
+2. **Major: the set builder's command was written wrong.** Right (`tools/sets/pyproject.toml`
+   declares no script; `docs/evalsets.md` runs it as a module). Taken: the module's form in O1,
+   B1 and D1; O1.1's sequence with its arguments, a temporary folder as `--owner`, and the
+   labels confirmed before `promote`.
+3. **Minor: "nine rounds" read as if O1 were one.** Right. Taken: the nine named, O1 apart.
