@@ -102,6 +102,7 @@ fn registry_of(
         .register(Arc::new(resize))
         .map_err(|e| said(&e))?;
     whizbang_rascal::segment::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::labels::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::select::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::subtract::register(&mut primitives).map_err(|e| said(&e))?;
     primitives.register(Arc::new(view)).map_err(|e| said(&e))?;
@@ -245,6 +246,22 @@ pub fn kinds(worker: &Arc<OneWorker>) -> Kinds {
 /// repositories being public), which an install checks against the bytes it
 /// downloads. The large files' downloads are moved to `us.aws.cdn.hf.co`, the host the
 /// owner approved for the Hub's storage.
+///
+/// A third model, `eomt-ade20k` (plan mE, task T2; ADR 0052): EoMT large trained on
+/// ADE20K at 512, the fixed-class segmenter squint used, which labels every pixel with
+/// one of 150 classes (the features `phrase` and `labels`). Its files are those of the
+/// public repository `tue-mps/ade20k_semantic_eomt_large_512` at the commit
+/// `aeb262f5a0bc609236d27f1277c3173ce57aeb27`, the one squint pinned: `model.safetensors`,
+/// `config.json`, which the library and the adapter read, and the model card,
+/// `README.md`, which states the licence, MIT (the repository holds no licence file);
+/// never `pytorch_model.bin`, a pickle, and not `preprocessor_config.json`, since the
+/// adapter brings a picture to the model's input itself, as squint did. **How the sizes
+/// and hashes were fixed** (2026-11-25): each size is the one the Hub's public listing
+/// of the commit states, read once with no token; each small file's SHA-256 is that of
+/// the bytes fetched once from the Hub, with no token; `model.safetensors`'s is the
+/// listing's `lfs.oid`, which is also the hash squint's export script held the same
+/// commit's weights to, and which an install checks against the bytes it downloads. The
+/// weights' download is moved to `us.aws.cdn.hf.co`, the host already approved.
 pub fn catalogue() -> Result<Catalogue, String> {
     Catalogue::parse(SHIPPED_CATALOGUE.as_bytes(), &Secrets::none())
         .map_err(|refused| format!("the catalogue this build ships cannot be read: {refused}"))
@@ -280,6 +297,9 @@ pub struct Adapter {
 /// `owlv2-sam2` at revision `1`, shipped (plan 1D, task T1): the adapter of `tiny`
 /// (`pack/src/whizbang_pack/owlv2_sam2.py`, its module named with `_` where the
 /// adapter's name has `-`).
+///
+/// `eomt-ade20k` at revision `1`, shipped (plan mE, task T2): the adapter of the
+/// fixed-class segmenter of the same name (`pack/src/whizbang_pack/eomt_ade20k.py`).
 pub fn adapters() -> Vec<Adapter> {
     let none = Secrets::none();
     let named = |name: &str, revision: &str, shipped: bool| {
@@ -289,10 +309,14 @@ pub fn adapters() -> Vec<Adapter> {
             shipped,
         })
     };
-    [named("sam3", "2", true), named("owlv2-sam2", "1", true)]
-        .into_iter()
-        .flatten()
-        .collect()
+    [
+        named("sam3", "2", true),
+        named("owlv2-sam2", "1", true),
+        named("eomt-ade20k", "1", true),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The models directory in the platform's data folder for whizbang (ADR 0017, "Where
@@ -876,6 +900,11 @@ impl Over {
         let worker = self.pack.clone().unwrap_or_else(OneWorker::installed);
         let files = ToolFiles::read(config.tool_paths(), worker)
             .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+        // An ask that names a model is routed by the config's segment backends (plan mE,
+        // task T2): each that names a model, by its name, and the default.
+        let segmenters = (config.backends(Capability::Segment))
+            .filter_map(|(name, backend)| Some((name, backend.model()?)));
+        let files = files.routing(segmenters, config.default_of(Capability::Segment));
         Ok(Some(Arc::new(files)))
     }
 

@@ -926,6 +926,17 @@ the features `phrase`, `point` and `box`, on `macos-arm64` alone.
   it. `owlv2.merges.txt` is byte for byte `sam3`'s `merges.txt`: an install links it from
   an installation that holds it (above, "A file shared between installations").
 
+**A third model, `eomt-ade20k`** (plan mE, task T2, 2026-11-25; ADR 0052): EoMT large
+trained on ADE20K at 512, a fixed-class segmenter, through the adapter `eomt-ade20k` at
+revision `1` (`pack/src/whizbang_pack/eomt_ade20k.py`), on the same runtime and lock, with
+the features `phrase` and `labels`, on `macos-arm64` alone. Its files are those of the
+public repository `tue-mps/ade20k_semantic_eomt_large_512` at
+`aeb262f5a0bc609236d27f1277c3173ce57aeb27`: `model.safetensors`, `config.json` and the
+model card `README.md`, which states the licence, MIT (the repository holds no licence
+file); never `pytorch_model.bin`, a pickle. 3 files, 1.26 GB. No token; the origins are
+`sam3`'s. Each size is the listing's, read once without a token; each small file's SHA-256
+that of the bytes fetched once without a token; the weights' the listing's `lfs.oid`.
+
 ### How a record is read
 
 Code (`json.rs`). Stored bytes are not trusted, a catalogue's and an installation
