@@ -20,14 +20,15 @@
 # file, the tree's (`pack/src/whizbang_pack/`): the same names, and each the same SHA-256.
 # Prints a line `<name> sha256:<digest>` for each, and refuses any difference.
 #
-# `copy-models`: SAM 3's and Tiny's folders (`models/sam3`, `models/tiny`) of the first models
+# `copy-models`: SAM 3's, Tiny's and the fixed-class segmenter's folders (`models/sam3`,
+# `models/tiny`, `models/eomt-ade20k`; plan mE, task T2) of the first models
 # directory copied into the second, each a real folder: the model store refuses a folder of
 # a model's layout that is a link, and calls such a model damaged (ADR 0017, "A folder of
 # the layout that is a link"; `models::Directory::unlinked`), so a link would leave the
 # candidate with no model ready. On APFS the copy is a clone (`cp -c`), which takes no room
 # until a file of it changes; elsewhere it is an ordinary copy. Refuses a source that holds
-# either model through a link, and a destination that holds either already.
-# It copies the two models' folders and nothing else: not the pack (`pack/`), which `prepare`
+# any of the models through a link, and a destination that holds any already.
+# It copies the three models' folders and nothing else: not the pack (`pack/`), which `prepare`
 # installs into the candidate's directory from the tree itself. So the second directory is
 # not one the model tier accepts as WHIZBANG_MODELS_DIR until a pack is installed in it
 # (`whizbang setup --extra torch --models-dir <it>`). To measure a changed catalogue entry
@@ -38,7 +39,7 @@
 # `prepare`, the whole candidate, on the owner's Mac (heavy; through scripts/heavy.sh):
 # `export` into <folder>; the binary built from the exported tree, into <folder>/target;
 # that tree's pack installed with it (`whizbang setup --extra torch`) into a new models
-# directory <folder>/models; the installed SAM 3 and Tiny copied in (`copy-models`) from the
+# directory <folder>/models; the installed models copied in (`copy-models`) from the
 # models directory WHIZBANG_MODELS_DIR names, which `whizbang models verify` has checked; and
 # `pack-matches` on the two. It writes <folder>/tree-id and prints the folder's parts.
 # This script sets no `EXIT` trap, so its own syntax error is a failure; parse it first all
@@ -98,14 +99,14 @@ pack_matches() {
 
 copy_models() {
   local from=$1 to=$2 model
-  for model in sam3 tiny; do
+  for model in sam3 tiny eomt-ade20k; do
     [ -d "$from/models/$model" ] && [ ! -L "$from/models/$model" ] ||
       refuse "$from holds no installed $model in a folder of its own"
     [ ! -e "$to/models/$model" ] && [ ! -L "$to/models/$model" ] ||
       refuse "$to holds $model already"
   done
   mkdir -p "$to/models"
-  for model in sam3 tiny; do
+  for model in sam3 tiny eomt-ade20k; do
     # A clone where the file system makes one; an ordinary copy where it does not.
     if ! cp -c -R "$from/models/$model" "$to/models/$model" 2>/dev/null; then
       rm -rf "$to/models/$model"
@@ -119,10 +120,10 @@ prepare() {
   local source=${WHIZBANG_MODELS_DIR:-}
   case "$source" in
     /*) ;;
-    *) refuse "WHIZBANG_MODELS_DIR must name, by an absolute path, the models directory that holds sam3 and tiny" ;;
+    *) refuse "WHIZBANG_MODELS_DIR must name, by an absolute path, the models directory that holds sam3, tiny and eomt-ade20k" ;;
   esac
-  [ -d "$source/models/sam3" ] && [ -d "$source/models/tiny" ] ||
-    refuse "WHIZBANG_MODELS_DIR holds no installed sam3 and tiny"
+  [ -d "$source/models/sam3" ] && [ -d "$source/models/tiny" ] && [ -d "$source/models/eomt-ade20k" ] ||
+    refuse "WHIZBANG_MODELS_DIR holds no installed sam3, tiny and eomt-ade20k"
   export_tree "$folder" >/dev/null
   (cd "$folder/tree" && CARGO_TARGET_DIR=$folder/target cargo build -p whizbang --bin whizbang)
   local bin=$folder/target/debug/whizbang

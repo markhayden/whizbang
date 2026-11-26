@@ -6,8 +6,10 @@ one, and removes one. Why it is built this way is in
 `docs/adr/0017-the-models-directory.md`. The playground's Models screen does the same from
 the page (`docs/guides/playground.md`, "Models and keys").
 
-**Today the catalogue holds two models, SAM 3** (`sam3`) **and Tiny** (`tiny`: OWLv2
-finds boxes for a phrase and SAM 2.1 Hiera-Tiny draws each mask). The catalogue is the
+**Today the catalogue holds three models, SAM 3** (`sam3`), **Tiny** (`tiny`: OWLv2
+finds boxes for a phrase and SAM 2.1 Hiera-Tiny draws each mask) **and a fixed-class
+segmenter** (`eomt-ade20k`: EoMT large trained on ADE20K, which labels every pixel with
+one of 150 classes; plan mE, task T2, ADR 0053). The catalogue is the
 list of models a build can install, and it is built into the binary
 (`crates/whizbang/src/catalogue.json`; task N5 of checkpoint 1C,
 `docs/plans/m1c-local-pack.md`, and task T1 of checkpoint 1D,
@@ -15,8 +17,9 @@ list of models a build can install, and it is built into the binary
 
 ```text
 $ whizbang models list
-models: 2
+models: 3
 directory: the one in this machine's data folder for whizbang, not made yet
+eomt-ade20k	EoMT large, ADE20K (fixed-class)	MIT	1.3 GB	macos-arm64	not installed
 sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed
 tiny	Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)	Apache-2.0	777.5 MB	macos-arm64	not installed
 ```
@@ -38,6 +41,27 @@ points and boxes with the adapter `owlv2-sam2`, on the same runtime as SAM 3; it
 runs on the Mac alone. A file it shares with SAM 3 by its size and hash (the
 tokenizer's `merges.txt`) is linked from SAM 3's installation when that is there, not
 downloaded again.
+
+**The fixed-class segmenter installs the same way, with no sign-in** (`whizbang models get
+eomt-ade20k`, MIT, 1.3 GB), on the Mac alone. It is no default and answers no open phrase:
+it labels every pixel with one of ADE20K's 150 classes (listed in
+`pack/src/whizbang_pack/eomt_ade20k.py`), answers a phrase only when it is one of them, and
+refuses any other and every point and box. It serves the tool files that need a class for
+each pixel, through the action `labels` (`docs/reference/tools/labels.md`). Give it a
+backend of its own beside the default, which a tool names by its model:
+
+```toml
+[backends.segment]
+default = "sam3"
+
+[backends.segment.sam3]
+kind = "pack"
+model = "sam3"
+
+[backends.segment.classes]
+kind = "pack"
+model = "eomt-ade20k"
+```
 
 The fast tests show every command with a catalogue of their own and a stand-in for the
 download (`crates/whizbang/tests/it/models.rs`); nothing in them leaves the machine.
@@ -255,6 +279,9 @@ keeps the masks whose core holds a pixel, in place of `--pick`.
   a licence file, so the binary carries the licence's text and `get` writes it as
   `LICENSE` beside the model's files, held to the size and the hash the catalogue pins;
   nothing is downloaded for it.
+- **The fixed-class segmenter** is under MIT, which its model card states; the card is
+  installed as `README.md`. Its repository holds no licence file. The backbone it was
+  trained from, DINOv2, is under Apache-2.0.
 
 **What a publication owes.** SAM 3's licence asks whoever submits for publication the
 results of research done on, with or in connection with the model to acknowledge its use

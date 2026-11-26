@@ -43,7 +43,7 @@ fn picture() -> Image {
 
 /// The store with the picture in it, as `whizbang store import` brings one in, and its
 /// identity.
-fn with_picture(world: &World) -> (Image, ArtifactId) {
+pub(crate) fn with_picture(world: &World) -> (Image, ArtifactId) {
     let image = picture();
     let store = world.store();
     let mut publication = store.begin().unwrap();
@@ -94,7 +94,7 @@ fn masks_of(world: &World, outputs: &[whizbang_core::contract::Committed]) -> Ve
 }
 
 /// The plane of a box of whole pixels: left, top, right, bottom.
-fn plane_of(bounds: [u32; 4]) -> Vec<u8> {
+pub(crate) fn plane_of(bounds: [u32; 4]) -> Vec<u8> {
     (0..WIDTH * HEIGHT)
         .map(|at| {
             let (x, y) = (at % WIDTH, at / WIDTH);

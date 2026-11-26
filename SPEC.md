@@ -421,6 +421,9 @@ No worker is needed when a run uses neither Python tools nor local Python capabi
 - **Tiny** (OWLv2 with SAM 2.1 Tiny) ships with phrase requests, and with point and box if its
   SAM stage exposes them cleanly; otherwise it declares them unsupported. It is built
   differently from SAM 3 and proves the interface is not shaped around one model.
+- **A fixed-class segmenter** (EoMT on ADE20K, milestone E) is a catalogue entry, not the
+  default: it labels every pixel with one class of its closed list (the feature `labels`),
+  for the tools that need a class for each pixel. A tool names it by its model.
 - **A fake adapter** serves the fast tests.
 - **A user's own model:** their own weights for a known adapter (config only), or their own
   adapter, a Python file named in config that implements the same interface as the built-in

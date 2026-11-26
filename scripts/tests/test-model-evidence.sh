@@ -60,16 +60,16 @@ cp "$tmp/one/tree/pack/src/whizbang_pack/sam3.py" "$models/pack/project/src/whiz
 printf 'x\n' >"$models/pack/project/src/whizbang_pack/extra.py"
 expect_fail "a pack with a file the tree has not" "other files than the tree's" "$cand" pack-matches "$tmp/one/tree" "$models"
 
-# SAM 3 and Tiny reach the candidate as real folders, never links: the model store calls a
+# SAM 3, Tiny and the fixed-class segmenter reach the candidate as real folders, never links: the model store calls a
 # model whose folder is a link damaged (ADR 0017), as the owner's first run of the mode found.
 owner=$tmp/owner-models
-for model in sam3 tiny; do
+for model in sam3 tiny eomt-ade20k; do
   mkdir -p "$owner/models/$model/installations/abc/files" "$owner/models/$model/checks"
   printf 'weights of %s\n' "$model" >"$owner/models/$model/installations/abc/files/w.bin"
   printf 'sha256:abc\n' >"$owner/models/$model/current"
 done
 expect_pass "the models copied" "$cand" copy-models "$owner" "$tmp/cand-models"
-for model in sam3 tiny; do
+for model in sam3 tiny eomt-ade20k; do
   [ -d "$tmp/cand-models/models/$model" ] && [ ! -L "$tmp/cand-models/models/$model" ] ||
     fail "$model is a folder of its own in the candidate, not a link"
   [ -z "$(find "$tmp/cand-models/models/$model" -type l)" ] || fail "nothing in the copy of $model is a link"
@@ -82,6 +82,7 @@ expect_fail "a candidate that holds the models already" "holds sam3 already" "$c
 mkdir -p "$tmp/linked/models"
 ln -s "$owner/models/sam3" "$tmp/linked/models/sam3"
 cp -R "$owner/models/tiny" "$tmp/linked/models/tiny"
+cp -R "$owner/models/eomt-ade20k" "$tmp/linked/models/eomt-ade20k"
 expect_fail "a source that holds a model through a link" "in a folder of its own" "$cand" copy-models "$tmp/linked" "$tmp/cand-two"
 grep -F 'copy_models "$source" "$folder/models"' scripts/candidate.sh >/dev/null &&
   ! grep -E '^[^#]*ln -s' scripts/candidate.sh >/dev/null || fail "prepare copies the models in and links none"
