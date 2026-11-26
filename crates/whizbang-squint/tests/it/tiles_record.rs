@@ -11,7 +11,7 @@ use super::support::*;
 
 /// A scene of 512 by 384, and the same with a detail of single pixels in its lower right:
 /// lines one pixel wide that a look at the whole, scaled down, averages away.
-fn pictures() -> [(&'static str, Image); 2] {
+pub fn pictures() -> [(&'static str, Image); 2] {
     let scene = Scene::random(41, 160, 0.75);
     let scene = scene.render(512, (512, 384), &IDENTITY, scenes::same);
     let fine = picture(512, 384, |x, y| {

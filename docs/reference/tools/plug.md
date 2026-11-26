@@ -57,6 +57,24 @@ What to look for:
   stays. The small pocket below it reaches the outside only across a corner, so it counts
   as a hole and is filled. Through a corner, one pixel wide, is enough to close it.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| holes | mask | mask | `sha256:e533fcd80866680856d5729ff9682fe582ad04948aa56e88e7d75a089b1b1d12` |
+| holes | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| openings | mask | mask | `sha256:dce2baf610015b7161148d3d92a22bae09569f1f35c2c1ad0c8a88a3bdcda64f` |
+| openings | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

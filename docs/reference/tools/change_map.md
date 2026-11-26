@@ -75,6 +75,24 @@ Of the second: "Change map of raw:source against aligned:candidate:t1 (the map, 
 
 <!-- said: end -->
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| added | frame | image | `sha256:8cf9f56c216abdfb30464578f3c526049a6fc08adfef933b656095f50122d06e` |
+| added | against | image | `sha256:57d408481f9a4f7e7a22797941c6386616bbe8c442bbe09080dc64efd0ff9190` |
+| greyed | frame | image | `sha256:8cf9f56c216abdfb30464578f3c526049a6fc08adfef933b656095f50122d06e` |
+| greyed | against | image | `sha256:011f4f80d4da3419d5c56c906ea4c9603201bf14100dcde9e79c65b169a2fd43` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Scored alone on a development set (`SPEC.md` section 8; plan 2C, task X1, items 8 and 9):

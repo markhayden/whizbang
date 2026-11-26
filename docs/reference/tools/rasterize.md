@@ -52,6 +52,24 @@ it there, so the inside starts at row 7; the chevron's notch, between (10, 10), 
 and (10, 54), is outside. A polygon whose edges cross, a star drawn in one stroke, is no
 location at all: `Location::new` refuses it, so the even-odd rule never meets one.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| triangle | location | location | `sha256:472329a83707b7f3268c16f1fff48a269b22d09c056cba2c8a4483686a1c879d` |
+| triangle | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| chevron | location | location | `sha256:cb0ebe52de597d81e7ae640a8654b3b148ecb67e6750c6b43e70e9a30ddffb17` |
+| chevron | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

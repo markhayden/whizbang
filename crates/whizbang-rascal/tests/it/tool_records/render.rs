@@ -3,40 +3,15 @@
 
 use whizbang_core::artifact::{Image, Mask, Source, UseCase};
 use whizbang_core::identity::{Binding, CanonicalPixels, DecodeLimits, Space};
-use whizbang_rascal::feather::feather;
+use whizbang_rascal::examples::render_mask;
 use whizbang_rascal::render::{Profile, render};
 
-use super::super::grow::{made_by, plane};
+use super::super::grow::made_by;
 use super::super::paste::image_of;
 use super::super::record::{picture, tiled, time};
 use super::{Page, SIZES, hold, image_picture, scene, timed_head, timed_row};
 
 const W: usize = 96;
-const H: usize = 64;
-
-fn never() -> bool {
-    false
-}
-
-/// The mask of both examples, on the scene: an oval feathered by a sigma of 3, with a
-/// protected bar across its right edge.
-fn mask_on(image: &Image) -> Mask {
-    let core = plane(W, H, |x, y| {
-        let (dx, dy) = (x as i64 - 44, y as i64 - 30);
-        dx * dx * 196 + dy * dy * 400 <= 78_400
-    });
-    let mut mask = Mask::from_core(
-        image.binding(),
-        UseCase::Remove,
-        core,
-        Source::default(),
-        made_by("fixture"),
-    )
-    .unwrap();
-    mask.protect_union(&plane(W, H, |x, y| (60..64).contains(&x) && y < 44))
-        .unwrap();
-    feather(mask, 3.0, &never).unwrap().unwrap()
-}
 
 /// The pixels of a rendering, read back.
 fn pixels(rendering: &Image) -> CanonicalPixels {
@@ -69,7 +44,7 @@ pub struct Rendered {
 
 fn rendered() -> Rendered {
     let image = image_of(&scene(), "import");
-    let mask = mask_on(&image);
+    let mask = render_mask();
     let plain = pixels(&render(&mask, Profile::Plain, None).unwrap());
     let scene = scene();
     let alpha = render(&mask, Profile::Alpha, Some((&scene, image.id()))).unwrap();

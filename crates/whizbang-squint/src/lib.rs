@@ -13,6 +13,8 @@ pub mod check;
 pub mod checklist;
 pub mod compare;
 pub mod details;
+// The inputs of the tool records' worked examples (plan E, task O1).
+pub mod examples;
 pub mod files;
 pub mod findings;
 pub mod job;

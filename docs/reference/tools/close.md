@@ -82,6 +82,24 @@ What to look for: the two discs are one shape after, joined by a waist across th
 and the feather is gone (944 blend pixels before, none after). A fill pasted through this
 mask paints the gap and has a hard edge; feather again after closing, as `remove` does.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| blocks | mask | mask | `sha256:c6a79c417a13602b157d6997e0e6f8656283679e12984483c6dacb69c36e3236` |
+| blocks | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| discs | mask | mask | `sha256:d2ccec87a612207900714f54937ffba0c5a682d706d4d61392adf1cda093698a` |
+| discs | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Scored alone, for a pure pixel operation, means exact against a reference result, and timed

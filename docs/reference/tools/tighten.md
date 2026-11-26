@@ -51,6 +51,24 @@ What to look for: along the scratch every sample is tightened and the core keeps
 scratch, 127 pixels where the stroke covers 840, every dark pixel inside; where there is
 no edge nothing is tightened and the core is the stroke's inside exactly.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| scratch | stroke | location | `sha256:f1942c61afc81834948b294c7460516d165cf3f41c64c21abe7956f5ed457d54` |
+| scratch | image | image | `sha256:8f8351d46029ad08296e3321cf1817de54f67f8413b97ff048193cbf98f04c9f` |
+| plain | stroke | location | `sha256:17cc9851f728533c7f9e1b92afa23fd70e066d84aa00315790bcd3dfb52f52ed` |
+| plain | image | image | `sha256:8f8351d46029ad08296e3321cf1817de54f67f8413b97ff048193cbf98f04c9f` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

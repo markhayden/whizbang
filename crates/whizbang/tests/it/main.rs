@@ -56,6 +56,7 @@ mod prepare;
 mod rascal;
 mod recipe;
 mod record;
+mod record_inputs;
 mod release;
 mod remote;
 mod remote_parity;

@@ -57,6 +57,27 @@ What to look for:
 - Second: `at "38 32"` is in the overlap of the first two ovals. Both hold it, so both are
   kept and the union is one shape. The third oval is left out.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| kept | mask | mask | `sha256:62e98d71855a86abffb53cd7af3967c7202801041717222dab02dafe7505cab1` |
+| kept | mask | mask | `sha256:0094018db93f3662bc599ad8a82a72a61885b432ca6ef6ccc1249c9f2a41ae1c` |
+| kept | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| at | mask | mask | `sha256:62e98d71855a86abffb53cd7af3967c7202801041717222dab02dafe7505cab1` |
+| at | mask | mask | `sha256:150f59fcc02027cba52bee7132f516584922fa7d1e632ef3f2cb8e5e5aa1788a` |
+| at | mask | mask | `sha256:0094018db93f3662bc599ad8a82a72a61885b432ca6ef6ccc1249c9f2a41ae1c` |
+| at | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

@@ -59,6 +59,22 @@ A checker of single pixels and lines one pixel wide, 240 by 160, at a long edge 
 What to look for: the checker is a flat grey and the lines are a faint pattern. Detail below
 the result's pixel is averaged away; to see it, use `view` on a box.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| scene | image | image | `sha256:2b20504b31b6a032ba90f47e6fab63adf53abc0e3e9c5d53fdb0dfef579bf1f2` |
+| fine | image | image | `sha256:138342b4097e74502ee3c8b7dc1f11ae51dd96a34da25d333fe250d65b6a38a8` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Scored alone, for a pixel operation, means exact against a reference result
