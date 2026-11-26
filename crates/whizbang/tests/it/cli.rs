@@ -714,6 +714,19 @@ fn squint_check_with_nothing_set_is_the_control_arm() {
     let (printed, log) = checked_stated(&judged, answers, None, None);
     let printed = printed.unwrap();
     assert_eq!(printed.lines().nth(1), Some("verdict: pass"), "{printed}");
+    // Arm C (v1, no tool file) sends its judge the same bytes as before plan mE's task F1
+    // added submission v3, evidence items and hints: the digests are of the two bodies the
+    // build of 8f2c6ab0 sent (the first the same as dbe5bef8's).
+    let digests: Vec<String> = (log.lock().unwrap().iter())
+        .map(|(_, body)| whizbang_core::identity::Digest::of_bytes(body).hex())
+        .collect();
+    assert_eq!(
+        digests,
+        [
+            "172a1a5efaa689a9311d73e961b9c7824662fd65ae96bb49deb22dc14326fbcc",
+            "af17851bae1f05eaaffb90b4460a0bc92020e458e7d0d2ed4ee438a8a482508f"
+        ]
+    );
     let sent = sent_of(&log);
     assert_eq!(sent.len(), 2);
     // The opening: the two pictures and the checklist, and nothing measured.
@@ -4110,7 +4123,50 @@ fn check_with_submission_v2_under_a_scripted_judge() {
     let checks = runs_of(root, "check");
     assert_eq!(checks.len(), 1);
     assert_eq!(argument(&checks[0].1, "submission").as_deref(), Some("v2"));
-    // The command line takes v1 or v2 and nothing else.
+}
+
+#[test]
+fn squint_check_takes_submission_v3() {
+    // Plan mE, task F1, item 3: `--submission v3` reaches the judge's step; the judge is
+    // given v3's tool, its items' ids an enum of the checklist's, and its answer, a finding
+    // inside an item, is the verdict. The help names v3; nothing past it is taken.
+    use crate::anthropic::{Judged, checked_submitting, submitting};
+    use crate::matrix::{SF1, SF2, argument, runs_of};
+    let judged = Judged::new("cli-squint-submission-v3");
+    let answer = |id: &str, disposition: &str, findings: serde_json::Value| {
+        serde_json::json!({"id": id, "disposition": disposition, "confidence": "confident",
+            "reason": "Looked at.", "allowed_by": null, "evidence": [],
+            "location": {"kind": "whole_image", "frame": "raw:candidate", "bbox": null,
+                         "polygon": null, "yaw": null, "pitch": null, "fov": null},
+            "findings": findings})
+    };
+    let moved = serde_json::json!([{"disposition": "violation", "confidence": "confident",
+        "reason": "The door moved.", "allowed_by": null, "evidence": [],
+        "location": {"kind": "bbox", "frame": "raw:candidate", "bbox": [0.1, 0.1, 0.3, 0.3],
+                     "polygon": null, "yaw": null, "pitch": null, "fov": null}}]);
+    let v3 = submitting(serde_json::json!({"schema_version": 3, "findings": [],
+        "items": [answer(SF1, "violation", moved), answer(SF2, "held", serde_json::json!([]))],
+        "opinion": {"verdict": "fail", "reason": "Recorded only."}}));
+    let (printed, log) = checked_submitting(&judged, vec![v3], None, None, Some("v3"));
+    let printed = printed.unwrap();
+    assert_eq!(printed.lines().nth(1), Some("verdict: fail"), "{printed}");
+    let sent = sent_of(&log);
+    let submit = (sent[0]["tools"].as_array().unwrap().iter())
+        .find(|tool| tool["name"] == "submit_verdict")
+        .unwrap();
+    // Anthropic is sent v3's tool as the build wrote it: its conformance fixture of v3.
+    assert_eq!(submit["input_schema"], crate::google::v3_schema());
+    let schema = &submit["input_schema"];
+    assert_eq!(schema["properties"]["items"]["type"], "array");
+    assert_eq!(
+        schema["$defs"]["Item"]["properties"]["id"]["enum"],
+        serde_json::json!([SF1, SF2])
+    );
+    let root = &judged.world.root;
+    let checks = runs_of(root, "check");
+    assert_eq!(checks.len(), 1);
+    assert_eq!(argument(&checks[0].1, "submission").as_deref(), Some("v3"));
+    // The command line takes v1, v2 or v3 and nothing else.
     let refused = crate::wired::whizbang_storeless(&[
         "squint",
         "check",
@@ -4119,7 +4175,7 @@ fn check_with_submission_v2_under_a_scripted_judge() {
         "--source",
         "s.png",
         "--submission",
-        "v3",
+        "v4",
     ]);
     assert_eq!(refused.code, Some(2), "{}", refused.err);
     assert!(refused.err.contains("--submission"), "{}", refused.err);

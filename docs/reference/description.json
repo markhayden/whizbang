@@ -17,7 +17,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "kit": "squint",
@@ -110,12 +110,13 @@
         },
         {
           "name": "submission",
-          "purpose": "v1 or v2: the form the judge answers in under a use case of the table. v2 keys the items by checklist id, reads near-misses that have one reading, and names every problem in its repair.",
+          "purpose": "v1, v2 or v3: the form the judge answers in under a use case of the table. v2 keys the items by checklist id; v3 puts each finding inside its item. Both name every problem in a repair.",
           "type": {
             "type": "choice",
             "choices": [
               "v1",
-              "v2"
+              "v2",
+              "v3"
             ]
           },
           "required": false,

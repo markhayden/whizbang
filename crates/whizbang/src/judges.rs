@@ -176,7 +176,7 @@ pub struct Submissions {
     pub classes: Vec<String>,
     pub also: Vec<String>,
     pub cause: String,
-    /// `v1` or `v2`; `v1` under `rejections/1`, which knew no other.
+    /// `v1`, `v2` or `v3`; `v1` under `rejections/1`, which knew no other.
     pub submission: String,
     pub recoveries: Vec<String>,
 }
@@ -365,6 +365,10 @@ pub struct SubmissionMeasures {
     pub also_by_class: BTreeMap<String, usize>,
     pub causes: BTreeMap<String, usize>,
     pub recoveries_by_kind: BTreeMap<String, usize>,
+    /// Each submission failure by the class of the rejection that ended it, the last of its
+    /// run: the rule it broke (plan mE, task F1, item 1). Left out of a record with none.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub failures_by_class: BTreeMap<String, usize>,
 }
 
 impl SubmissionMeasures {
@@ -381,6 +385,11 @@ impl SubmissionMeasures {
                 continue;
             }
             m.failures += usize::from(s.failed());
+            if s.failed()
+                && let Some(last) = s.classes.last()
+            {
+                *m.failures_by_class.entry(last.clone()).or_default() += 1;
+            }
             m.first_rejections += usize::from(s.first_rejected());
             for class in &s.classes {
                 *m.rejections_by_class.entry(class.clone()).or_default() += 1;

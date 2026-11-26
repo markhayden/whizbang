@@ -34,6 +34,10 @@ pub struct FileTool {
     pub purpose: String,
     pub bindings: Vec<String>,
     pub arguments: Vec<FileArgument>,
+    /// The kind of evidence its regions are (`region_kind`), when it returns regions:
+    /// under a use case, `check` takes them into the checklist as evidence items of that
+    /// kind (`crate::checklist::ingest`; plan mE, task F1).
+    pub region_kind: Option<String>,
 }
 
 /// One run of a tool file: the digest of the file it ran, `sha256:` and 64 hex digits,
@@ -138,6 +142,18 @@ pub fn call_of(tool: &FileTool, arguments: &Json, names: &Names) -> Result<FileC
         }
     }
     Ok((images, chosen))
+}
+
+/// The arguments a call of a tool file is given beside its own under a use case: what the
+/// rules hint to the tool (`[hints]`; plan mE, task F1), each as the argument of text it
+/// declares under that name, as `eval tool` gives them, unless the call gave it.
+pub fn hinted(tool: &FileTool, arguments: &mut Map<String, Json>, hints: &crate::use_case::Hints) {
+    for (name, value) in hints.arguments(&tool.name) {
+        let declared = (tool.arguments.iter()).any(|a| a.name == name && !a.number);
+        if declared && !arguments.contains_key(&name) {
+            arguments.insert(name, Json::String(value));
+        }
+    }
 }
 
 /// What the judge is told of a run of a tool file: its name, that it is experimental, the

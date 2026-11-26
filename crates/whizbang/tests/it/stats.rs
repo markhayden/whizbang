@@ -156,6 +156,7 @@ fn rejections_by_class_and_cause() {
          \x20 class\tevidence\t0\n\
          \x20 class\tnot_alone\t0\n\
          \x20 class\tno_submission\t0\n\
+         \x20 class\titem_findings\t0\n\
          \x20 class\tunknown\t0\n"
     );
     // No run is named; without the flag, no count.
