@@ -137,7 +137,7 @@ pub struct Fetching<'a> {
 
 /// The pictures of a set the store does not hold yet, each once: its pin, and the item
 /// and image a complaint names it by.
-fn wanted(set: &Set, root: &Path) -> Result<(Vec<sets::Picture>, usize), String> {
+pub(crate) fn wanted(set: &Set, root: &Path) -> Result<(Vec<sets::Picture>, usize), String> {
     let held = import::pictures_by_file(root)?;
     let mut seen = std::collections::BTreeSet::new();
     let mut wanted = Vec::new();
@@ -437,6 +437,14 @@ fn call_of(planned: &Planned, argument: &CellArgument) -> Result<Call, String> {
     if let Some(submission) = &arm.submission {
         call = call.argument("submission", Value::text(submission));
     }
+    // A tool file's method frozen in the arm (plan mE, task M1, item 12), only when it names
+    // one, so an arm that names none keeps its calls as they were.
+    if !arm.methods.is_empty() {
+        let methods: Vec<String> = (arm.methods.iter())
+            .map(|(tool, method)| format!("{tool}:{method}"))
+            .collect();
+        call = call.argument("methods", Value::text(&methods.join(",")));
+    }
     if planned.cell.backend != "default" {
         call = call.argument("judge", Value::text(&planned.cell.backend));
     }
@@ -553,6 +561,47 @@ pub fn run_under(
     let mut report = summary(planned, labels, running.root, &identity, gate)?;
     report.started = started;
     Ok(report)
+}
+
+/// `eval matrix --past-forecast` (plan mE, task M1, item 13): the forecast of the cells still
+/// to run, which is advice, and the matrix run anyway, each run admitted against the
+/// allowance as any run is, so that the allowance, which is enforced, holds the matrix. A run
+/// refused for it ends the matrix, the cells left to run named by count; run again after a
+/// new allowance, it resumes.
+pub fn run_past_forecast(
+    matrix: &Matrix,
+    planned: &[Planned],
+    labels: &BTreeMap<(String, String), sets::Expected>,
+    running: &Running<'_>,
+) -> Result<(u64, Report), String> {
+    let identity: String = matrix.identity().chars().take(16).collect();
+    let now = attempts_under(running.root, &identity, None)?;
+    let still: Vec<Cell> = (planned.iter())
+        .filter(|p| {
+            let last = now.get(&p.cell).and_then(|list| list.last());
+            matches!(last, None | Some((_, _, Ended::Interrupted)))
+        })
+        .map(|p| p.cell.clone())
+        .collect();
+    let forecast = matrix::forecast(&still)?;
+    let past = Running {
+        executor: running.executor,
+        root: running.root,
+        left_micros: u64::MAX,
+        stop: running.stop,
+    };
+    match run(matrix, planned, labels, &past) {
+        Ok(report) => Ok((forecast, report)),
+        Err(why) => {
+            let report = summary(planned, labels, running.root, &identity, None)?;
+            let left = report.not_run + report.interrupted;
+            Err(format!(
+                "{why}; {left} of the matrix's {} cells are left to run: run it again after a \
+                 new allowance to resume",
+                report.cells
+            ))
+        }
+    }
 }
 
 /// Whether the matrix may resume over what the store holds under a binary whose default

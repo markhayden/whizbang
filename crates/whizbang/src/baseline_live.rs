@@ -51,6 +51,7 @@ pub struct Live<'a> {
 pub fn matrix(set: &str, model: &str, judge: &str) -> Result<Matrix, String> {
     use whizbang_eval::matrix::{Judge, Spec};
     let built = Matrix {
+        hypotheses: None,
         matrix: Spec {
             name: "baseline-live".to_owned(),
             sets: vec![set.to_owned()],

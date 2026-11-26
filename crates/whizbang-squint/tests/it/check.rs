@@ -2876,6 +2876,8 @@ pub struct Probe {
     pub ran_as: Option<&'static str>,
     /// Whether every run of it fails, as a file that raised does: no digest is noted.
     pub fails: bool,
+    /// Whether it takes a `method` (plan mE, task M1, item 12).
+    pub methods: bool,
 }
 
 pub type Probed = (Vec<(String, ArtifactId)>, Json);
@@ -2889,12 +2891,23 @@ impl whizbang_squint::files::FileTools for Probe {
             name: "probe".to_owned(),
             purpose: "Probes how much of a named subject the candidate keeps.".to_owned(),
             bindings: vec!["source".to_owned(), "candidate".to_owned()],
-            arguments: vec![whizbang_squint::files::FileArgument {
-                name: "phrase".to_owned(),
-                number: false,
-                purpose: "The subject, in words.".to_owned(),
-                required: true,
-            }],
+            arguments: {
+                let mut arguments = vec![whizbang_squint::files::FileArgument {
+                    name: "phrase".to_owned(),
+                    number: false,
+                    purpose: "The subject, in words.".to_owned(),
+                    required: true,
+                }];
+                if self.methods {
+                    arguments.push(whizbang_squint::files::FileArgument {
+                        name: "method".to_owned(),
+                        number: false,
+                        purpose: "How the subject is found.".to_owned(),
+                        required: false,
+                    });
+                }
+                arguments
+            },
         }]
     }
 
@@ -4043,5 +4056,76 @@ fn v2_with_the_second_look_strict_keeps_the_strict_rule() {
         assert_eq!(judge.requests(), 2);
         assert_eq!(left.record().verdict().unwrap().0, decided);
         assert_eq!(second_look_kept(&left)["strict"], true);
+    }
+}
+
+#[test]
+fn a_judge_cannot_override_the_method_its_arm_froze() {
+    // Plan mE, task M1, item 12: the arm's method is the tool's for the run. A call naming
+    // another is refused; one naming none is given it.
+    let (mut world, source, candidate, _) = paired();
+    let probe = Arc::new(Probe {
+        methods: true,
+        ..Probe::default()
+    });
+    world.toolbox = whizbang_squint::check::Toolbox::with_files(probe.clone());
+    let other = json!({"tool_call": {"id": "p1", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door", "method": "sam3"}}});
+    let none = json!({"tool_call": {"id": "p2", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door"}}});
+    let same = json!({"tool_call": {"id": "p3", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door", "method": "eomt"}}});
+    let asked = judge(&submitting(&[other, none, same]), &[]);
+    let executor = world.engine(asked.clone(), Secrets::none());
+    let call = of_pair(
+        &source,
+        &candidate,
+        &[("tools", "view,probe"), ("methods", "probe:eomt")],
+    );
+    let finished = executor.submit(&call).unwrap();
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    drop(executor);
+    let said: Vec<ToolResult> = (1..=3).map(|n| results(&asked, n).remove(0)).collect();
+    assert!(said[0].is_error());
+    assert!(
+        said[0]
+            .text()
+            .starts_with("refused: the run froze the method of probe as eomt"),
+        "{}",
+        said[0].text()
+    );
+    assert!(!said[1].is_error() && !said[2].is_error());
+    let ran: Vec<Json> = (probe.ran.lock().unwrap().iter())
+        .map(|(_, a)| a.clone())
+        .collect();
+    assert_eq!(
+        ran,
+        [
+            json!({"phrase": "door", "method": "eomt"}),
+            json!({"phrase": "door", "method": "eomt"})
+        ]
+    );
+    // A method for a tool the run does not offer, or one that takes none, is refused before
+    // anything is sent.
+    for methods in ["outline:eomt", "probe:eomt,probe:sam3", "probe"] {
+        let quiet = judge(&submitting(&[]), &[]);
+        let executor = world.engine(quiet.clone(), Secrets::none());
+        let call = of_pair(
+            &source,
+            &candidate,
+            &[("tools", "view,probe"), ("methods", methods)],
+        );
+        let finished = executor.submit(&call).unwrap();
+        assert!(
+            matches!(finished.outcome(), Outcome::Invalid { .. }),
+            "{methods}: {:?}",
+            finished.outcome()
+        );
+        drop(executor);
+        assert!(quiet.received().is_empty());
     }
 }

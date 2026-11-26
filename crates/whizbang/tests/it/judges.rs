@@ -757,6 +757,7 @@ fn reading<'a>(
         mode: Mode::Judges,
         arm: Some("C"),
         rule: Some(Rule::JudgePick),
+        sets: &[],
         commit: "0000000000000000000000000000000000000000",
     }
 }
@@ -962,4 +963,183 @@ fn the_reader_takes_the_contract_check_writes_today() {
     // The contract `check` writes is one the reader takes, so a run of today's binary is
     // never counted as unknown for its contract alone.
     assert!(judges::CONTRACTS.contains(&whizbang_squint::check::REJECTIONS_CONTRACT));
+}
+
+// --- the rules of milestone E (plan mE, task M1, items 5 and 6) --------------------------------
+
+#[test]
+fn submission_2_reads_clause_c_on_the_interval() {
+    // Ten failures under v1, none under v2, over 60 families; v2 fails one pass at
+    // repetition 1. Its point is within the 2 points clause (c) gives, 1/60 of the passes;
+    // the upper bound of its interval is not.
+    let mut decisions = formats(&["haiku"], 60, (10, 0));
+    for d in &mut decisions {
+        if d.arm == "C;submission=v2" && d.item == "p30" && d.repetition == 1 {
+            d.computed = Computed::Fail;
+        }
+    }
+    let ruled = |rule: Rule, decisions: Vec<Decision>| {
+        let asked = Asked {
+            mode: Mode::Arms,
+            arm: Some("C;submission=v1".to_owned()),
+            treatment: Some("C;submission=v2".to_owned()),
+            rule: Some(rule),
+            resampling: how(),
+        };
+        judges::score(&complete(decisions), &asked)
+            .unwrap()
+            .format
+            .unwrap()
+    };
+    let one = ruled(Rule::Submission, decisions.clone());
+    assert_eq!(one.outcome, "adopted", "{}", one.why);
+    let two = ruled(Rule::Submission2, decisions.clone());
+    assert_eq!(
+        (two.outcome.as_str(), two.settled_by.as_str()),
+        ("not_adopted", "c"),
+        "{}",
+        two.why
+    );
+    let judge = &two.judges[0];
+    assert!(judge.false_reject_rate_change.unwrap() <= 0.02);
+    assert!(
+        judge.false_reject_rate_change_upper.unwrap() > 0.02,
+        "{judge:?}"
+    );
+    assert!(judge.balanced_accuracy_change_lower.is_some());
+    // Without the failed pass, both adopt v2.
+    let clean = formats(&["haiku"], 60, (10, 0));
+    assert_eq!(ruled(Rule::Submission2, clean.clone()).outcome, "adopted");
+    // Every count is over the items scored under both arms of a judge: a failure of an item
+    // only v2 scored counts under submission/1, and not under submission/2.
+    let mut extra = clean;
+    let mut only = decision("haiku", "x0", "famx", Expected::Pass, Computed::Error);
+    only.arm = "C;submission=v2".to_owned();
+    only.submissions = Some(Submissions {
+        classes: vec!["unknown_item".to_owned()],
+        cause: "invalid_submission".to_owned(),
+        recoveries: Vec::new(),
+        also: Vec::new(),
+        submission: "v2".to_owned(),
+    });
+    extra.push(only);
+    assert_eq!(ruled(Rule::Submission, extra.clone()).treatment_failures, 1);
+    assert_eq!(ruled(Rule::Submission2, extra).treatment_failures, 0);
+}
+
+/// `judges` judges, each perfect over `families` families but the last, which misses the
+/// fail of every third family.
+fn ranked(judges: &[&str], families: usize) -> Vec<Decision> {
+    let mut out = Vec::new();
+    for (at, judge) in judges.iter().enumerate() {
+        let mut mine = perfect(judge, families, 0.01 * (at + 1) as f64);
+        if at + 1 == judges.len() {
+            for d in &mut mine {
+                let n: usize = d.item[1..].parse().unwrap();
+                if d.expected == Expected::Fail && n.is_multiple_of(3) {
+                    d.computed = Computed::Pass;
+                }
+            }
+        }
+        out.extend(mine);
+    }
+    out
+}
+
+#[test]
+fn judge_pick_2_is_inconclusive_below_20_families_or_with_a_tail_unresolved() {
+    let corrected = |hypotheses: usize| Resampling {
+        seed: judges::SEED,
+        resamples: whizbang_eval::matrix::resamples_for(hypotheses),
+        hypotheses,
+        alpha: 0.05,
+    };
+    let rows = ranked(&["a", "b"], 19);
+    let refs: Vec<&Decision> = rows.iter().collect();
+    let pick = judges::judge_pick2("all", &refs, "C", None, &corrected(5));
+    assert_eq!(pick.outcome, "inconclusive");
+    assert!(pick.why.contains("19 families"), "{}", pick.why);
+    // Twenty families: 200 resamples at five hypotheses leave a tail of one draw.
+    let rows = ranked(&["a", "b"], 20);
+    let refs: Vec<&Decision> = rows.iter().collect();
+    let thin = Resampling {
+        resamples: 200,
+        ..corrected(5)
+    };
+    let pick = judges::judge_pick2("all", &refs, "C", None, &thin);
+    assert_eq!(pick.outcome, "inconclusive");
+    assert!(pick.why.contains("draws in each tail"), "{}", pick.why);
+    // The count the rule takes resolves it: a pick, the cheapest within the margin.
+    let pick = judges::judge_pick2("all", &refs, "C", None, &corrected(5));
+    assert_eq!((pick.outcome.as_str(), pick.model.as_str()), ("pick", "a"));
+    // An incomplete matrix is no pick, as under judge-pick/1.
+    let pick = judges::judge_pick2("all", &refs, "C", Some("1 cell open"), &corrected(5));
+    assert_eq!(pick.outcome, "no_pick");
+}
+
+#[test]
+fn judge_pick_2_resolves_every_tail_in_the_confirmation_rounds_shape() {
+    // Plan mE, task R4: five judges on 22 families of the fresh set, at tier 1's 21
+    // hypotheses and tier 2's full 27, each at the resamples the count needs.
+    let five = ["haiku", "terra", "flash", "sol", "argon"];
+    let rows = ranked(&five, 22);
+    let refs: Vec<&Decision> = rows.iter().collect();
+    let mut lowers = Vec::new();
+    for hypotheses in [21, 27] {
+        let how = Resampling {
+            seed: judges::SEED,
+            resamples: whizbang_eval::matrix::resamples_for(hypotheses),
+            hypotheses,
+            alpha: 0.05,
+        };
+        let tail = how.alpha / 2.0 / hypotheses as f64 * how.resamples as f64;
+        assert!(tail >= 20.0, "{hypotheses}: {tail}");
+        let pick = judges::judge_pick2("source-fidelity", &refs, "C", None, &how);
+        assert_ne!(pick.outcome, "inconclusive", "{}", pick.why);
+        assert_eq!(pick.model, "haiku");
+        let argon = pick.judges.iter().find(|j| j.model == "argon").unwrap();
+        lowers.push(argon.difference_from_best_lower.unwrap());
+    }
+    // The wider correction gives the wider interval.
+    assert!(lowers[1] <= lowers[0], "{lowers:?}");
+}
+
+#[test]
+fn judge_pick_2_reads_its_level_from_the_matrix_and_scores_the_sets_named() {
+    let world = World::new("judges-pick-2");
+    let tiny = tiny(&world.beside("set"), &["a"]);
+    let labels = world.beside("labels");
+    std::fs::create_dir_all(&labels).unwrap();
+    let dir = world.beside("matrices");
+    let file = matrix_file(&dir);
+    let plain = std::fs::read_to_string(&file).unwrap();
+    let out = world.beside("judges.toml");
+    let with = |text: &str| {
+        std::fs::write(&file, text).unwrap();
+        let matrices = [file.clone()];
+        let mut asked = reading(&world.root, &tiny, &matrices, &labels, &out);
+        asked.rule = Some(Rule::JudgePick2);
+        judges::run(&asked)
+    };
+    // A matrix that states no hypotheses gives the rule no level.
+    let refused = with(&plain).unwrap_err();
+    assert!(refused.contains("states no hypotheses"), "{refused}");
+    // One that states fewer than the rule's two judges is refused.
+    let refused = with(&format!("hypotheses = 1\n{plain}")).unwrap_err();
+    assert!(refused.contains("the 2 judges of the rule"), "{refused}");
+    // Stated, the rule resamples as the count needs; nothing has run, so no pick.
+    let written = with(&format!("hypotheses = 21\n{plain}")).unwrap();
+    assert_eq!(written.scored.resamples, 20_000);
+    assert_eq!(written.scored.picks[0].outcome, "no_pick");
+    // `--set` scores the sets named alone, and refuses one no matrix has.
+    std::fs::write(&file, &plain).unwrap();
+    let matrices = [file.clone()];
+    let only = [SET.to_owned()];
+    let mut asked = reading(&world.root, &tiny, &matrices, &labels, &out);
+    asked.sets = &only;
+    assert_eq!(judges::run(&asked).unwrap().scored.cells, 2);
+    let other = ["source-fidelity/other-v1".to_owned()];
+    asked.sets = &other;
+    let refused = judges::run(&asked).unwrap_err();
+    assert!(refused.contains("no matrix named has the set"), "{refused}");
 }

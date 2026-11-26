@@ -293,7 +293,7 @@ pub type Named = (PathBuf, Gate, Vec<Comparison>);
 
 /// Every gate file the matrix at `matrix_file` names, read and held to its digest, each of
 /// version 3 and naming that matrix back, with its file, its gate and its comparisons; and
-/// the hypotheses they count together, one for each comparison. Each gate must correct for
+/// the hypotheses their comparisons count together, one for each. Each gate must correct for
 /// that count and state the most repetitions of any cell it reads. `eval matrix` refuses a
 /// matrix whose gates do not hold so before anything runs, and `eval run --gate` scores
 /// none of them.
@@ -341,13 +341,33 @@ pub fn gates_on(matrix_file: &Path, matrix: &Matrix) -> Result<(Vec<Named>, usiz
         hypotheses += compared.len();
         out.push((file, gate, compared));
     }
-    for (file, gate, _) in &out {
-        if gate.confidence.hypotheses != hypotheses {
+    // The matrix may count more hypotheses than its gates compare: the judge's rule's beside
+    // them (plan mE, task M1, item 6). Then every gate corrects for that count, and resamples
+    // as that count needs.
+    let counted = match matrix.hypotheses {
+        Some(declared) if declared < hypotheses => {
             return Err(format!(
-                "{}: the gate corrects for {} hypotheses, and the gates on its matrix compare \
-                 {hypotheses}; each counts every one",
-                printable(&file.file_name().unwrap_or_default().to_string_lossy()),
+                "the matrix counts {declared} hypotheses, and its gates compare {hypotheses}"
+            ));
+        }
+        Some(declared) => declared,
+        None => hypotheses,
+    };
+    for (file, gate, _) in &out {
+        let shown = printable(&file.file_name().unwrap_or_default().to_string_lossy());
+        if gate.confidence.hypotheses != counted {
+            return Err(format!(
+                "{shown}: the gate corrects for {} hypotheses, and the gates on its matrix compare \
+                 {counted}; each counts every one",
                 gate.confidence.hypotheses
+            ));
+        }
+        let wanted = whizbang_eval::matrix::resamples_for(counted);
+        if matrix.hypotheses.is_some() && gate.families.resamples != wanted {
+            return Err(format!(
+                "{shown}: the gate resamples {} times, and a round of {counted} hypotheses \
+                 resamples {wanted}",
+                gate.families.resamples
             ));
         }
     }
@@ -474,6 +494,8 @@ pub struct Decided {
     pub computed: Computed,
     pub cost_usd: f64,
     pub wall_ms: u64,
+    /// When the run ended, in milliseconds since the Unix epoch.
+    pub ended_ms: u64,
 }
 
 /// Each run's verdict, cost and wall time, read from its record in the store at `root`.
@@ -508,6 +530,7 @@ fn scored_runs(root: &Path, runs: &[(String, Ended)]) -> Result<BTreeMap<String,
                 computed,
                 cost_usd: micros as f64 / 1_000_000.0,
                 wall_ms,
+                ended_ms: time.end_ms,
             },
         );
     }
@@ -612,6 +635,9 @@ pub fn run(gating: &Gating<'_>, running: &Running<'_>) -> Result<Receipt, String
         treatment: treatment.to_owned(),
         arm: None,
         relabelled: None,
+        splits: BTreeMap::new(),
+        admits: None,
+        date: None,
         scored: gate.score(&judged)?,
     };
     let written = serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())? + "\n";
@@ -698,6 +724,8 @@ impl Frozen {
 pub struct Read {
     pub items: Vec<(String, Vec<String>)>,
     pub labelled: Labelled,
+    /// Each set's split, by its id.
+    pub splits: BTreeMap<String, String>,
     pub ended: BTreeMap<Cell, Decided>,
 }
 
@@ -707,6 +735,11 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
     let ids = frozen.sets();
     let items = items_of(gating.sets_root, &ids)?;
     let labelled = labelled(gating.sets_root, gating.labels_root, &ids)?;
+    let mut splits = BTreeMap::new();
+    for id in &ids {
+        let set = sets::find(gating.sets_root, id)?;
+        splits.insert(id.clone(), set.manifest.set.split.to_string());
+    }
     let cells = frozen.cells(&items)?;
     let identity: String = frozen.matrix.identity().chars().take(16).collect();
     let attempts = evaluation::attempts_under(root, &identity, None)?;
@@ -725,6 +758,7 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
     let read = Read {
         items,
         labelled,
+        splits,
         ended: (runs.into_iter())
             .map(|(cell, run, _)| (cell, decided[&run]))
             .collect(),
@@ -874,8 +908,39 @@ pub fn score_read(frozen: &Frozen, read: &Read) -> Result<Receipt, String> {
             Compared::Arms { .. } => None,
         },
         relabelled: versions.map(|_| relabelled.len()),
+        splits: (read.splits.iter())
+            .filter(|(id, _)| ids.contains(id))
+            .map(|(id, split)| (id.clone(), split.clone()))
+            .collect(),
+        admits: gate.admits.clone(),
+        // The day the last cell the gate read ended: the receipt is the same however often
+        // it is scored.
+        date: (cells.iter())
+            .filter_map(|cell| read.ended.get(cell))
+            .map(|one| one.ended_ms)
+            .max()
+            .map(day_of),
         scored: gate.score(&judged)?,
     })
+}
+
+/// The day, in UTC, of a time in milliseconds since the Unix epoch, as `YYYY-MM-DD`: the
+/// civil date by the usual arithmetic on eras of 400 years.
+pub fn day_of(ms: u64) -> String {
+    let shifted = ms / 86_400_000 + 719_468;
+    let (era, day_of_era) = (shifted / 146_097, shifted % 146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Writes `bytes` to `path` whole: to a new file beside it first, made by this call and so

@@ -295,3 +295,87 @@ fn a_version_3_gate_names_its_matrix_by_file_alone() {
         assert!(Gate::parse(&refused).is_err(), "{refused}");
     }
 }
+
+#[test]
+fn a_catch_rate_gate_resamples_the_families_with_a_failure() {
+    // Plan mE, task M1, item 14: the study's measure. Twenty families with two items
+    // labelled fail, each caught by the treatment in both repetitions where the control
+    // caught it in one; and twenty families of passes alone, which are not resampled.
+    use Computed::{Fail, Pass};
+    use Expected::{Fail as F, Pass as P};
+    let identity =
+        "matrix_identity = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\n";
+    let catch = FILE
+        .replace("gate_version = 2", "gate_version = 3")
+        .replace(identity, "")
+        .replace(
+            "primary = \"balanced_accuracy\"",
+            "primary = \"catch_rate\"",
+        )
+        .replace(
+            "count = 1\ncombine = \"first\"",
+            "count = 2\ncombine = \"mean\"",
+        );
+    let gate = Gate::parse(&catch).unwrap();
+    let (mut c, mut x) = (Vec::new(), Vec::new());
+    for f in 0..20 {
+        let fam = format!("fail{f:02}");
+        for i in 0..2 {
+            let id = format!("{fam}-{i}");
+            c.push(row(&id, &fam, 1, F, Fail));
+            c.push(row(&id, &fam, 2, F, Pass));
+            x.push(row(&id, &fam, 1, F, Fail));
+            x.push(row(&id, &fam, 2, F, Fail));
+        }
+        let fam = format!("pass{f:02}");
+        let id = format!("{fam}-0");
+        c.push(row(&id, &fam, 1, P, Pass));
+        x.push(row(&id, &fam, 1, P, Pass));
+    }
+    let judged = whizbang_eval::gate::Judged {
+        backend: "b".into(),
+        model: "m".into(),
+        control: c.clone(),
+        treatment: x.clone(),
+    };
+    let scored = gate.score(&[judged]).unwrap();
+    let one = &scored.judges[0];
+    let caught = one.catch_rate.as_ref().unwrap();
+    // The families with a failure, the items labelled fail, and the mean over repetitions.
+    assert_eq!((caught.families, caught.items), (20, 40));
+    assert_eq!((caught.control, caught.treatment), (0.5, 1.0));
+    let gain = caught.gain.as_ref().unwrap();
+    assert_eq!((gain.point, gain.families), (0.5, 20));
+    // Balanced accuracy, by repetition 1, sees no gain; the catch rate admits it.
+    assert_eq!(one.paired.gain.as_ref().unwrap().point, 0.0);
+    assert_eq!(scored.outcome, Outcome::Admitted, "{:?}", one.failed);
+    // Repetition 1 alone, combined first: no gain, rejected.
+    let first = Gate::parse(&catch.replace(
+        "count = 2\ncombine = \"mean\"",
+        "count = 2\ncombine = \"first\"",
+    ))
+    .unwrap();
+    let judged = whizbang_eval::gate::Judged {
+        backend: "b".into(),
+        model: "m".into(),
+        control: c,
+        treatment: x,
+    };
+    let scored = first.score(&[judged]).unwrap();
+    assert_eq!(scored.judges[0].catch_rate.as_ref().unwrap().treatment, 1.0);
+    assert_eq!(scored.judges[0].catch_rate.as_ref().unwrap().control, 1.0);
+    assert_ne!(scored.outcome, Outcome::Admitted);
+    // A mean is a catch-rate gate's, and the catch rate is version 3's.
+    let mean_ba = catch.replace(
+        "primary = \"catch_rate\"",
+        "primary = \"balanced_accuracy\"",
+    );
+    assert!(Gate::parse(&mean_ba).is_err());
+    assert!(
+        Gate::parse(&FILE.replace(
+            "primary = \"balanced_accuracy\"",
+            "primary = \"catch_rate\""
+        ))
+        .is_err()
+    );
+}

@@ -115,13 +115,33 @@ pub enum Rule {
     JudgePick,
     /// The submission format (plan e1, task F2, item 2).
     Submission,
+    /// `judge-pick/1`'s clauses with at least [`PICK_FAMILIES`] families, at the level the
+    /// matrix's correction gives, on enough resamples to resolve each tail (plan mE, task
+    /// M1, item 6).
+    JudgePick2,
+    /// `submission/1` with clause (c) read on the interval at its bound toward harm, every
+    /// count over the items scored under both arms of a judge (plan mE, task M1, item 5).
+    Submission2,
 }
+
+/// The rules by name.
+pub const RULES: [&str; 4] = [
+    "judge-pick/1",
+    "submission/1",
+    "judge-pick/2",
+    "submission/2",
+];
+
+/// `judge-pick/2`: below this many families the outcome is inconclusive.
+pub const PICK_FAMILIES: usize = 20;
 
 impl Rule {
     pub fn name(self) -> &'static str {
         match self {
             Rule::JudgePick => "judge-pick/1",
             Rule::Submission => "submission/1",
+            Rule::JudgePick2 => "judge-pick/2",
+            Rule::Submission2 => "submission/2",
         }
     }
 
@@ -130,8 +150,20 @@ impl Rule {
         match name {
             "judge-pick/1" => Ok(Rule::JudgePick),
             "submission/1" => Ok(Rule::Submission),
-            _ => Err("the rule is judge-pick/1 or submission/1".to_owned()),
+            "judge-pick/2" => Ok(Rule::JudgePick2),
+            "submission/2" => Ok(Rule::Submission2),
+            _ => Err(format!("the rule is one of {}", RULES.join(", "))),
         }
+    }
+
+    /// Whether the rule picks a judge (judges mode).
+    pub fn picks_judge(self) -> bool {
+        matches!(self, Rule::JudgePick | Rule::JudgePick2)
+    }
+
+    /// Whether the rule decides a submission format (arms mode).
+    pub fn decides_format(self) -> bool {
+        matches!(self, Rule::Submission | Rule::Submission2)
     }
 }
 
@@ -495,6 +527,14 @@ pub struct FormatClauses {
     pub false_reject_rate_change: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub false_accept_rate_change: Option<f64>,
+    /// `submission/2`: the bounds toward harm of the family-resampled 95% intervals of the
+    /// changes: balanced accuracy's lower, the false-reject and false-accept rates' upper.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balanced_accuracy_change_lower: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub false_reject_rate_change_upper: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub false_accept_rate_change_upper: Option<f64>,
     pub accuracy_kept: bool,
 }
 
@@ -925,6 +965,49 @@ pub fn judge_pick(
     }
 }
 
+/// `judge-pick/2` (plan mE, task M1, item 6): `judge-pick/1`'s clauses on the resampling
+/// given, which carries the matrix's correction, with an outcome of `inconclusive` below
+/// [`PICK_FAMILIES`] families or when the resamples cannot resolve a tail.
+pub fn judge_pick2(
+    scope: &str,
+    rows: &[&Decision],
+    arm: &str,
+    incomplete: Option<&str>,
+    how: &Resampling,
+) -> Pick {
+    let inconclusive = |why: String| Pick {
+        scope: scope.to_owned(),
+        outcome: "inconclusive".to_owned(),
+        model: DEFAULT_JUDGE.to_owned(),
+        backend: None,
+        why: format!("{why}; the current default, {DEFAULT_JUDGE}, is kept"),
+        judges: Vec::new(),
+    };
+    if incomplete.is_some() {
+        return judge_pick(scope, rows, arm, incomplete, how);
+    }
+    let families: BTreeSet<(&str, &str)> = (rows.iter())
+        .filter(|d| d.arm == arm && d.repetition == 1)
+        .map(|d| (d.set.as_str(), d.family.as_str()))
+        .collect();
+    if families.len() < PICK_FAMILIES {
+        return inconclusive(format!(
+            "{} families, under the {PICK_FAMILIES} the rule needs",
+            families.len()
+        ));
+    }
+    let tail = how.alpha / 2.0 / how.hypotheses.max(1) as f64 * how.resamples as f64;
+    if tail < whizbang_eval::bootstrap::MIN_TAIL_RESAMPLES {
+        return inconclusive(format!(
+            "{} resamples leave {tail:.1} draws in each tail at {} hypotheses, under {}",
+            how.resamples,
+            how.hypotheses,
+            whizbang_eval::bootstrap::MIN_TAIL_RESAMPLES
+        ));
+    }
+    judge_pick(scope, rows, arm, None, how)
+}
+
 /// For each eligible judge, its balanced accuracy minus the highest among the eligible
 /// judges: on the whole sample, and the lower bound of its 95% interval resampled by family,
 /// with the highest taken again inside each resample, so that choosing the best is inside the
@@ -1010,6 +1093,62 @@ pub fn submission_rule(
     control: &str,
     treatment: &str,
     incomplete: Option<&str>,
+) -> FormatDecision {
+    format_rule(decisions, control, treatment, incomplete, None)
+}
+
+/// `submission/2` (plan mE, task M1, item 5): `submission/1`'s clauses over the decisions of
+/// the items each judge scored under both arms, clause (a) pooled over the judges, (b) and
+/// (c) for each judge, (c) read on the family-resampled 95% interval of each change at its
+/// bound toward harm.
+pub fn submission_rule_2(
+    decisions: &[Decision],
+    control: &str,
+    treatment: &str,
+    incomplete: Option<&str>,
+    how: &Resampling,
+) -> FormatDecision {
+    // Each judge's decisions of the items it scored under both arms, at each repetition.
+    let held: BTreeSet<(JudgeKey, &str, &str, &str, u32)> = (decisions.iter())
+        .map(|d| {
+            (
+                key_of(d),
+                d.arm.as_str(),
+                d.set.as_str(),
+                d.item.as_str(),
+                d.repetition,
+            )
+        })
+        .collect();
+    let both: Vec<Decision> = (decisions.iter())
+        .filter(|d| {
+            let other = if d.arm == control {
+                treatment
+            } else if d.arm == treatment {
+                control
+            } else {
+                return false;
+            };
+            held.contains(&(
+                key_of(d),
+                other,
+                d.set.as_str(),
+                d.item.as_str(),
+                d.repetition,
+            ))
+        })
+        .cloned()
+        .collect();
+    format_rule(&both, control, treatment, incomplete, Some(how))
+}
+
+/// `submission/1`, or with `interval` `submission/2`'s clause (c).
+fn format_rule(
+    decisions: &[Decision],
+    control: &str,
+    treatment: &str,
+    incomplete: Option<&str>,
+    interval: Option<&Resampling>,
 ) -> FormatDecision {
     let of = |arm: &str| -> Vec<&Decision> { decisions.iter().filter(|d| d.arm == arm).collect() };
     let (c, t) = (of(control), of(treatment));
@@ -1097,9 +1236,27 @@ pub fn submission_rule(
         let fr = change(Counts::false_reject_rate);
         let fa = change(Counts::false_accept_rate);
         // A change that cannot be worked out does not hold the clause.
-        let kept = ba.is_some_and(|v| v + TOLERANCE >= -ACCURACY_GIVEN)
+        let mut kept = ba.is_some_and(|v| v + TOLERANCE >= -ACCURACY_GIVEN)
             && fr.is_none_or(|v| v <= ACCURACY_GIVEN + TOLERANCE)
             && fa.is_none_or(|v| v <= ACCURACY_GIVEN + TOLERANCE);
+        let mut bounds = (None, None, None);
+        if let Some(how) = interval {
+            // Read on the interval, each at its bound toward harm; an interval that cannot be
+            // worked out does not hold the clause.
+            let rows = |list: &[Decision]| -> Vec<Row> { list.iter().map(row_of).collect() };
+            let paired = metrics::paired(&rows(&jc), &rows(&jt), *how).ok();
+            let lower = |i: Option<&whizbang_eval::bootstrap::Interval>| i.map(|i| i.lower);
+            let upper = |i: Option<&whizbang_eval::bootstrap::Interval>| i.map(|i| i.upper);
+            let p = paired.as_ref();
+            bounds = (
+                lower(p.and_then(|p| p.gain.as_ref())),
+                upper(p.and_then(|p| p.false_reject_increase.as_ref())),
+                upper(p.and_then(|p| p.false_accept_increase.as_ref())),
+            );
+            kept = bounds.0.is_some_and(|v| v + TOLERANCE >= -ACCURACY_GIVEN)
+                && bounds.1.is_none_or(|v| v <= ACCURACY_GIVEN + TOLERANCE)
+                && bounds.2.is_none_or(|v| v <= ACCURACY_GIVEN + TOLERANCE);
+        }
         out.judges.push(FormatClauses {
             backend: judge.0.clone(),
             model: judge.1.clone(),
@@ -1109,6 +1266,9 @@ pub fn submission_rule(
             balanced_accuracy_change: ba,
             false_reject_rate_change: fr,
             false_accept_rate_change: fa,
+            balanced_accuracy_change_lower: bounds.0,
+            false_reject_rate_change_upper: bounds.1,
+            false_accept_rate_change_upper: bounds.2,
             accuracy_kept: kept,
         });
     }
@@ -1217,14 +1377,22 @@ pub fn score(population: &Population, asked: &Asked) -> Result<Scored, String> {
         }
     };
     match (asked.mode, asked.rule) {
-        (Mode::Arms, Some(Rule::JudgePick)) => {
-            return Err("judge-pick/1 is applied in judges mode".to_owned());
+        (Mode::Arms, Some(rule)) if rule.picks_judge() => {
+            return Err(format!("{} is applied in judges mode", rule.name()));
         }
-        (Mode::Judges, Some(Rule::Submission)) => {
-            return Err("submission/1 is applied in arms mode".to_owned());
+        (Mode::Judges, Some(rule)) if rule.decides_format() => {
+            return Err(format!("{} is applied in arms mode", rule.name()));
         }
         _ => {}
     }
+    let rule_pick = |name: &str, rows: &[&Decision], arm: &str, incomplete: Option<&str>| {
+        if asked.rule == Some(Rule::JudgePick2) {
+            judge_pick2(name, rows, arm, incomplete, how)
+        } else {
+            judge_pick(name, rows, arm, incomplete, how)
+        }
+    };
+    let picks = asked.rule.is_some_and(Rule::picks_judge);
     let incomplete = incomplete(population, asked);
     let mut out = Scored {
         mode: asked.mode.name().to_owned(),
@@ -1258,16 +1426,9 @@ pub fn score(population: &Population, asked: &Asked) -> Result<Scored, String> {
         // whatever both sides happened to have.
         match asked.mode {
             _ if incomplete.is_some() => {
-                if asked.rule == Some(Rule::JudgePick)
-                    && (name == "all" || name == "source-fidelity")
-                {
-                    out.picks.push(judge_pick(
-                        &name,
-                        &rows,
-                        &arms[0],
-                        incomplete.as_deref(),
-                        how,
-                    ));
+                if picks && (name == "all" || name == "source-fidelity") {
+                    out.picks
+                        .push(rule_pick(&name, &rows, &arms[0], incomplete.as_deref()));
                 }
             }
             Mode::Judges => {
@@ -1303,11 +1464,9 @@ pub fn score(population: &Population, asked: &Asked) -> Result<Scored, String> {
                         }
                     }
                 }
-                if asked.rule == Some(Rule::JudgePick)
-                    && (name == "all" || name == "source-fidelity")
-                {
+                if picks && (name == "all" || name == "source-fidelity") {
                     out.picks
-                        .push(judge_pick(&name, &rows, arm, incomplete.as_deref(), how));
+                        .push(rule_pick(&name, &rows, arm, incomplete.as_deref()));
                 }
             }
             Mode::Arms => {
@@ -1326,13 +1485,25 @@ pub fn score(population: &Population, asked: &Asked) -> Result<Scored, String> {
         }
         out.scopes.push(scope);
     }
-    if asked.rule == Some(Rule::Submission) {
-        out.format = Some(submission_rule(
-            &population.decisions,
-            &arms[0],
-            &arms[1],
-            incomplete.as_deref(),
-        ));
+    match asked.rule {
+        Some(Rule::Submission) => {
+            out.format = Some(submission_rule(
+                &population.decisions,
+                &arms[0],
+                &arms[1],
+                incomplete.as_deref(),
+            ));
+        }
+        Some(Rule::Submission2) => {
+            out.format = Some(submission_rule_2(
+                &population.decisions,
+                &arms[0],
+                &arms[1],
+                incomplete.as_deref(),
+                how,
+            ));
+        }
+        _ => {}
     }
     Ok(out)
 }
@@ -1349,6 +1520,9 @@ pub struct Reading<'a> {
     pub mode: Mode,
     pub arm: Option<&'a str>,
     pub rule: Option<Rule>,
+    /// The sets scored, by id, where not every set of the matrices is (plan mE, task M1,
+    /// item 6): completeness is then over the cells the matrices name for these alone.
+    pub sets: &'a [String],
     /// The commit the binary was built from.
     pub commit: &'a str,
 }
@@ -1439,6 +1613,15 @@ pub fn run(reading: &Reading<'_>) -> Result<Written, String> {
                 ids.push(id.clone());
             }
         }
+    }
+    if !reading.sets.is_empty() {
+        if let Some(missing) = reading.sets.iter().find(|id| !ids.contains(id)) {
+            return Err(format!(
+                "no matrix named has the set {}",
+                printable(missing)
+            ));
+        }
+        ids.retain(|id| reading.sets.contains(id));
     }
     let labelled = crate::gating::labelled(reading.sets_root, reading.labels_root, &ids)?;
     let mut items = Vec::new();
@@ -1583,12 +1766,21 @@ pub fn run(reading: &Reading<'_>) -> Result<Written, String> {
             (Some(control), Some(treatment))
         }
     };
+    let resampling = match reading.rule {
+        Some(Rule::JudgePick2) => corrected(
+            reading.matrices,
+            &matrices,
+            &expected,
+            arm.as_deref().unwrap_or(""),
+        )?,
+        _ => resampling(),
+    };
     let asked = Asked {
         mode: reading.mode,
         arm,
         treatment,
         rule: reading.rule,
-        resampling: resampling(),
+        resampling,
     };
     let scored = score(&population, &asked)?;
     let written = Written {
@@ -1608,6 +1800,52 @@ pub fn run(reading: &Reading<'_>) -> Result<Written, String> {
     let text = toml_of(&written)?;
     crate::gating::write_new(reading.out, text.as_bytes())?;
     Ok(written)
+}
+
+/// The resampling of `judge-pick/2`: at the level the matrices' correction gives, each
+/// matrix stating the same hypotheses (`hypotheses`), at least its gates' comparisons and
+/// one for each judge of the arm it names; with the resamples that count needs
+/// ([`whizbang_eval::matrix::resamples_for`]). Refused when a matrix states none.
+fn corrected(
+    files: &[PathBuf],
+    matrices: &[Matrix],
+    expected: &BTreeMap<Cell, usize>,
+    arm: &str,
+) -> Result<Resampling, String> {
+    let mut counted: Option<usize> = None;
+    for (at, (file, m)) in files.iter().zip(matrices).enumerate() {
+        let Some(declared) = m.hypotheses else {
+            return Err(format!(
+                "judge-pick/2 reads its level from the matrix's correction, and the matrix {} \
+                 states no hypotheses",
+                printable(&m.matrix.name)
+            ));
+        };
+        if counted.is_some_and(|c| c != declared) {
+            return Err("the matrices state different hypotheses".to_owned());
+        }
+        counted = Some(declared);
+        let (_, gates) = crate::gating::gates_on(file, m)?;
+        let judges: BTreeSet<(&str, &str)> = (expected.iter())
+            .filter(|(cell, of)| **of == at && cell.arm == arm)
+            .map(|(cell, _)| (cell.backend.as_str(), cell.model.as_str()))
+            .collect();
+        if gates + judges.len() > declared {
+            return Err(format!(
+                "the matrix {} states {declared} hypotheses, under its gates' {gates} and the \
+                 {} judges of the rule",
+                printable(&m.matrix.name),
+                judges.len()
+            ));
+        }
+    }
+    let hypotheses = counted.unwrap_or(1);
+    Ok(Resampling {
+        seed: SEED,
+        resamples: whizbang_eval::matrix::resamples_for(hypotheses),
+        hypotheses,
+        alpha: 0.05,
+    })
 }
 
 /// Every attempt of each cell of the matrices of these identities (their first 16 hex
