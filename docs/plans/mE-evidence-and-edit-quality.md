@@ -733,6 +733,20 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    An ADR, "The fixed-class segmenter", records the model, the feature and why it is a
    catalogue entry and not the default.
 
+As built (the first pull request): the model is run from the upstream safetensors through
+`transformers` (`EomtForUniversalSegmentation`), with squint's preprocessing and reading of
+the two heads, its labels resized to the picture's own size; the entry is `README.md`,
+`config.json` and `model.safetensors` from the Hub at squint's commit, no new origin.
+`labels` is no new kind of request in `pack/1`: a fixed-class segmenter answers each of its
+classes as a phrase with one instance, disjoint, and the new action `labels` asks every
+class named, in batches of 64, committing a mask a class with its confidence as the run's
+measurements (record `docs/reference/tools/labels.md`, marked experimental). A tool's ask
+may name `model` (routed to the config's segment backend whose `model` it is) and may be of
+`labels`, answered with one plane of each pixel's class. The model tier's test asks every
+class of the fixture; `just test-models` and the candidate's copy now need `eomt-ade20k`
+installed. Under `check`, `labels` is not yet frozen beside a run's tool files: the second
+pull request adds it with the tools that use it.
+
 **Second pull request: `classes` and the methods.**
 
 4. **`classes`**, ported from squint's `classes.py` as a tool file: for a box on `frame`, the
