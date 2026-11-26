@@ -5174,6 +5174,10 @@
       "mark": "experimental"
     },
     {
+      "tool": "classes",
+      "mark": "experimental"
+    },
+    {
       "tool": "tiles",
       "mark": "experimental"
     }

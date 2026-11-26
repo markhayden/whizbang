@@ -76,6 +76,14 @@ with every subject's readings beside it (`one_minus_iou`, `area_source`, `area_c
 `removed`) and the regions, each held to its declared bounds before anything uses it. No
 image.
 
+**Its methods** (plan mE, task T2; `SPEC.md` section 8, "Comparing methods"), the argument
+`method`, which `whizbang eval tool --method` gives each run: `sam3`, the default, as above;
+or `eomt`, squint's own, where a subject's mask is the pixels the catalogue's fixed-class
+segmenter `eomt-ade20k` labels with the ADE20K class its phrase names (the class itself, or
+a word squint mapped to one: "pool" is `swimming pool`; `whizbang_pack.class_groups`). A
+subject whose phrase names no class is not applicable. Its examples under `eomt` run as
+tests (`test_classes.OutlineByClass`); rung 2 chooses between the two (task R2).
+
 ## Examples
 
 Both compare a picture drawn by a program, 160 by 120, a red pool on grey, with an edit of
@@ -160,3 +168,5 @@ names it.
 - 2026-11-25, plan mE task T1: ported from squint as a tool file on SAM 3's phrase requests,
   with its regions on the candidate; this record's two examples (rung 1), run against the
   fake model.
+- 2026-11-26, plan mE task T2: the argument `method`, `sam3` (the default) or `eomt`, on the
+  catalogue's fixed-class segmenter; version 0.2.0.
