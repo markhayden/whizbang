@@ -7,8 +7,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde_json::Value as Json;
 use whizbang::play_kept::PICTURES;
-use whizbang::play_saved::example_in;
+use whizbang::play_result::Tasks;
+use whizbang::play_saved::{example_in, open};
 use whizbang::record_inputs::{Input, RECORDS, example_id, inputs, is_port, line, listed};
 use whizbang_core::artifact::{self, Artifact, ArtifactId};
 use whizbang_core::identity::{Binding, DecodeLimits, PixelDigest};
@@ -97,9 +99,15 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
     };
     want.push(summary(artifacts, pictures, examples.len()));
     assert_eq!(printed.lines().collect::<Vec<_>>(), want);
-    // Written again, nothing is new.
+    // Written again, nothing is new and nothing is published.
+    let number = || {
+        let reader = Reader::open(&root, Arc::new(RealFs)).expect("a reader");
+        reader.snapshot().expect("a generation").number()
+    };
+    let before = number();
     let again = record_inputs(&root, &all).expect("the inputs are written again");
     assert_eq!(again.lines().last(), Some(summary(0, 0, 0).as_str()));
+    assert_eq!(number(), before, "writing again published a generation");
 
     // What an input is on, or names, is among its example's inputs.
     for input in &all {
@@ -120,8 +128,8 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
         }
     }
 
-    // Each is in the store, and each mask reads back as the constructor made it, byte for
-    // byte: with its protect plane, its band profile and its prescriptions.
+    // Each reads back as the constructor made it, byte for byte: a mask with its protect
+    // plane, its band profile and its prescriptions.
     let reader = Reader::open(&root, Arc::new(RealFs)).expect("a reader");
     let generation = reader.snapshot().expect("a generation");
     let limits = DecodeLimits::default();
@@ -132,9 +140,8 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
     for input in &all {
         let (kind, id) = (input.artifact.artifact_type(), input.artifact.id());
         assert!(artifact::holds(&generation, kind, id), "{}", line(input));
-        if let Artifact::Mask(mask) = &input.artifact {
-            assert_eq!(read(input).to_bytes(), mask.to_bytes(), "{}", line(input));
-        }
+        let bytes = input.artifact.to_bytes();
+        assert_eq!(read(input).to_bytes(), bytes, "{}", line(input));
     }
     let band = all
         .iter()
@@ -158,6 +165,13 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
     // holding its call's inputs, by port, as they were written.
     let store = Store::open(&root, Arc::new(RealFs)).expect("the store");
     let generation = store.snapshot().expect("a generation");
+    let registry = whizbang::wiring::registry().expect("the build's actions");
+    let descriptors: Vec<_> = registry.descriptors().cloned().collect();
+    let kits = whizbang::wiring::kits();
+    let tasks = Tasks {
+        descriptors: &descriptors,
+        kits: &kits,
+    };
     for input in all
         .iter()
         .filter(|i| matches!(i.artifact, Artifact::Image(_)))
@@ -176,6 +190,44 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
             .map(|input| (input.port.clone(), input.id.clone()))
             .collect();
         assert_eq!(held, ports, "{record} {example}");
+
+        // Opened, as the playground opens it, its draft gives each port those identities:
+        // `select`'s form keeps one mask of several, the first (the carry-over row on the
+        // pickers), and nothing else is short.
+        let id = example_id(record, example);
+        let draft = open(&store, &id, &tasks)
+            .unwrap_or_else(|refused| panic!("{record} {example} does not open: {refused:?}"));
+        let given = |port: &str| -> Vec<String> {
+            let value = (draft["values"].get(port)).or_else(|| draft["kept"].get(port));
+            match value {
+                Some(Json::String(id)) => vec![id.clone()],
+                Some(Json::Array(ids)) => ids
+                    .iter()
+                    .filter_map(|id| id.as_str().map(str::to_owned))
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let mut by_port: Vec<(String, Vec<String>)> = Vec::new();
+        for (port, id) in &ports {
+            match by_port.iter_mut().find(|(at, _)| at == port) {
+                Some((_, ids)) => ids.push(id.clone()),
+                None => by_port.push((port.clone(), vec![id.clone()])),
+            }
+        }
+        for (port, ids) in by_port {
+            let got = given(&port);
+            if *record == "select" {
+                assert!(ids.len() > 1, "{example}");
+                assert_eq!(
+                    got,
+                    ids[..1],
+                    "select {example}: the form's one mask is the first"
+                );
+            } else {
+                assert_eq!(got, ids, "{record} {example} {port}");
+            }
+        }
     }
     drop(store);
 

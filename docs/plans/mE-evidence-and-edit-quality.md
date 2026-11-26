@@ -1380,8 +1380,8 @@ makes, so what is written for it is what that first pass takes (the scene, and t
 in O1.2, after a first pass under Bria, is the owner's to say. The set builder's row has no
 store inputs. Nor do the rows walked in later sessions, whose records this command does not
 cover: `segment`, `fill`, `remove_prompt`, `remove`, `repair_area`, `repair`, `seam`,
-`remove_checked`, `check` and its five use cases, and the tool files `per_subject`, `outline`,
-`regions` and `classes`. Their inputs are pictures, brought in by `whizbang store import
+`remove_checked`, `check` and its five use cases, `labels`, and the tool files `per_subject`,
+`outline`, `regions` and `classes`. Their inputs are pictures, brought in by `whizbang store import
 --picture` from the committed dev sets, `segmentation/segment-01` and the labs' corpora, with a
 phrase, a point or a box given as an argument; a mask or a location they take is the output of
 a run the session makes first.

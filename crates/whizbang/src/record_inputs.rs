@@ -193,29 +193,33 @@ pub fn write_these(
         }
         let held = artifact::holds(&generation, kind, id);
         new += usize::from(!held);
-        // An input marked as imported within the hour is left as it is, as `store import`
-        // leaves it, so that writing again changes nothing.
-        let mark = generation.imported(&artifact::name(kind, id));
-        let marked = mark.is_some_and(|mark| now_ms().saturating_sub(mark.at_ms) < HOUR_MS);
-        if !(held && marked) {
-            artifact::import_with(&mut publication, &input.artifact, held, &[]).map_err(failed)?;
-            changed = true;
+        // An image's name in the playground's library comes in with it, in its import's
+        // mark, so a prune of the image lets the name go too, as the playground's own
+        // import does.
+        let picture = matches!(input.artifact, Artifact::Image(_))
+            .then(|| format!("{PICTURES}{}", id.0.hex()));
+        let with: Vec<String> = picture.iter().cloned().collect();
+        // An input marked as imported within the hour, with its name, is left as it is, as
+        // `store import` leaves it, so that writing again changes nothing.
+        let name = artifact::name(kind, id);
+        if held && crate::import::marked_recently(&generation, &name, &with) {
+            continue;
         }
-        if let Artifact::Image(image) = &input.artifact {
-            let name = format!("{PICTURES}{}", id.0.hex());
-            if generation.get(&name).is_none() {
-                let kept = Named {
-                    id: id.to_string(),
-                    name: format!("{} · {} · {}", input.record, input.example, input.port),
-                    width: image.space().width(),
-                    height: image.space().height(),
-                    at_ms: now_ms(),
-                };
-                let bytes = serde_json::to_vec(&kept).map_err(|error| error.to_string())?;
-                publication.put(&name, &bytes).map_err(failed)?;
-                named += 1;
-                changed = true;
-            }
+        artifact::import_with(&mut publication, &input.artifact, held, &with).map_err(failed)?;
+        changed = true;
+        if let (Some(picture), Artifact::Image(image)) = (&picture, &input.artifact)
+            && generation.get(picture).is_none()
+        {
+            let kept = Named {
+                id: id.to_string(),
+                name: format!("{} · {} · {}", input.record, input.example, input.port),
+                width: image.space().width(),
+                height: image.space().height(),
+                at_ms: now_ms(),
+            };
+            let bytes = serde_json::to_vec(&kept).map_err(|error| error.to_string())?;
+            publication.put(picture, &bytes).map_err(failed)?;
+            named += 1;
         }
     }
     let (examples, saved) = save_examples(&store, &generation, &mut publication, &inputs)?;
@@ -232,10 +236,6 @@ pub fn write_these(
     ));
     Ok(printed)
 }
-
-/// How long an import's mark is new enough to leave as it is: an hour, as `store import`
-/// has it.
-const HOUR_MS: u64 = 3_600_000;
 
 /// A refusal of the store's, or of an artifact's, in words.
 fn failed(error: impl std::fmt::Display) -> String {
@@ -290,6 +290,16 @@ fn save_examples(
             ));
         }
         let action = action_of(record, example);
+        let many = given.iter().filter(|input| input.port == "mask").count();
+        let one_mask = if many > 1 {
+            format!(
+                " The playground opens it with the first of its {many} masks alone, a form \
+                 keeping one mask (docs/carry-over.md): so its call there is not the command \
+                 line's until that is fixed."
+            )
+        } else {
+            String::new()
+        };
         let saved_example = Example {
             example: EXAMPLE_VERSION.to_owned(),
             id: id.clone(),
@@ -298,7 +308,7 @@ fn save_examples(
                 "The inputs of the example {example} of the record of {record} \
                  (docs/reference/tools/{record}.md), as whizbang store record-inputs wrote \
                  them: a call of {action}. Its arguments are the form's defaults: set them as \
-                 the record says. No run made it."
+                 the record says. No run made it.{one_mask}"
             ),
             action: action.to_owned(),
             arguments: Vec::new(),
