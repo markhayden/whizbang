@@ -4049,7 +4049,7 @@
     },
     {
       "name": "rect",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "A box as a location on an image, from its left, top, right and bottom edges in pixels.",
       "arguments": [
@@ -4059,7 +4059,16 @@
           "type": {
             "type": "text"
           },
-          "required": true,
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "polygon",
+          "purpose": "In place of a box, a polygon: its points in pixels of the image, X Y each, apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
           "default": null
         }
       ],

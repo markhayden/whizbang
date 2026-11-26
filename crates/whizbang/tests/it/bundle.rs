@@ -49,7 +49,7 @@ pub fn removal(world: &Looped) -> Finished {
 /// The check of `removed` against the world's picture.
 pub fn checking(world: &Looped, removed: ArtifactId) -> Finished {
     let call = Call::new(CHECK)
-        .argument("job", Value::text(&job(PHRASE)))
+        .argument("job", Value::text(&job(PHRASE).unwrap()))
         .input("images", removed)
         .input("images", world.image_id());
     let finished = world.run(&call);

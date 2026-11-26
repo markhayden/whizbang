@@ -467,7 +467,7 @@ Needs: no capability.
 
 A box as a location on an image, from its left, top, right and bottom edges in pixels.
 
-Arguments: `box` (text, required).
+Arguments: `box` (text), `polygon` (text).
 
 Takes: `image` (image, 1 to 1).
 

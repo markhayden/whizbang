@@ -43,6 +43,11 @@ fn examples(tool: &str) -> Vec<Asked> {
                 scene(),
                 vec![("box", Value::text("60.4 30.5 120 80"))],
             ),
+            (
+                "polygon",
+                scene(),
+                vec![("polygon", Value::text("20 54; 48 8; 76 54"))],
+            ),
         ],
         "stroke" => vec![
             (
@@ -114,6 +119,7 @@ fn shape_text(shape: &Shape) -> String {
         Shape::Stroke { path, radius } => {
             format!("a stroke {}, radius {radius}", points(path))
         }
+        Shape::Polygon { points: corners } => format!("a polygon, {}", points(corners)),
         other => format!("{other:?}"),
     }
 }

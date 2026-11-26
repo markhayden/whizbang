@@ -3,7 +3,7 @@
 import { request as http } from "node:http";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { bundledVia, chainVia } from "./bundled";
+import { bundledVia, pictureVia, runVia } from "./bundled";
 import { openAt, READY } from "./play";
 import { largePng } from "./png";
 
@@ -141,8 +141,14 @@ test("an upload of a picture over the pixel limit is refused, naming the limit",
 
 test("a bundle holding markup in its words shows them as text", async ({ page, request, host }) => {
   const hostile = `<img src=x onerror="document.title='ran'">`;
-  const chain = await chainVia(request, host, 91, hostile);
-  const digest = await bundledVia(request, host, [chain.removal, chain.check]);
+  // A removal whose words are markup, then `protect` on what it made. Not a check: the
+  // loop's job refuses a phrase that holds `<` or `>` (plan mE, task L2).
+  const image = await pictureVia(request, host, 91);
+  const removal = await runVia(request, host, "remove_prompt", { image, prompt: hostile });
+  const record = await (await request.get(`${host.address}api/runs/${removal}/record`, { headers: { Authorization: `Bearer ${host.token}` } })).json();
+  const target = (record.send_to as Array<{ task: string; values: Record<string, unknown> }>).find((one) => one.task === "protect")!;
+  const second = await runVia(request, host, "protect", { ...target.values });
+  const digest = await bundledVia(request, host, [removal, second]);
   await openAt(page, host, `#/bundles/${digest}`);
   await expect(page.locator(".bundle-card")).toContainText("A chain of 2 steps");
   await page.goto(`${host.address}#/chain/${digest}`);

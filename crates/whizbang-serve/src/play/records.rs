@@ -155,6 +155,7 @@ const FILES: &[File] = &[
     record!("rect.md", "text/markdown; charset=utf-8"),
     record!("rect/box.png", "image/png"),
     record!("rect/edge.png", "image/png"),
+    record!("rect/polygon.png", "image/png"),
     record!("reference-consistency.md", "text/markdown; charset=utf-8"),
     record!("reference-consistency/registered.png", "image/png"),
     record!("reference-consistency/scene.png", "image/png"),

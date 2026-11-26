@@ -190,3 +190,54 @@ fn the_ported_vectors_give_rascals_cores() {
     let nothing = select(&masks, &[[0.0, 0.0, 100.0, 60.0]], UseCase::Remove);
     assert!(matches!(nothing, Err(SelectError::Invalid(_))));
 }
+
+/// A run joins its masks one at a time (plan mE, task L2, item 3): masks added to a union
+/// one after the other, each let go once added, give the mask `select` makes of them all
+/// at once; and with a pixel to keep by, the mask of those `holding` keeps.
+#[test]
+fn a_union_made_one_mask_at_a_time_is_the_selection_of_them_all() {
+    use whizbang_rascal::select::Union;
+    let (w, h) = (16, 10);
+    let made = |x0: usize, x1: usize| {
+        mask_of(
+            w,
+            h,
+            plane(w, h, |x, y| (x0..x1).contains(&x) && (2..7).contains(&y)),
+            &[0; 160],
+        )
+    };
+    let all = [made(1, 5), made(4, 9), made(10, 14)];
+    let exclude = boxes("3 3 11 4").unwrap();
+    let whole = select(&all, &exclude, UseCase::Remove).unwrap();
+    let mut union = Union::new(None);
+    for mask in &all {
+        // Each mask made afresh, added, and dropped before the next.
+        let one = mask.clone();
+        union.add(&one).unwrap();
+        drop(one);
+    }
+    let joined = union.finish(&exclude, UseCase::Remove).unwrap();
+    assert_eq!(joined.core(), whole.core());
+    assert_eq!(joined.origin(), whole.origin());
+    // Kept by a pixel: only the masks that hold it.
+    let kept = holding(all.to_vec(), [4.5, 3.0]).unwrap();
+    let held = select(&kept, &[], UseCase::Remove).unwrap();
+    let mut union = Union::new(Some([4.5, 3.0]));
+    for mask in &all {
+        union.add(mask).unwrap();
+    }
+    let joined = union.finish(&[], UseCase::Remove).unwrap();
+    assert_eq!(
+        (joined.core(), joined.origin()),
+        (held.core(), held.origin())
+    );
+    // None that holds it is refused, naming how many were given.
+    let mut union = Union::new(Some([15.0, 9.0]));
+    for mask in &all {
+        union.add(mask).unwrap();
+    }
+    let Err(SelectError::Invalid(why)) = union.finish(&[], UseCase::Remove) else {
+        panic!("a pixel no mask holds");
+    };
+    assert!(why.contains("none of the 3 masks"), "{why}");
+}

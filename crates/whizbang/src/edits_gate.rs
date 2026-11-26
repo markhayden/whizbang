@@ -337,7 +337,7 @@ impl Held<'_> {
 
     /// Whether the edit passed its checks: those of `image` as the candidate and `given` as
     /// the source, in that order (as the loop writes them), given the job the loop writes
-    /// for the case's phrase, under the judge when one is named. Every such check must
+    /// for the case's phrase under either version of its template, under the judge when one is named. Every such check must
     /// have passed, however many there are; none when there is none. An edit that changed
     /// nothing is not a success unless a check of it was made under its own run.
     fn checked(
@@ -347,13 +347,9 @@ impl Held<'_> {
         given: ArtifactId,
         judge: Option<&str>,
     ) -> Option<bool> {
-        let job = run
-            .case
-            .what
-            .as_deref()
-            .map(|what| Digest::of_bytes(whizbang_rascal::checked::job(what).as_bytes()));
+        let what = run.case.what.as_deref();
         let found: Vec<&CheckSeen> = (self.checks.iter())
-            .filter(|c| c.images == [image, given] && job.is_some() && c.job == job)
+            .filter(|c| c.images == [image, given] && is_the_loops_job(c.job, what))
             .filter(|c| judge.is_none_or(|j| c.judge.as_deref() == Some(j)))
             .collect();
         if image == given {
@@ -363,6 +359,16 @@ impl Held<'_> {
         }
         (!found.is_empty()).then(|| found.iter().all(|c| c.passed))
     }
+}
+
+/// Whether a check given the job of digest `job` was given the job the loop writes for
+/// the phrase `what`, under either version of its template (plan mE, task L2, item 1): a
+/// check made by a build before that task was given version 1. No phrase, no job.
+pub fn is_the_loops_job(job: Option<Digest>, what: Option<&str>) -> bool {
+    let (Some(job), Some(what)) = (job, what) else {
+        return false;
+    };
+    (whizbang_rascal::checked::jobs(what).iter()).any(|one| Digest::of_bytes(one.as_bytes()) == job)
 }
 
 fn pixels_of(reader: &Reader, id: ArtifactId) -> Result<CanonicalPixels, String> {

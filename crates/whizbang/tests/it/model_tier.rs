@@ -282,6 +282,25 @@ impl Tier {
         serde_json::from_str(&json.out).unwrap()
     }
 
+    /// What a mask of the store weighs at each pixel: its core where set, else its
+    /// blend, as a fill reads it.
+    fn mask_weights(&self, id: &str) -> Vec<f32> {
+        let reader = whizbang_core::store::Reader::open(&self.root, Arc::new(RealFs)).unwrap();
+        let read = whizbang_core::artifact::get_anywhere(
+            &reader,
+            whizbang_core::artifact::ArtifactType::Mask,
+            whizbang_core::artifact::ArtifactId(id.parse::<Digest>().unwrap()),
+            &DecodeLimits::default(),
+        );
+        let Ok(whizbang_core::artifact::Artifact::Mask(mask)) = read else {
+            panic!("no mask {id}");
+        };
+        let width = mask.binding().source_space().width();
+        (0..mask.core().len() as u32)
+            .map(|at| mask.weight(at % width, at / width).unwrap())
+            .collect()
+    }
+
     /// The kinds of the requests written to the worker, in order.
     fn sent(&self) -> Vec<&'static str> {
         self.worker.journal().iter().map(|sent| sent.kind).collect()
@@ -1018,6 +1037,144 @@ fn a_located_retry_finds_the_phrase_inside_a_crop_with_sam3() {
         second["verdict"].as_str().unwrap_or("not filled"),
         seconds(took)
     );
+}
+
+/// Where the large discs of [`second_disc_scene`] are: nine, one more than the eight
+/// instances the first find keeps (`remove_prompt`, its step `segment`).
+const LARGE_DISCS: [(i64, i64); 9] = [
+    (100, 90),
+    (320, 90),
+    (540, 90),
+    (100, 240),
+    (320, 240),
+    (540, 240),
+    (430, 165),
+    (320, 390),
+    (540, 390),
+];
+
+/// The scene of the located retry's fill (plan mE, task L2, item 5): 640 by 480, white,
+/// nine black discs of radius 30 ([`LARGE_DISCS`]), and a small pale one, radius 10 at
+/// (120, 390), light grey on the white. The first find keeps at most eight instances of
+/// the phrase, and the nine large discs, each far more plainly a circle, fill them: so
+/// the pale disc is missed by the first find because of that bound, not because of what
+/// the model sees, while a crop about it holds it alone. Drawn by this program, so
+/// nothing is committed beside it.
+fn second_disc_scene() -> Vec<u8> {
+    use image::ImageEncoder;
+    let rgba: Vec<u8> = (0..640u32 * 480)
+        .flat_map(|at| {
+            let (x, y) = (i64::from(at % 640), i64::from(at / 640));
+            let disc = |cx: i64, cy: i64, r: i64| (x - cx).pow(2) + (y - cy).pow(2) <= r * r;
+            if LARGE_DISCS.iter().any(|(cx, cy)| disc(*cx, *cy, 30)) {
+                [0, 0, 0, 255]
+            } else if disc(120, 390, 10) {
+                [200, 200, 200, 255]
+            } else {
+                [255, 255, 255, 255]
+            }
+        })
+        .collect();
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&rgba, 640, 480, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    png
+}
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn a_located_retrys_carried_mask_reaches_a_fill_and_a_check_with_sam3() {
+    use crate::checked::{Setup, backend, kit_of, passes};
+    use crate::located::remains_at;
+    use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
+    use whizbang_core::identity::{Projection, Topology};
+    use whizbang_core::spend::Amount;
+    // Plan mE, task L2, item 5: on a picture where the first find's eight instances are
+    // taken by nine large discs, the judge fails the first attempt and names a loose box
+    // about the small pale disc beside them; SAM 3 finds it inside the crop, where it is
+    // alone, the mask is carried, joined, filled and checked, and the judge's second
+    // answer passes it.
+    let place = [80.0 / 640.0, 350.0 / 480.0, 160.0 / 640.0, 430.0 / 480.0];
+    let more = format!("\n{}{}", backend("fill"), backend("judge"));
+    let tier = Tier::with("model-tier-located-fill", SAM3, &more);
+    let (kit, kind) = kit_of(&Setup::answering(vec![remains_at(place), passes()]));
+    let mut kinds = wiring::kinds(&tier.worker);
+    kinds.register(kind).unwrap();
+    let over = Over::nothing()
+        .config(Some(&tier.config))
+        .kinds(kinds)
+        .pack(tier.worker.clone())
+        .installed(Models::shipped().unwrap().flag(Some(&models_dir())))
+        .expect("the models directory is opened");
+    let origin = Origin::new(Step::new("fixture", "1")).unwrap();
+    let image = Image::new(
+        second_disc_scene(),
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        origin,
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    whizbang_core::spend::reset(&store, Amount::new(1_000_000).unwrap(), 1).unwrap();
+    drop(store);
+    let executor = tier.runner(&over);
+    let asked = Call::new("remove_checked")
+        .argument("prompt", whizbang_core::contract::Value::text(PHRASE))
+        .input("image", id);
+    let finished = executor.submit(&asked).unwrap();
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let run = finished.run().as_str().to_owned();
+    drop(executor);
+    let looped = tier.record(&run);
+    let second = &looped["attempts"]["list"][1];
+    assert_eq!(second["changed"]["change"], "located", "{second}");
+    let crops = second["changed"]["crops"].as_array().unwrap();
+    assert!(
+        crops[0]["mask"].is_string(),
+        "SAM 3 found nothing in the crop about the second disc"
+    );
+    // The carried mask added pixels: the retry was filled and checked, and passed.
+    assert_eq!(second["verdict"], "pass", "{second}");
+    let (_, fills, checks) = kit.requests();
+    assert_eq!((fills, checks), (2, 2));
+    assert_eq!(looped["attempts"]["kept"], 2);
+    // The kept mask covers the second disc's centre; the first attempt's did not.
+    let mask_of = |attempt: usize| -> Vec<f32> {
+        let runs = looped["attempts"]["list"][attempt]["runs"]
+            .as_array()
+            .unwrap();
+        let shape = runs
+            .iter()
+            .map(|run| tier.record(run.as_str().unwrap()))
+            .find(|record| {
+                record["asked"]["action"] == "remove_prompt"
+                    && record["outputs"].as_array().is_some_and(|outputs| {
+                        outputs.iter().any(|o| o["port"] == "until_feather_mask")
+                    })
+            })
+            .unwrap();
+        let output = (shape["outputs"].as_array().unwrap().iter())
+            .find(|o| o["port"] == "until_feather_mask")
+            .unwrap();
+        tier.mask_weights(output["artifact"].as_str().unwrap())
+    };
+    let at = 390 * 640 + 120;
+    assert!(
+        mask_of(0)[at] < 0.5,
+        "the first find did not miss the pale disc, though nine larger ones could fill its eight"
+    );
+    assert!(mask_of(1)[at] >= 0.5);
 }
 
 /// The scene of `segment`'s record (`docs/reference/tools/segment.md`, plan m3, task D1):

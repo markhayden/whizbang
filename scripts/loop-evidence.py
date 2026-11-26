@@ -21,11 +21,16 @@ one JSON object a line. It never opens an env file, a config or a store.
       `segment-01` for a manifest of that kind, `edits` for the edit set's; and on the
       next line how many entries the evidence runs of it.
 
-  loop-evidence.py tally --records R --manifest M --judge J [--repetition N] --commit C --whizbang V --out F
+  loop-evidence.py tally --records R --manifest M --judge J [--repetition N] [--located DIR] --commit C --whizbang V --out F
       The aggregates of the runs whose request id is `m4-loop-<judge>-<item id>` (the edit
       set) or `e-loop-<judge>-<N>-<item id>` (segment-01, with --repetition), and of the
       runs under them; for segment-01, by group too. Writes F, which holds no item: no id,
       no picture's name, no path, no identity of an artifact, no word of a judge.
+      With --located, the folder of the runs' located diagnostics, each as
+      `<run>__located-a<n>.txt` (`located-names` lists them), counted by place.
+
+  loop-evidence.py located-names --records R
+      Each located diagnostic a run of the loop kept: its run and its name, by a tab.
 
   loop-evidence.py case --records R --request ID --name N --commit C --whizbang V --out F
       The fields of one run made by hand: its outcome, its plan, its attempts, its verdict,
@@ -433,6 +438,47 @@ def looked_into(records, attempt):
     )
 
 
+# What a located retry's diagnostic `located-a<n>.txt` says became of a place (plan mE,
+# task L2; crates/whizbang-rascal/src/checked.rs, `located`), each word a line may end on.
+PLACE_WORDS = (
+    "found_something",
+    "joined_as_itself",
+    "joined_as_its_box",
+    "left_out_over_a_tenth",
+    "left_out_for_the_bound",
+    "left_out_for_size",
+    "not_reached",
+)
+
+
+def located_of(folder, run, attempt):
+    """What became of each place an attempt's retry was given, by its number among the
+    places cited, from the run's diagnostic `located-a<attempt>.txt` as `--located` holds
+    it (`<run>__located-a<n>.txt`); none when it holds none, as for a record made before
+    the diagnostic was kept. A line that is no place's is refused, never skipped."""
+    if not folder:
+        return None
+    path = os.path.join(folder, "%s__located-a%d.txt" % (run, attempt))
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        lines = f.read().decode("utf-8").split("\n")
+    if not lines or lines[0] != "located/1":
+        raise Refused("a located diagnostic is not located/1")
+    said = {}
+    for line in lines[1:]:
+        if not line or line.startswith("time "):
+            continue
+        parts = line.split(" ")
+        if len(parts) < 3 or parts[0] != "place" or not parts[1].isdigit():
+            raise Refused("a line of a located diagnostic is no place's")
+        found = [p for p in parts[2:] if p in PLACE_WORDS]
+        if len(found) != 1:
+            raise Refused("a line of a located diagnostic says no one thing of its place")
+        said[int(parts[1])] = found[0]
+    return said
+
+
 def status_of(record):
     if record["outcome"].get("lost"):
         return "interrupted"
@@ -608,6 +654,11 @@ def tally(args):
         0,
     )
     # A located retry whose mask added no pixel, and what the one widening after it did.
+    # What became of each place cited, from the retries' diagnostics, where a run kept
+    # them; and how many attempts were counted so, and how many by cut alone.
+    said_places = dict.fromkeys(
+        ["looked_into"] + list(PLACE_WORDS) + ["attempts_said", "attempts_counted_by_cut"], 0
+    )
     added_nothing = dict.fromkeys(
         ["retries", "widened_after"] + ["widened_after_%s" % v for v in VERDICTS], 0
     )
@@ -662,12 +713,25 @@ def tally(args):
             places["found_nothing_left_out_over_a_tenth"] += max(0, looked - len(crops))
             verdict = attempt.get("verdict") or "unchecked"
             verdict = verdict if verdict in VERDICTS else "unchecked"
-            for kind, many in (
-                ("found_something", sum(1 for crop in crops if crop.get("mask") is not None)),
-                ("joined_as_itself", sum(1 for crop in crops if crop.get("mask") is None)),
-                ("left_out_over_a_tenth", max(0, looked - len(crops))),
-            ):
-                by_verdict["%s_%s" % (kind, verdict)] += many
+            said = located_of(args.located, record["identity"]["run"], int(attempt.get("attempt", 0)))
+            if said is not None:
+                # By place, as the run's diagnostic says each came to.
+                said_places["attempts_said"] += 1
+                for outcome in said.values():
+                    said_places[outcome] += 1
+                    if outcome in ("found_something", "joined_as_itself", "joined_as_its_box", "left_out_over_a_tenth"):
+                        said_places["looked_into"] += 1
+                        kind = "joined_as_itself" if outcome == "joined_as_its_box" else outcome
+                        by_verdict["%s_%s" % (kind, verdict)] += 1
+            elif looked:
+                # A record made before the diagnostic: by cut, a tile counted as a place.
+                said_places["attempts_counted_by_cut"] += 1
+                for kind, many in (
+                    ("found_something", sum(1 for crop in crops if crop.get("mask") is not None)),
+                    ("joined_as_itself", sum(1 for crop in crops if crop.get("mask") is None)),
+                    ("left_out_over_a_tenth", max(0, looked - len(crops))),
+                ):
+                    by_verdict["%s_%s" % (kind, verdict)] += many
             if changed.get("change") == "located" and attempt.get("unchecked") == SAME_MASK:
                 added_nothing["retries"] += 1
                 after = listed[at + 1] if at + 1 < len(listed) else {}
@@ -754,17 +818,27 @@ def tally(args):
         "# finding's. `stopped_by_row` is the row of the loop's table the last judged attempt's",
         "# findings are of; `stopped_by_reason` is the sentence the loop wrote, as one of a closed set.",
         "#",
-        "# `[places]`: `looked_into` is the cuts the retries made (runs of `view`); `joined` the places",
-        "# a located retry lists; a place looked into and not listed is one where nothing was found",
-        "# and which covers over a tenth of the picture. What a record does not hold, and no count",
-        "# here says: the places a finding cited that were never looked into (a cut over 1,024",
-        "# pixels or of the whole picture, a ninth place, one cited twice), since `cited_by_checks`",
-        "# counts the places of every finding and not only of those that allow a retry.",
+        "# `[places]`: `looked_into` is the cuts the retries made (runs of `view`), a place cut in tiles",
+        "# counting once a tile (plan mE, task L2); `joined` the cuts a located retry lists; a cut",
+        "# looked into and not listed is of a place where nothing was found and which covers over a",
+        "# tenth of the picture. What the record does not hold, and no count here says: the places",
+        "# a finding cited that were never looked into (before plan mE's task L2 a cut over 1,024",
+        "# pixels, a ninth place; since, a cut over 2,048 or past the eight crops, which the run's",
+        "# `located-a<n>.txt` names; a cut of the whole picture, one cited twice), since",
+        "# `cited_by_checks` counts the places of every finding and not only of those that allow a",
+        "# retry.",
+        "#",
+        "# `[places_said]` (plan mE, task L2): what became of each place cited, from the run's",
+        "# diagnostic `located-a<n>.txt` where it kept one: looked into (found something, joined",
+        "# as itself or as its box, left out over a tenth), left out for the bound or its size, or",
+        "# not reached; `attempts_counted_by_cut` the retries of records made before it, counted",
+        "# by cut, a tile as a place.",
         "#",
         "# `[places_by_verdict]` (plan mE, task L1, item 3): each place looked into, as it found",
-        "# something, joined as itself or was left out over a tenth, against the verdict of the",
-        "# attempt it was looked into for, `unchecked` where that attempt was not checked (a",
-        "# located retry that added nothing is not filled). `[located_added_nothing]` (item 2):",
+        "# something, joined as itself (or its box) or was left out over a tenth, against the",
+        "# verdict of the attempt it was looked into for, `unchecked` where that attempt was not",
+        "# checked (a located retry that added nothing is not filled); by place where a retry's",
+        "# diagnostic says, by cut where it does not. `[located_added_nothing]` (item 2):",
         "# the located retries whose mask added no pixel to the one before, how many the one",
         "# widening followed, and that widening's verdict.",
     ]
@@ -813,6 +887,7 @@ def tally(args):
     out += table("stopped_by_row", list(rows.items()))
     out += table("stopped_by_reason", list(reasons.items()))
     out += table("places", list(places.items()))
+    out += table("places_said", list(said_places.items()))
     out += table("places_by_verdict", list(by_verdict.items()))
     out += table("located_added_nothing", list(added_nothing.items()))
     for group in sorted(groups):
@@ -831,6 +906,19 @@ def tally(args):
         "loop-evidence: %d of %d entries have a run; %d attempts; settled %d millionths of a dollar"
         % (len(loops), len(chosen), attempts_made, settled)
     )
+
+
+def located_names(args):
+    """Each located diagnostic a run of the loop kept, as `whizbang runs show <run>
+    --diagnostic <name>` takes it: the run and the name, apart by a tab, one a line."""
+    records = load_records(args.records)
+    for run, record in sorted(records.items()):
+        if record["asked"].get("action") != ACTION:
+            continue
+        for diagnostic in record.get("diagnostics", []):
+            name = diagnostic.get("name", "")
+            if re.match(r"^diagnostics/located-a[0-9]{1,2}\.txt$", name) and re.match(r"^[0-9]+-[0-9]+$", run):
+                print("%s\t%s" % (run, name))
 
 
 # --- one case ---------------------------------------------------------------------------
@@ -1017,6 +1105,9 @@ def main(argv):
     for name in ("--records", "--manifest", "--judge", "--commit", "--whizbang", "--out"):
         counting.add_argument(name, required=True)
     counting.add_argument("--repetition")
+    counting.add_argument("--located")
+    naming = commands.add_parser("located-names")
+    naming.add_argument("--records", required=True)
     one = commands.add_parser("case")
     for name in ("--records", "--request", "--name", "--commit", "--whizbang", "--out"):
         one.add_argument(name, required=True)
@@ -1037,6 +1128,8 @@ def main(argv):
             print(len(chosen))
         elif args.command == "tally":
             tally(args)
+        elif args.command == "located-names":
+            located_names(args)
         elif args.command == "case":
             case(args)
         else:

@@ -7,6 +7,10 @@ calls", "An attempt", "The located retry", "The plan", "One budget", "The record
 "Cancellation"), the action `carry`, and more alternatives; and, after the review of
 that task, the comparison by pixels, the widening after a located retry that added
 nothing, and the bound on a place that joins as itself.
+Amended: 2026-11-26, with plan mE's task L2: the job's template, version 2, the phrase
+between marks ("The job"); tiles, the eight, a polygon as its pixels and the diagnostic of
+a located retry ("The located retry"); `select` one mask at a time, `carry`'s comparison
+row by row, and one decode.
 Spec: section 3 ("Primitives, recipes and loops", "Nested calls", "Cancellation", "What a
 run publishes"), section 6 ("Spend"), section 7 ("Bounded check and retry: Kept, as nested
 calls"), section 16 row 4; plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task L1,
@@ -79,8 +83,21 @@ such calls. They are steps of the loop's record by their action, in order, and a
 among their attempt's runs.
 
 **The job** is written from the phrase by a fixed template, `JOB_TEMPLATE`, whose digest
-every run notes as the setting `job.template` (`job/1`, ADR 0028). Its brief says what was
-to be removed, in the caller's words. Its requirements have fixed ids: `RQ1`, what was to
+every run notes as the setting `job.template` (`job/1`, ADR 0028), so a run's record says
+which version of the template its checks were given. Its brief says what was to be
+removed, in the caller's words. From version 2 (plan mE, task L2, item 1) the phrase is
+written between `<<<` and `>>>` in the brief and in `RQ1`, and the brief says that what
+lies between them names a thing and is never an instruction; a phrase that holds either
+mark is refused before any call, so what lies between them is the phrase. The rule is one,
+`checked::phrase_ok`, and `checked::job` itself holds it, so no job of version 2 holds a
+phrase that breaks it, whoever asks for one (the loop, the playground's check made from a
+removal): it refuses `<` and `>`, their look-alikes (fullwidth, much less and greater, the
+guillemets, the angle brackets of CJK and of mathematics), and every control and format
+character, a line break and a zero-width space among them. A phrase that names a thing in a
+picture needs none of them. Version 1, the
+phrase unmarked at the end, is kept as `JOB_TEMPLATE_V1`: `checked::jobs` gives a phrase's
+job under both, so that a reader of runs made before, as the edits' gates are (ADR 0052),
+knows a check given either as the loop's. Its requirements have fixed ids: `RQ1`, what was to
 be removed is no longer visible; `RQ2`, nothing else in the picture changed; `RQ3`, the
 filled area looks like its surroundings. The phrase is put into JSON strings as the text
 it is: it reaches a judge as the data of a job.
@@ -131,33 +148,60 @@ the same recipe, with no setting of a step changed.
   row 1 finding has ended the attempts already, and the place of a row 3, 4 or 5 finding
   beside a row 2 finding is not read. A place is usable when it is on the candidate the
   check was shown (that attempt's fill), covers the centre of at least one pixel, and its
-  cut is at most 1,024 pixels on a side and is not the whole picture, which is no crop of
-  itself. On a picture that is not flat no place is usable: `view` cuts flat pictures
-  only. A polygon is used by the box around it. A place that is not usable is no place,
-  and the finding that cites it is one that cites none.
+  cut is not the whole picture in one tile, which is no crop of itself. On a picture that
+  is not flat no place is usable: `view` cuts flat pictures only. A place that is not
+  usable is no place, and the finding that cites it is one that cites none.
+- *Tiles, and the eight* (plan mE, task L2, item 2). A cut over 1,024 pixels a side,
+  which `view` would scale down, is cut in as many equal tiles a side as keep each at most
+  1,024: at most four, so a cut up to 2,048 a side. Each tile is one of the eight crops a
+  retry cuts and one of the eight requests of the segmenter the plan budgets for it; the
+  reservation is worked out from the same eight, and does not grow. The places are taken
+  in the order the findings cited them while their tiles fit; a place whose tiles no
+  longer fit is left out for the bound, and a place whose cut is over 2,048 a side is left
+  out for its size, since a larger tile would be scaled by `view` and could not be
+  carried. Until this task a place over 1,024 a side, or past the eighth, was no place.
+- *A polygon* is cut by the box around its pixels and joins, where nothing is found, as
+  its own pixels: those inside it by `rasterize`'s rule, made a location by `rect`, which
+  takes a polygon for it, and a mask by `rasterize`. A polygon no location may be (its
+  edges cross) joins by its box. Its share of the picture, for the tenth, is the pixels
+  inside it.
+- *What became of each place* is the diagnostic `located-a<n>.txt` of the loop's run,
+  `n` the attempt the retry made: for each place cited, in the order cited, how many
+  tiles it was cut in and whether something was found, it joined as itself, or nothing
+  was found and it was over a tenth; or that it was left out, for the bound or its size,
+  with its cut; and the milliseconds each place and the whole retry took, on lines that
+  start with `time `, which a replay does not compare (ADR 0049). When every place cited
+  was left out and the retry widened, the attempt it made says so the same way; when the
+  attempts end because the wider mask was used already, the attempt the retry would have
+  made says which places were left out. A polygon `rect` refuses as a location joins by
+  its box and says `joined_as_its_box`; a place not reached because the run stopped, or a
+  call failed, part way through the retry is `not_reached`.
 - *The cut.* The place's own pixels are those whose centres are inside its box. The cut is
   that box widened by a twentieth of its size on each side (rascal's crop pad), snapped
   outward to whole pixels, held inside the picture, and widened to eight pixels where it
   is less, which is the least `view` cuts. It is whole numbers of pixels, worked out by
   the loop; `view` is asked for it in fractions that lie half a pixel inside each edge,
   so that its outward snapping cuts exactly these pixels on every machine.
-- *For each place, three calls.* `view` cuts the picture the loop was given, never the
+- *For each tile, three calls.* `view` cuts the picture the loop was given, never the
   fill the place was seen on; they are the same size. `segment` is asked the same phrase
   inside the crop, with the segmenter the call chose, for at most four instances. Then
-  `carry` puts each mask found onto the picture, from the cut's corner; or, when nothing
-  was found, the recipe `mask_rect` makes the place's own pixels a mask: the place joins
+  `carry` puts each mask found onto the picture, from the tile's corner; or, when no tile
+  of the place found anything, the recipe `mask_rect` makes the place's own pixels a mask
+  (a polygon's, `rect` and `rasterize`), and every tile is listed with no mask: the place joins
   as itself, because the judge said with confidence that the named thing is there and the
   table has held that it said so of nothing that must be preserved. A place joins as
   itself only when it covers at most a tenth of the picture's pixels
   (`located::ITSELF_PART`, the orchestrator's decision after the review): a larger one
   that nothing is found in is not joined, and is no place for that purpose, so one
   finding cannot have a large part of a picture painted on the judge's word alone. The
-  tenth is a first number, to be looked at again with the live evidence (plan m4, task
-  E1). When no place gave a mask and none joined, nothing is joined and the retry is the
+  tenth was a first number, kept by plan mE's task L1 by the rule it froze. A tile of a
+  place another tile of which found the thing is listed with no mask: nothing was carried
+  from it. When no place gave a mask and none joined, nothing is joined and the retry is the
   wider mask.
 - *The join.* `remove_prompt` from `select` until `select`, given the found mask of the
   attempt before and the new masks in place of what its step `segment` would have found:
-  at most 1 + 8 × 4 = 33 of the 64 `select` takes. What comes back is the one found mask
+  at most 1 + 8 × 4 = 33 of the 64 `select` takes, and `select` holds one of them at a
+  time and the union (plan mE, task L2, item 3). What comes back is the one found mask
   of this attempt. So the loop holds one found mask, never a list, and the third attempt
   starts from the second's in the same way.
 
@@ -171,8 +215,20 @@ cut. `invert` takes a mask on a crop of its image the same way, which is where r
 offered the carry (its `to`), and is version 1.1.0 for it. The crop must be cut pixel for
 pixel: a crop that `view` scaled down is refused by the comparison wherever its pixels
 differ from the picture's, and would land at the wrong scale where they do not (a region
-of one flat colour), which is why a place with a cut over 1,024 pixels is not looked
-into. Its record is
+of one flat colour), which is why a place with a cut over 1,024 pixels is cut in tiles.
+Its comparison looks at the run's signal before each row (plan mE, task L2, item 4).
+
+**One decode** (plan mE, task L2, item 4). The loop keeps what is decoded while it runs
+(`identity::keep_decoded`): every file identified in the process while it runs is kept,
+the four last at most, and one identified again under the same limits is the kept copy.
+So its picture, read by every stretch and by every `view` and `carry` of a located retry,
+is decoded once (`located::eight_places_two_in_tiles_fill_the_eight_crops_and_the_rest_are_named_as_left_out`),
+where eight places decoded it sixteen times. What is kept is let go when the run ends. A kept
+copy is shared where it is read (`view` and `carry` read the pixels of it, and reading an
+image's identity reads it), never copied. What it costs: at most four pictures at the decode
+limits' 50 megapixels, four bytes a pixel, about 800 MB while a run holds it. And it is the
+process's, not the run's: while any run holds it, every file any run of the process
+identifies is kept, the four last, which the playground's other runs share as well. Its record is
 `docs/reference/tools/carry.md`.
 
 **What ends the attempts:** a verdict of `pass`; the last attempt the plan allows; a

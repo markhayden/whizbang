@@ -32,6 +32,10 @@
 //!
 //! A mask with a feather's profile or a prescription is refused: both are series down
 //! the rows of the mask's own image, and are made after a mask is where it will be used.
+//!
+//! **The run's signal is looked at row by row** while the crop is compared with the
+//! picture (plan mE, task L2, item 4): a run cancelled, or past its deadline, stops at the
+//! next row of the crop and not once the whole crop has been compared.
 
 use whizbang_core::artifact::{ArtifactError, ArtifactType, Image, Mask, Origin, Step};
 use whizbang_core::contract::{
@@ -66,6 +70,8 @@ pub enum CarryError {
     Invalid(String),
     /// A picture could not be read, or the mask could not be made.
     Mask(ArtifactError),
+    /// The run was told to stop while the crop was being compared.
+    Stopped,
 }
 
 fn invalid<T>(why: String) -> Result<T, CarryError> {
@@ -92,6 +98,18 @@ impl Placed {
         at: [u32; 2],
         limits: &DecodeLimits,
     ) -> Result<Placed, CarryError> {
+        Placed::checked_until(crop, image, at, limits, &|| false)
+    }
+
+    /// The same, asking `stop` before each row of the crop is compared, and refusing
+    /// with [`CarryError::Stopped`] when it answers yes.
+    pub fn checked_until(
+        crop: &Image,
+        image: &Image,
+        at: [u32; 2],
+        limits: &DecodeLimits,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Placed, CarryError> {
         if crop.identity().pixels == image.identity().pixels {
             return invalid(
                 "the crop is the picture itself, and a mask on it is carried nowhere".to_owned(),
@@ -107,12 +125,16 @@ impl Placed {
                 large.height()
             ));
         }
-        let cut = crop.pixels(limits).map_err(CarryError::Mask)?;
-        let whole = image.pixels(limits).map_err(CarryError::Mask)?;
+        let cut = crop.pixels_shared(limits).map_err(CarryError::Mask)?;
+        let whole = image.pixels_shared(limits).map_err(CarryError::Mask)?;
+        let (cut, whole) = (&cut.pixels, &whole.pixels);
         let (width, across) = (width as usize, large.width() as usize);
         let (left, top) = (left as usize, top as usize);
         let (mut differ, mut first) = (0_u64, None);
         for (y, row) in cut.rgba().chunks(width * 4).enumerate() {
+            if stop() {
+                return Err(CarryError::Stopped);
+            }
             let from = ((top + y) * across + left) * 4;
             let there = &whole.rgba()[from..from + width * 4];
             for (x, (one, other)) in row.chunks(4).zip(there.chunks(4)).enumerate() {
@@ -215,6 +237,7 @@ pub(crate) fn failed(error: CarryError) -> Failure {
     match error {
         CarryError::Invalid(why) => Failure::invalid(&why),
         CarryError::Mask(error) => Failure::error("mask", &error.without_paths()),
+        CarryError::Stopped => Failure::error("cancelled", "carry stopped: its run was told to"),
     }
 }
 
@@ -310,7 +333,11 @@ pub(crate) fn placed(
 ) -> Result<Placed, Failure> {
     let crop = operation::image(context, operation::one(call, "crop")?)?;
     let image = operation::image(context, operation::one(call, "image")?)?;
-    Placed::checked(&crop, &image, at, &DecodeLimits::default()).map_err(failed)
+    let stop = || operation::stopped(context);
+    match Placed::checked_until(&crop, &image, at, &DecodeLimits::default(), &stop) {
+        Err(CarryError::Stopped) => Err(operation::stopped_failure(context, NAME)),
+        placed => placed.map_err(failed),
+    }
 }
 
 /// What `whizbang rascal carry` takes beside what every operation's command does.

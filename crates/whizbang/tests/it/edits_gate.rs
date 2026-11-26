@@ -494,3 +494,28 @@ fn a_seams_mask_is_mapped_onto_its_panorama_through_its_cut() {
     .unwrap();
     assert!(read.space().width() < 128, "{}", read.space().width());
 }
+
+/// A check the loop's earlier builds made was given version 1 of its template (plan mE,
+/// task L2, item 1): the gate knows it as the loop's all the same, as it knows one given
+/// version 2; and one of another phrase, or no job, is not the loop's.
+#[test]
+fn a_check_given_the_loops_first_template_is_still_the_loops() {
+    use whizbang_core::identity::Digest;
+    use whizbang_rascal::checked::{JOB_TEMPLATE_V1, job, jobs};
+    let [now, first] = jobs(PHRASE).try_into().unwrap();
+    assert_eq!(now, job(PHRASE).unwrap());
+    assert_ne!(now, first);
+    assert!(first.contains(PHRASE) && !first.contains("<<<"));
+    assert!(serde_json::from_str::<serde_json::Value>(JOB_TEMPLATE_V1).is_ok());
+    let digest = |text: &str| Some(Digest::of_bytes(text.as_bytes()));
+    assert!(edits_gate::is_the_loops_job(digest(&now), Some(PHRASE)));
+    assert!(edits_gate::is_the_loops_job(digest(&first), Some(PHRASE)));
+    assert!(!edits_gate::is_the_loops_job(
+        digest(&job("a hat").unwrap()),
+        Some(PHRASE)
+    ));
+    assert!(!edits_gate::is_the_loops_job(None, Some(PHRASE)));
+    assert!(!edits_gate::is_the_loops_job(digest(&now), None));
+    // A phrase no job of version 2 may hold has its version 1 job alone.
+    assert_eq!(jobs("a <cat>").len(), 1);
+}

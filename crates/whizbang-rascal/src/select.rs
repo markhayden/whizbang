@@ -24,6 +24,12 @@
 //! The new mask is on the masks' one binding, with nothing protected and no blend: feather
 //! it afterwards. Its source is every instance and location the masks name, once each, in
 //! the order given; its origin is one step, this action, its arguments and every mask.
+//!
+//! **One mask at a time** (plan mE, task L2, item 3): a run reads the masks one after the
+//! other into a [`Union`], which holds the union's core and what the origin and the source
+//! need of each, and lets each mask go before it reads the next. So a run holds one mask
+//! and the union, where it held every mask it was given at once: with the 33 a located
+//! retry may give it, on a picture of 12 megapixels, about 1.2 GB.
 
 use whizbang_core::artifact::{ArtifactError, ArtifactType, Mask, Origin, Source, Step, UseCase};
 use whizbang_core::contract::{
@@ -137,6 +143,151 @@ pub fn holding(masks: Vec<Mask>, [x, y]: [f64; 2]) -> Result<Vec<Mask>, SelectEr
     Ok(kept)
 }
 
+/// The union of masks given one at a time: what [`select`] makes of them, without
+/// holding more than the one being added.
+pub struct Union {
+    binding: Option<whizbang_core::identity::Binding>,
+    first: Option<whizbang_core::identity::PixelDigest>,
+    core: Vec<u8>,
+    source: Source,
+    ids: Vec<whizbang_core::identity::Digest>,
+    /// The pixel a mask must hold to be kept, as an index into the core, when one is
+    /// asked ([`holding`]); and how many masks were given.
+    at: Option<[f64; 2]>,
+    given: usize,
+    /// The image's size, when the pixel to keep by is outside it.
+    outside: Option<(f64, f64)>,
+    /// The space of the first mask given, which the pixel to keep by is read in.
+    first_space: Option<whizbang_core::identity::Space>,
+}
+
+impl Union {
+    /// An empty union; with `at`, of only the masks whose core holds that pixel.
+    pub fn new(at: Option<[f64; 2]>) -> Union {
+        Union {
+            binding: None,
+            first: None,
+            core: Vec::new(),
+            source: Source::default(),
+            ids: Vec::new(),
+            at,
+            given: 0,
+            outside: None,
+            first_space: None,
+        }
+    }
+
+    /// Adds one mask, which may then be let go. Refused: a mask on another image than
+    /// the first's. A pixel to keep by that is outside the image is refused when the
+    /// union is finished, naming how many masks were given.
+    pub fn add(&mut self, mask: &Mask) -> Result<(), SelectError> {
+        self.given += 1;
+        // Kept by a pixel first, as `holding` keeps them: the pixel's place in the
+        // image of the first mask given, and only a mask that holds it is joined, or
+        // compared with the others' image.
+        if let Some([x, y]) = self.at {
+            let space = *self
+                .first_space
+                .get_or_insert_with(|| mask.binding().source_space());
+            let (width, height) = (f64::from(space.width()), f64::from(space.height()));
+            if !(x >= 0.0 && y >= 0.0 && x < width && y < height) {
+                self.outside = Some((width, height));
+                return Ok(());
+            }
+            let at = y.floor() as usize * space.width() as usize + x.floor() as usize;
+            if mask.core().get(at).is_none_or(|sample| *sample == 0) {
+                return Ok(());
+            }
+        }
+        match &self.binding {
+            None => {
+                self.binding = Some(mask.binding().clone());
+                self.first = Some(mask.image());
+                self.core = vec![0u8; mask.core().len()];
+            }
+            Some(binding) if binding != mask.binding() => {
+                return Err(SelectError::Invalid(format!(
+                    "the masks are on two images: {} and {}",
+                    self.first.map(|d| d.to_string()).unwrap_or_default(),
+                    mask.image()
+                )));
+            }
+            Some(_) => {}
+        }
+        for (out, sample) in self.core.iter_mut().zip(mask.core()) {
+            if *sample != 0 {
+                *out = 255;
+            }
+        }
+        for location in &mask.source().locations {
+            if !self.source.locations.contains(location) {
+                self.source.locations.push(*location);
+            }
+        }
+        for instance in &mask.source().instances {
+            if !self.source.instances.contains(instance) {
+                self.source.instances.push(*instance);
+            }
+        }
+        self.ids.push(mask.id().0);
+        Ok(())
+    }
+
+    /// The selection, every box of `exclude` cleared: refused when no mask was given,
+    /// when none held the pixel to keep by, and when no pixel is left.
+    pub fn finish(mut self, exclude: &[Exclude], use_case: UseCase) -> Result<Mask, SelectError> {
+        if self.given == 0 {
+            return Err(SelectError::Invalid(
+                "select takes at least one mask".to_owned(),
+            ));
+        }
+        if let (Some((width, height)), Some([x, y])) = (self.outside, self.at) {
+            return Err(SelectError::Invalid(format!(
+                "the pixel at {} {} is outside the image of the {} masks, {width} by {height}",
+                crate::grow::text_of(x),
+                crate::grow::text_of(y),
+                self.given
+            )));
+        }
+        let Some(binding) = self.binding.take() else {
+            let [x, y] = self.at.unwrap_or_default();
+            return Err(SelectError::Invalid(format!(
+                "none of the {} masks holds the pixel at {} {}",
+                self.given,
+                crate::grow::text_of(x),
+                crate::grow::text_of(y)
+            )));
+        };
+        let mut core = self.core;
+        let space = binding.source_space();
+        let width = space.width() as usize;
+        for [left, top, right, bottom] in exclude {
+            let columns: Vec<usize> = centres_within(*left, *right, space.width()).collect();
+            for y in centres_within(*top, *bottom, space.height()) {
+                for x in &columns {
+                    core[y * width + x] = 0;
+                }
+            }
+        }
+        if operation::set(&core) == 0 {
+            return Err(SelectError::Invalid(format!(
+                "no pixel is left of the {} masks after the {} exclude boxes",
+                self.ids.len(),
+                exclude.len()
+            )));
+        }
+        let name = USE_CASES.iter().find(|(_, case)| *case == use_case);
+        let mut step = Step::new(NAME, VERSION)
+            .argument("exclude", &exclude_text(exclude))
+            .argument("use_case", name.map_or("custom", |(name, _)| name));
+        for id in &self.ids {
+            step = step.input("mask", *id);
+        }
+        let origin = Origin::new(step).map_err(SelectError::Mask)?;
+        Mask::from_core(binding, use_case, core, self.source, origin).map_err(SelectError::Mask)
+    }
+}
+
 /// Why a selection was not made.
 #[derive(Debug)]
 pub enum SelectError {
@@ -149,64 +300,11 @@ pub enum SelectError {
 /// The selection: one mask whose core is every pixel set in a core of `masks`, cleared
 /// inside every box of `exclude`.
 pub fn select(masks: &[Mask], exclude: &[Exclude], use_case: UseCase) -> Result<Mask, SelectError> {
-    let Some(first) = masks.first() else {
-        return Err(SelectError::Invalid(
-            "select takes at least one mask".to_owned(),
-        ));
-    };
-    let binding = first.binding().clone();
-    let mut core = vec![0u8; first.core().len()];
-    let mut source = Source::default();
+    let mut union = Union::new(None);
     for mask in masks {
-        if *mask.binding() != binding {
-            return Err(SelectError::Invalid(format!(
-                "the masks are on two images: {} and {}",
-                first.image(),
-                mask.image()
-            )));
-        }
-        for (out, sample) in core.iter_mut().zip(mask.core()) {
-            if *sample != 0 {
-                *out = 255;
-            }
-        }
-        for location in &mask.source().locations {
-            if !source.locations.contains(location) {
-                source.locations.push(*location);
-            }
-        }
-        for instance in &mask.source().instances {
-            if !source.instances.contains(instance) {
-                source.instances.push(*instance);
-            }
-        }
+        union.add(mask)?;
     }
-    let space = binding.source_space();
-    let width = space.width() as usize;
-    for [left, top, right, bottom] in exclude {
-        let columns: Vec<usize> = centres_within(*left, *right, space.width()).collect();
-        for y in centres_within(*top, *bottom, space.height()) {
-            for x in &columns {
-                core[y * width + x] = 0;
-            }
-        }
-    }
-    if operation::set(&core) == 0 {
-        return Err(SelectError::Invalid(format!(
-            "no pixel is left of the {} masks after the {} exclude boxes",
-            masks.len(),
-            exclude.len()
-        )));
-    }
-    let name = USE_CASES.iter().find(|(_, case)| *case == use_case);
-    let mut step = Step::new(NAME, VERSION)
-        .argument("exclude", &exclude_text(exclude))
-        .argument("use_case", name.map_or("custom", |(name, _)| name));
-    for mask in masks {
-        step = step.input("mask", mask.id().0);
-    }
-    let origin = Origin::new(step).map_err(SelectError::Mask)?;
-    Mask::from_core(binding, use_case, core, source, origin).map_err(SelectError::Mask)
+    union.finish(exclude, use_case)
 }
 
 /// The boxes as an origin writes them: each number the shortest decimal that reads back
@@ -286,26 +384,27 @@ impl Action for Select {
         let named = operation::text(call, "use_case").unwrap_or("remove");
         let use_case = USE_CASES.iter().find(|(name, _)| *name == named);
         let use_case = use_case.map_or(UseCase::Remove, |(_, case)| *case);
-        let mut masks = Vec::new();
-        for id in operation::given(call, "mask") {
-            masks.push(operation::mask(context, id)?);
-            if operation::stopped(context) {
-                return Err(operation::stopped_failure(context, NAME));
-            }
-        }
         let failed = |error| match error {
             SelectError::Invalid(why) => Failure::invalid(&why),
             SelectError::Mask(error) => Failure::error("mask", &error.without_paths()),
         };
-        if let Some(at) = operation::text(call, "at") {
-            let at = point(at).map_err(|why| Failure::invalid(&why))?;
-            masks = holding(masks, at).map_err(failed)?;
+        let at = match operation::text(call, "at") {
+            Some(at) => Some(point(at).map_err(|why| Failure::invalid(&why))?),
+            None => None,
+        };
+        // One mask at a time: each is read, added to the union, and let go.
+        let mut union = Union::new(at);
+        for id in operation::given(call, "mask") {
+            union.add(&operation::mask(context, id)?).map_err(failed)?;
+            if operation::stopped(context) {
+                return Err(operation::stopped_failure(context, NAME));
+            }
         }
-        let mask = select(&masks, &exclude, use_case).map_err(failed)?;
+        let kept = union.ids.len();
+        let mask = union.finish(&exclude, use_case).map_err(failed)?;
         context.events().progress(&format!(
-            "select: a core of {} pixels from {} masks",
-            operation::set(mask.core()),
-            masks.len()
+            "select: a core of {} pixels from {kept} masks",
+            operation::set(mask.core())
         ));
         Ok(Produced::nothing().with("mask", mask))
     }

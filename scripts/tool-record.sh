@@ -21,9 +21,10 @@
 #   scripts/tool-record.sh remove, remove_prompt, repair, repair_area or seam: the same, each
 #                                    run under a scripted filler (plan m3, task B1)
 #   scripts/tool-record.sh remove_checked: the record of the loop and its folder, from
-#                                    scripted runs through the binary's wiring; nothing in
-#                                    it is timed, so it is not a release build (plan m4,
-#                                    task E1; crates/whizbang/tests/it/tool_records.rs)
+#                                    scripted runs through the binary's wiring, and a whole
+#                                    run's local work timed at three sizes, so it is a
+#                                    release build (plan m4, task E1; plan mE, task L2;
+#                                    crates/whizbang/tests/it/tool_records.rs)
 #   scripts/tool-record.sh source-fidelity, reference-consistency, product-fidelity,
 #                                    brief-compliance or reality-checks: the five records of
 #                                    the use cases' recipes and their folders, all five
@@ -75,7 +76,7 @@ case "${1:-}" in
       --ignored --exact "tool_records::writes::$1"
     ;;
   remove_checked)
-    scripts/thread-guard.sh cargo test -p whizbang --test it -- \
+    scripts/thread-guard.sh cargo test --release -p whizbang --test it -- \
       --ignored --exact tool_records::writes::remove_checked
     ;;
   inputs)

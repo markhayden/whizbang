@@ -8,7 +8,9 @@ use whizbang_core::artifact::ArtifactId;
 use whizbang_core::contract::record::{Changed, Decision, RunRecord};
 use whizbang_core::contract::{Capability, Executor, Finished, FoundAt};
 use whizbang_core::identity::Digest;
-use whizbang_rascal::checked::located::{CUT_MAX, CUT_MIN, PLACES_MAX, Place, usable};
+use whizbang_rascal::checked::located::{
+    CUT_MAX, CUT_MIN, Left, LeftOut, PLACES_MAX, Place, TILED_MAX, Usable, usable,
+};
 use whizbang_rascal::checked::{CHECK, ITSELF, REMOVE, VIEW};
 
 use crate::checked::{
@@ -364,8 +366,9 @@ fn beside_a_violation_of_rq3_the_retry_uses_the_rq1_findings_place_alone() {
 
 #[test]
 fn a_place_where_nothing_is_found_joins_as_itself() {
-    // The segmenter finds nothing inside the crop.
-    let setup = Setup::answering(vec![remains_at(PLACE), passes()]);
+    // The segmenter finds nothing inside the crop. A second run in the same world has
+    // the place cited as a polygon (below).
+    let setup = Setup::answering(vec![remains_at(PLACE), passes(), polygon_at(), passes()]);
     let (world, finished) = crate::checked::looped("located-itself", &setup);
     assert_eq!(
         finished.outcome().name(),
@@ -403,6 +406,62 @@ fn a_place_where_nothing_is_found_joins_as_itself() {
         );
     }
     assert!(weight(&painted, 2, 2) == 0.0 && weight(&painted, 4, 60) == 0.0);
+    let said = world
+        .diagnostic(finished.run().as_str(), "located-a2.txt")
+        .unwrap();
+    assert!(
+        said.contains("place 1 tiles 1 joined_as_itself\n"),
+        "{said}"
+    );
+
+    // A place cited as a polygon, where nothing is found, joins as its own pixels (plan
+    // mE, task L2, item 2): `rect` makes the polygon a location and `rasterize` a mask of
+    // the pixels inside it, and not of the box around it.
+    let finished = world.run(&world.call());
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(
+        looks(&world, &finished, 2),
+        [VIEW, "segment", "rect", "rasterize"]
+    );
+    let calls = crate::located::looked(&world, &finished, 2);
+    assert_eq!(
+        argument(&calls[2].1, "polygon").as_deref(),
+        Some("40 16;56 16;40 32")
+    );
+    let joined = weights(&world, ArtifactId(calls[3].1.outputs()[0].artifact));
+    // Inside the triangle, and in its box but past its long side.
+    assert_eq!(weight(&joined, 42, 18), 1.0);
+    assert_eq!(weight(&joined, 54, 30), 0.0);
+    let said = world
+        .diagnostic(finished.run().as_str(), "located-a2.txt")
+        .unwrap();
+    assert!(
+        said.contains("place 1 tiles 1 joined_as_itself\n"),
+        "{said}"
+    );
+}
+
+/// The answer that fails an attempt with the named thing in a right triangle over
+/// [`PLACE`], cited as a polygon: its corners at 40,16, 56,16 and 40,32.
+fn polygon_at() -> Json {
+    let triangle = [[40.0, 16.0], [56.0, 16.0], [40.0, 32.0]].map(|[x, y]| [x / 64.0, y / 64.0]);
+    let mut answer = remains_at(PLACE);
+    let item = answer["items"]
+        .as_array_mut()
+        .and_then(|items| {
+            items
+                .iter_mut()
+                .find(|item| item["id"] == "chk:ob:RQ1@candidate")
+        })
+        .unwrap();
+    item["location"] = serde_json::json!({"kind": "polygon", "frame": "raw:candidate",
+        "bbox": null, "polygon": triangle, "yaw": null, "pitch": null, "fov": null});
+    answer
 }
 
 #[test]
@@ -634,53 +693,103 @@ fn no_more_than_eight_places_are_used_and_the_plans_bound_covers_them() {
         .map(|n| at([f64::from(n) / 16.0, 0.0, f64::from(n + 2) / 16.0, 1.0]))
         .collect();
     let used = usable(&nine, candidate, 64, 64);
-    assert_eq!(used.len(), PLACES_MAX);
-    assert_eq!(used[0].own, [0, 0, 8, 64]);
-    assert_eq!(used[7].own, [28, 0, 36, 64]);
-    // A place is its own pixels, and a cut a twentieth wider each way, held inside
-    // the picture and to what `view` cuts and shows pixel for pixel.
+    assert_eq!(used.places.len(), PLACES_MAX);
+    assert_eq!(used.places[0].own, [0, 0, 8, 64]);
+    assert_eq!(used.places[7].own, [28, 0, 36, 64]);
+    // The ninth is left out for the bound, and said so (plan mE, task L2, item 2).
     assert_eq!(
-        usable(&[at(PLACE)], candidate, 64, 64),
-        [Place { own: OWN, cut: CUT }]
+        used.left_out,
+        [LeftOut {
+            cited: 9,
+            cut: [31, 0, 41, 64],
+            why: Left::Bound
+        }]
     );
+    // A place is its own pixels, and a cut a twentieth wider each way, held inside
+    // the picture and to what `view` cuts and shows pixel for pixel, in one tile.
+    let one = |sides: [f64; 4], width: u32, height: u32| {
+        let used = usable(&[at(sides)], candidate, width, height);
+        (used.places.iter())
+            .map(|place| (place.own, place.cut, place.tiles.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(one(PLACE, 64, 64), [(OWN, CUT, vec![CUT])]);
     assert_eq!(CUT_MIN, whizbang_squint::view::MIN_CROP);
     assert_eq!(CUT_MAX, whizbang_squint::view::MAX_SIDE);
-    let small = usable(&[at([0.5, 0.5, 0.53, 0.53])], candidate, 64, 64);
+    let small = [29, 29, 37, 37];
     assert_eq!(
-        small,
-        [Place {
-            own: [32, 32, 34, 34],
-            cut: [29, 29, 37, 37]
-        }]
+        one([0.5, 0.5, 0.53, 0.53], 64, 64),
+        [([32, 32, 34, 34], small, vec![small])]
     );
-    let corner = usable(&[at([0.97, 0.0, 1.0, 0.03])], candidate, 64, 64);
+    let corner = [56, 0, 64, 8];
     assert_eq!(
-        corner,
-        [Place {
-            own: [62, 0, 64, 2],
-            cut: [56, 0, 64, 8]
-        }]
+        one([0.97, 0.0, 1.0, 0.03], 64, 64),
+        [([62, 0, 64, 2], corner, vec![corner])]
     );
     // Not used: no place; a place twice; one on another picture; one that covers no
-    // pixel's centre; and one whose cut `view` would scale down.
+    // pixel's centre.
     let twice = [None, at(PLACE), at(PLACE)];
-    assert_eq!(usable(&twice, candidate, 64, 64).len(), 1);
-    assert!(usable(&[at(PLACE)], Digest::of_bytes(b"other"), 64, 64).is_empty());
-    assert!(usable(&[at([0.501, 0.501, 0.502, 0.502])], candidate, 64, 64).is_empty());
-    assert!(usable(&[at([0.1, 0.1, 0.5, 0.2])], candidate, 4096, 4096).is_empty());
-    assert_eq!(
-        usable(&[at([0.1, 0.1, 0.3, 0.2])], candidate, 4096, 4096).len(),
-        1
+    assert_eq!(usable(&twice, candidate, 64, 64).places.len(), 1);
+    let other = usable(&[at(PLACE)], Digest::of_bytes(b"other"), 64, 64);
+    assert_eq!(other, Usable::default());
+    let none = usable(&[at([0.501, 0.501, 0.502, 0.502])], candidate, 64, 64);
+    assert_eq!(none, Usable::default());
+    // A cut over 1,024 a side is cut in tiles of at most that, each the picture's own
+    // pixels; one over 2,048 a side is left out for its size.
+    let tiled = one([0.1, 0.1, 0.5, 0.2], 4096, 4096);
+    assert_eq!(tiled.len(), 1);
+    let (_, cut, tiles) = &tiled[0];
+    assert_eq!(*cut, [328, 389, 2130, 840]);
+    assert_eq!(*tiles, [[328, 389, 1229, 840], [1229, 389, 2130, 840]]);
+    assert!(
+        tiles
+            .iter()
+            .all(|[l, t, r, b]| r - l <= CUT_MAX && b - t <= CUT_MAX)
     );
-    // A polygon is used by the box around it.
+    assert_eq!(one([0.1, 0.1, 0.3, 0.2], 4096, 4096)[0].2.len(), 1);
+    let large = usable(&[at([0.1, 0.1, 0.7, 0.2])], candidate, 4096, 4096);
+    assert!(large.places.is_empty());
+    assert_eq!(large.left_out[0].why, Left::Size);
+    // A place of 3,072 pixels a side is left out for its size, and named by its number
+    // among those cited and its cut; the loop says so in its diagnostic, as it says the
+    // places left out for the bound (`eight_places_two_in_tiles_…`).
+    let side = |n: f64| n / 4096.0;
+    let huge = usable(
+        &[
+            at(PLACE),
+            at([side(512.0), side(512.0), side(3584.0), side(3584.0)]),
+        ],
+        candidate,
+        4096,
+        4096,
+    );
+    assert_eq!(huge.places.len(), 1);
+    assert_eq!(
+        huge.left_out,
+        [LeftOut {
+            cited: 2,
+            cut: [358, 358, 3738, 3738],
+            why: Left::Size
+        }]
+    );
+    assert_eq!(TILED_MAX, 2 * CUT_MAX);
+    // A polygon is its own pixels: the box of them, and how many.
     let polygon = Some(FoundAt {
         image: candidate,
         boxed: None,
         polygon: Some(vec![[0.625, 0.25], [0.875, 0.375], [0.75, 0.5]]),
     });
-    assert_eq!(usable(&[polygon], candidate, 64, 64)[0].own, OWN);
+    let used = usable(&[polygon], candidate, 64, 64);
+    let place = &used.places[0];
+    assert_eq!(place.own, OWN);
+    assert!(
+        place.covers > 0 && place.covers < 16 * 16,
+        "{}",
+        place.covers
+    );
+    assert_eq!(place.polygon_text().as_deref(), Some("40 16;56 24;48 32"));
     // What `view` is asked cuts exactly the cut: each edge half a pixel inside it.
-    let asked = Place { own: OWN, cut: CUT }.fractions(64, 64);
+    let asked = Place::fractions(CUT, 64, 64);
     assert_eq!(whizbang_squint::view::snapped(&asked, 64, 64), CUT);
     // And so for every cut of eight pixels or more of a side of 8 to 40 pixels, and
     // for cuts at the ends of long sides.
@@ -695,7 +804,7 @@ fn no_more_than_eight_places_are_used_and_the_plans_bound_covers_them() {
     ];
     for (side, from, to) in (8..=40).flat_map(cuts).chain(long) {
         let cut = [from, 0, to, 8];
-        let asked = Place { own: cut, cut }.fractions(side, 8);
+        let asked = Place::fractions(cut, side, 8);
         let snapped = whizbang_squint::view::snapped(&asked, side, 8);
         assert_eq!(snapped, cut, "a side of {side}");
         assert!(asked.iter().all(|edge| (0.0..=1.0).contains(edge)));
@@ -766,7 +875,8 @@ fn a_place_whose_cut_is_the_whole_picture_is_no_place() {
             boxed: Some(sides),
             polygon: None,
         });
-        assert!(usable(&[at], candidate, 64, 64).is_empty(), "{sides:?}");
+        let used = usable(&[at], candidate, 64, 64);
+        assert_eq!(used, Usable::default(), "{sides:?}");
     }
     // Through the loop: nothing is cut, the segmenter is not asked again, and the
     // retry is the wider mask.
@@ -950,4 +1060,105 @@ fn a_place_over_a_tenth_of_the_picture_does_not_join_as_itself() {
         looks(&world, &finished, 2),
         [VIEW, "segment", VIEW, "segment", "carry"]
     );
+}
+
+/// Eight places cited on a picture 2,200 pixels wide (plan mE, task L2, item 2): the
+/// first two are cut in two tiles each, since their cuts are over 1,024 across; the
+/// third, across the whole picture, is over 2,048 and left out for its size; the next
+/// four are cut in one tile each; the last no longer fits among the eight crops and is
+/// left out for the bound. The requests, the crops and the masks are counted; the record is
+/// published; the places left out are named in the retry's diagnostic, with what became
+/// of the others and the times; and the picture is decoded once in the run.
+#[test]
+fn eight_places_two_in_tiles_fill_the_eight_crops_and_the_rest_are_named_as_left_out() {
+    let (width, height) = (2200_u32, 16_u32);
+    let wide = |top: f64| [0.0, top, 0.5, top + 0.25];
+    let small = |n: u32| {
+        let left = 0.55 + f64::from(n) * 0.08;
+        [left, 0.6, left + 0.01, 0.9]
+    };
+    // Two places of 1,100 pixels across, cut in two tiles each; one across the whole
+    // picture, over 2,048, left out for its size; then five small ones.
+    let mut places = vec![wide(0.0), wide(0.3), [0.0, 0.6, 1.0, 0.9]];
+    places.extend((0..5).map(small));
+    let first = citing(&[("RQ1", "violation", "confident")], &[("RQ1", places[0])]);
+    let more = places[1..]
+        .iter()
+        .map(|sides| seen_at(&["RQ1"], "violation", "confident", *sides));
+    let cited = submission(first, more.collect());
+    let mut setup = finding(vec![cited, passes()]);
+    setup.size = (width, height);
+    setup.found = [20, 2, 30, 8];
+    setup.inside = vec![[1, 1, 4, 4]];
+    // A run decodes its picture once (plan mE, task L2, item 4): every stretch and every
+    // `view` and `carry` of the eight crops reads it, and while the loop runs what is
+    // decoded is kept. Once when the call is prepared, and once in the run, at most.
+    let world = Looped::new("located-tiles", &setup);
+    let file = {
+        use whizbang_core::artifact::{Artifact, ArtifactType, get_anywhere};
+        let limits = whizbang_core::identity::DecodeLimits::default();
+        let read = get_anywhere(
+            &world.reader(),
+            ArtifactType::Image,
+            world.image_id(),
+            &limits,
+        );
+        let Ok(Artifact::Image(picture)) = read else {
+            panic!("the picture");
+        };
+        picture.identity().file.0
+    };
+    let before = whizbang_core::identity::decodes_of(file);
+    let finished = world.run(&world.call());
+    let decoded = whizbang_core::identity::decodes_of(file) - before;
+    assert!((1..=2).contains(&decoded), "{decoded}");
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    // Eight crops: two tiles of each wide place, each at most 1,024 across, then one of
+    // each of four small places; and eight requests of the segmenter beside the find.
+    let crops = world.kit.crops();
+    assert_eq!(crops.len(), PLACES_MAX);
+    assert!(crops.iter().all(|(w, h)| *w <= CUT_MAX && *h <= CUT_MAX));
+    assert_eq!(crops[0].0 + crops[1].0, crops[2].0 + crops[3].0);
+    assert!(crops[0].0 > 512 && crops[4].0 < 40, "{crops:?}");
+    assert_eq!(world.kit.requests(), (9, 2, 2));
+    let attempts = world.attempts(&finished);
+    let Some(Changed::Located { crops: listed }) = &attempts.list[1].changed else {
+        panic!("{:?}", attempts.list[1].changed);
+    };
+    assert_eq!(listed.len(), PLACES_MAX);
+    assert!(listed.iter().all(|crop| crop.mask.is_some()));
+    // `select` is given the mask before and one carried from each crop.
+    let record = world.record(finished.run().as_str());
+    let select = world.record(&run_of(&record, "a2_select"));
+    assert_eq!(select.started().unwrap().given.len(), 1 + PLACES_MAX);
+    assert_eq!(record.version(), whizbang_core::contract::RUN_8);
+    // What became of each place, in the order cited, and the times apart.
+    let said = world
+        .diagnostic(finished.run().as_str(), "located-a2.txt")
+        .unwrap();
+    let (places, times): (Vec<&str>, Vec<&str>) = said
+        .lines()
+        .skip(1)
+        .partition(|line| !line.starts_with("time "));
+    assert_eq!(said.lines().next(), Some("located/1"));
+    assert_eq!(
+        places,
+        [
+            "place 1 tiles 2 found_something",
+            "place 2 tiles 2 found_something",
+            "place 3 left_out_for_size cut 2200 by 8",
+            "place 4 tiles 1 found_something",
+            "place 5 tiles 1 found_something",
+            "place 6 tiles 1 found_something",
+            "place 7 tiles 1 found_something",
+            "place 8 left_out_for_the_bound cut 26 by 8",
+        ]
+    );
+    assert_eq!(times.len(), 7);
+    assert!(times.last().unwrap().starts_with("time retry ms "));
 }
