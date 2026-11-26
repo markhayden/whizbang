@@ -556,16 +556,24 @@ fn a_polygon_wider_than_half_the_panorama_is_rotated_onto_the_columns_it_covers(
 #[test]
 fn a_band_round_the_panorama_rotated_and_tilted_keeps_all_it_covers() {
     // A band nearly the full width of a panorama 400 by 100, columns 10 to 390 and rows 40
-    // to 60, under a tilt and eight turns about the vertical. Its footprint can reach past both edges of the
-    // panorama once taken round, and every whole turn it reaches into is kept: the parts
-    // cover what the band covers, to within its outline of 15 points an edge, which moves
-    // an edge by a pixel or so. A part left out would be a share of
-    // the band, far more.
+    // to 60, under a tilt and eight turns about the vertical. Its outline on the panorama,
+    // taken round the seam, can reach past both of its edges, and every whole turn it
+    // reaches into is kept: the parts' areas add up to the outline's, exactly but for
+    // rounding. The outline is worked out here as ADR 0051 states it: the box's edges at
+    // 60 points each, each mapped, taken round to within half the width of the one before,
+    // and every fourth kept.
     let (c, s) = (5.0 / 13.0, 12.0 / 13.0);
     let tilt = [1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c];
     let space = Space::panorama(400, 100).unwrap();
     let start = Binding::root(picture("turned"), space);
     let band = on(&start, boxed(10.0, 40.0, 390.0, 60.0));
+    let corners = [
+        Point::new(10.0, 40.0),
+        Point::new(390.0, 40.0),
+        Point::new(390.0, 60.0),
+        Point::new(10.0, 60.0),
+    ];
+    let mut past_both = 0;
     for step in 0..8 {
         let angle = f64::from(step) * std::f64::consts::PI / 4.0;
         let (sn, cs) = angle.sin_cos();
@@ -587,38 +595,42 @@ fn a_band_round_the_panorama_rotated_and_tilted_keeps_all_it_covers() {
             Mapping::Rotation { matrix },
         )
         .unwrap();
-        let carried = carry(&band, &turn, Toward::Destination).unwrap();
-        let inside = |p: Point, points: &[Point]| {
-            let mut odd = false;
-            for (i, a) in points.iter().enumerate() {
-                let b = points[(i + 1) % points.len()];
-                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
-                {
-                    odd = !odd;
-                }
-            }
-            odd
-        };
-        let (mut truth, mut wrong) = (0u32, 0u32);
-        for i in 0..200 {
-            for j in 0..50 {
-                let p = Point::new(f64::from(i) * 2.0 + 1.0, f64::from(j) * 2.0 + 1.0);
-                let from = turn.to_source(p).unwrap();
-                let is = (40.0..=60.0).contains(&from.y) && (10.0..=390.0).contains(&from.x);
-                let shown = carried
-                    .parts
-                    .iter()
-                    .any(|part| inside(p, polygon_of(part.shape())));
-                truth += u32::from(is);
-                wrong += u32::from(is != shown);
+        let mut outline: Vec<Point> = Vec::new();
+        for (i, a) in corners.iter().enumerate() {
+            let b = corners[(i + 1) % 4];
+            for k in 0..60 {
+                let t = f64::from(k) / 60.0;
+                let p = turn
+                    .to_destination(Point::new(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)))
+                    .unwrap();
+                let x = match outline.last() {
+                    Some(before) => p.x + ((before.x - p.x) / 400.0).round() * 400.0,
+                    None => p.x,
+                };
+                outline.push(Point::new(x, p.y));
             }
         }
+        let outline: Vec<Point> = outline.into_iter().step_by(4).collect();
+        let lo = outline.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let hi = outline
+            .iter()
+            .map(|p| p.x)
+            .fold(f64::NEG_INFINITY, f64::max);
+        past_both += u32::from(lo < 0.0 && hi > 400.0);
+        let carried = carry(&band, &turn, Toward::Destination).unwrap();
+        let parts: f64 = carried
+            .parts
+            .iter()
+            .map(|part| area(polygon_of(part.shape())))
+            .sum();
+        let whole = area(&outline);
         assert!(
-            f64::from(wrong) < 0.12 * f64::from(truth),
-            "turn {step}: {wrong} of {truth} points wrong, {} parts",
+            (parts - whole).abs() <= 1e-9 * whole,
+            "turn {step}: the parts cover {parts}, the outline {whole}, in {} parts",
             carried.parts.len()
         );
     }
+    assert!(past_both >= 1, "no turn took the outline past both edges");
 }
 
 #[test]
@@ -683,6 +695,21 @@ fn a_polygon_on_the_panorama_is_clipped_to_the_view_and_behind_it() {
     let front = carry(&behind, &look, Toward::Source).unwrap();
     assert!(front.partial);
     assert!(polygon_of(front.parts[0].shape()).len() >= 3);
+    // Two corners on the top row are both the north pole, seen at one point: the view
+    // sees all of it, and it is not partial.
+    let at_pole = on(
+        &panorama,
+        Shape::Polygon {
+            points: vec![
+                Point::new(1700.0, 0.0),
+                Point::new(1900.0, 0.0),
+                Point::new(1900.0, 150.0),
+                Point::new(1700.0, 150.0),
+            ],
+        },
+    );
+    let up = carry(&at_pole, &looking(0.0, 80.0, 90.0), Toward::Source).unwrap();
+    assert!(!up.partial, "{:?}", up.parts);
     // Wholly behind: refused as behind, not as outside.
     let back = on(
         &panorama,

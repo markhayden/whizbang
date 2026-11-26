@@ -100,9 +100,6 @@ impl Basis {
         )
     }
 
-    /// The point of a view `side` pixels square at which the point `(x, y)` of a panorama
-    /// `width` by `height` is seen, or `None` when it is behind the view: its depth along
-    /// the view's forward direction is at most `1e-9`. The point may lie outside the view.
     /// A direction's depth along the view's forward direction: in front of the view when
     /// over 0.
     pub fn depth(&self, d: [f64; 3]) -> f64 {
@@ -119,6 +116,9 @@ impl Basis {
         ((rightward + 1.0) / 2.0 * side, (1.0 - upward) / 2.0 * side)
     }
 
+    /// The point of a view `side` pixels square at which the point `(x, y)` of a panorama
+    /// `width` by `height` is seen, or `None` when it is behind the view: its depth along
+    /// the view's forward direction is at most `1e-9`. The point may lie outside the view.
     #[inline]
     pub fn from_panorama(
         &self,
@@ -128,14 +128,7 @@ impl Basis {
         x: f64,
         y: f64,
     ) -> Option<(f64, f64)> {
-        let lon = x / width * 2.0 * PI - PI;
-        let lat = FRAC_PI_2 - y / height * PI;
-        let cos_lat = libm::cos(lat);
-        let d = [
-            cos_lat * libm::cos(lon),
-            cos_lat * libm::sin(lon),
-            libm::sin(lat),
-        ];
+        let d = panorama_direction(width, height, x, y);
         let dot = |v: [f64; 3]| d[0] * v[0] + d[1] * v[1] + d[2] * v[2];
         let depth = dot(self.forward);
         if depth <= 1e-9 {
@@ -148,6 +141,7 @@ impl Basis {
 }
 
 /// The unit direction of a point of a panorama `width` by `height` (ADR 0001).
+#[inline]
 pub fn panorama_direction(width: f64, height: f64, x: f64, y: f64) -> [f64; 3] {
     let lon = x / width * 2.0 * PI - PI;
     let lat = FRAC_PI_2 - y / height * PI;

@@ -434,7 +434,15 @@ pub(super) fn through_view(
     if clipped.len() < 3 {
         return refuse("the location lies wholly outside the view");
     }
-    let partial = front.len() != points.len() || clipped != seen;
+    // Clipping drops a point that repeats the one before, as two points at a pole are seen
+    // as one; the points seen are compared with what was clipped without those.
+    let same = |a: &Point, b: &Point| (a.x - b.x).abs() < 1e-12 && (a.y - b.y).abs() < 1e-12;
+    let mut once = seen.clone();
+    once.dedup_by(|a, b| same(a, b));
+    if once.len() > 1 && same(&once[0], &once[once.len() - 1]) {
+        once.pop();
+    }
+    let partial = front.len() != points.len() || clipped != once;
     match shape {
         Shape::Box { .. } => {
             let (mut x0, mut y0, mut x1, mut y1) = (
