@@ -184,12 +184,15 @@ counted apart, never as the owner's pick.
 ## Amended with plan mE, task P0
 
 - **Pictures whose bytes tell only their dimensions.** Each picture of a pair, whole or of
-  the focus, is written as a PNG whose pixels are not compressed: eight-bit RGBA, no
+  the focus, is written as a PNG whose pixels are not compressed: eight bits a sample, no
   filter, one `IDAT` of a zlib stream of stored deflate blocks, and no chunk but `IHDR`,
-  `IDAT` and `IEND`. Its size and every chunk's length follow from its width and height
-  alone. This replaces plan m4's chunk of padding, which made the sizes one but whose own
-  length told what each file had lacked of the longest; the files are larger, about four
-  bytes a pixel. It holds for a round of the lab and for `lab pairs --from-runs` alike,
+  `IDAT` and `IEND`. A pair makes one choice for its pictures: RGB when every pixel of all
+  three is opaque, else RGBA. A file's size and every chunk's length follow from its width
+  and height and that choice alone, so the two sides of a pair are alike. This replaces
+  plan m4's chunk of padding, which made the sizes one but whose own length told what each
+  file had lacked of the longest; the files are larger, three or four bytes a pixel. Where
+  an arm hands back the picture given, its side is byte for byte the source's file: there
+  the blinding is the drawn order of the sides alone. It holds for a round of the lab and for `lab pairs --from-runs` alike,
   which write through one function.
 - **Protocol version 2.** Under rascal's rules (version 1) `not_worse` cannot be reached at
   the default fractions: `same` and `neither` count toward neither side, so losses under a
@@ -201,7 +204,14 @@ counted apart, never as the owner's pick.
   else `preferred` when it has at least one decided pair and wins reach the fraction of
   the decided pairs; else `not_worse` when losses, with every `neither`, stay under its
   fraction of every pair picked; else `worse`. The assignment and the picks keep their
-  version 1: a page is drawn and picked the same way under either.
+  version 1: a page is drawn and picked the same way under either. Under version 2 the
+  decode prints, and an edit gate's receipt holds, the losses it counted with every
+  `neither` (`losses_with_neither`); `eval edits gate` refuses a quality protocol of
+  version 1.
+- **The rules' fractions.** Under either version `preferred` is above a half and
+  `not_worse` at most a half, or the protocol is refused: else one decided pair could make
+  a group preferred, or a loss leave it not worse. Every protocol frozen before (`labs/`)
+  holds two thirds and one third.
 
 ## Alternatives
 
