@@ -144,6 +144,8 @@ class OutlineByClass(unittest.TestCase):
         self.assertGreater(reading["values"]["one_minus_iou"], 0.0)
         self.assertEqual(output["not_applicable"], ["duck"])
         self.assertEqual({(a[2], a[3]) for a in context.asked}, {("swimming pool", class_groups.MODEL)})
+        # Every subject's source first, then the candidates: one picture's labels at a time.
+        self.assertEqual([a[1] for a in context.asked], ["source", "candidate"])
 
 
 # --- the record's examples ----------------------------------------------------------------
@@ -175,3 +177,29 @@ class Record(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def method_rows(tool, folder, examples, arguments):
+    """The rows of a record's table of its method `eomt`: for each example against the
+    record's own source, the values of each reading and its regions, as the record shows."""
+    source = decoded(os.path.join(folder, "source.png"))
+    rows = []
+    for example in examples:
+        picture = decoded(os.path.join(folder, example + ".png"))
+        output = tool.run(Classed(source, picture, dict(arguments, method="eomt")))
+        for reading in output["readings"]:
+            values = " ".join("%s %g" % item for item in sorted(reading["values"].items()))
+            found = "; ".join("%s %g" % (r["label"], r["score"]) for r in output["regions"]) or "none"
+            rows.append([example, reading["subject"], values, found])
+    return rows
+
+
+class MethodRecords(unittest.TestCase):
+    def test_the_records_of_regions_and_outline_show_their_method_eomt(self):
+        # Plan mE, task T2, item 5: each method's examples run in the record. The records'
+        # own pictures, read by a fake fixed-class segmenter (red is `swimming pool`).
+        tools = os.path.dirname(RECORD)
+        for tool, name in ((regions, "regions"), (outline, "outline")):
+            record = os.path.join(tools, name + ".md")
+            made = method_rows(tool, os.path.join(tools, name), ("tub", "redrawn") if name == "regions" else ("widened", "towel"), {"job": job("The pool keeps its shape.")})
+            self.assertEqual(record_rows("eomt", record), made, name)

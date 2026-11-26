@@ -787,9 +787,9 @@ without a run, the run under a method by the existing test of `outline` and `reg
 `just test-pack` (`test_classes`). Under `check`, a tool file that asks `labels` is refused
 until `check.rs` holds `labels` among a run's calls, which task F1 adds; until then
 `C+regions@eomt` cannot run its `eomt` method under a judge. The model tier's test on the
-Mac is the orchestrator's.
+Mac is the orchestrator's, and the box is ticked once it has passed there.
 
-- [x] Done when: conformance passes with fakes; the model tier passes on the Mac; `classes`
+- [ ] Done when: conformance passes with fakes; the model tier passes on the Mac; `classes`
   and both methods run under `eval tool --method` against the fakes. **Reviewer reads hardest:** that
   adding the entry edited no existing tool's logic (section 18, criterion 4).
 

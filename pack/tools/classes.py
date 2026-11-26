@@ -65,7 +65,9 @@ classes' confidences, each the class's mean over its pixels (`labels` gives one 
 class), where squint averaged each pixel's own. The box is read on a working grid whose
 longer side is `GRID`, each working pixel its centre's class; squint read the map at its own
 resolution, a quarter of the model's input. `class_changed` is new: squint returned the
-shares alone. No image and no summary is returned.
+shares alone. Squint named its shares `before:<class>` and `after:<class>`; here each
+class (or `nothing`, where no class is) is a reading's subject, with its share on each side
+as `share_source` and `share_candidate`. No image and no summary is returned.
 """
 
 import math

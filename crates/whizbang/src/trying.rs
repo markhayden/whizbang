@@ -405,6 +405,15 @@ pub fn item_arguments(
         arguments.push((BBOX.to_owned(), Value::text(WHOLE_FRAME)));
     }
     if let Some(method) = method {
+        let named = !method.is_empty()
+            && (method.bytes())
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-');
+        if !named {
+            return Err(format!(
+                "--method {}: a method is a name of lower-case letters, digits, _ and -",
+                printable(method)
+            ));
+        }
         if !declared.texts.iter().any(|name| name == METHOD) {
             return Err(format!(
                 "{} declares no methods: --method is for a tool file that takes the argument method",

@@ -396,6 +396,19 @@ def run(context):
     grid = Grid(*working(source.width, source.height))
     scale = max(source.width, source.height) / max(grid.w, grid.h)
     readings, found_pieces = [], []
+    # Under `eomt`, every subject's class is asked of the source first, then of the
+    # candidate: the adapter keeps the last picture's labels, so the model labels each
+    # picture once.
+    by_class = {}
+    if method == "eomt":
+        wanted = []
+        for phrase in named[:SUBJECTS_MOST]:
+            named_class = class_groups.class_of(phrase)
+            if named_class is not None and named_class not in wanted:
+                wanted.append(named_class)
+        for side in ("source", "candidate"):
+            for named_class in wanted:
+                by_class.setdefault(named_class, {})[side] = grid.mask(*mask_of(context, side, named_class, 1, class_groups.MODEL))
     for phrase in named[:SUBJECTS_MOST]:
         subject = printable(phrase, 200)
         if method == "eomt":
@@ -403,8 +416,7 @@ def run(context):
             if named_class is None:
                 not_applicable.append(subject)
                 continue
-            before = grid.mask(*mask_of(context, "source", named_class, 1, class_groups.MODEL))
-            after = grid.mask(*mask_of(context, "candidate", named_class, 1, class_groups.MODEL))
+            before, after = by_class[named_class]["source"], by_class[named_class]["candidate"]
         else:
             before = grid.mask(*mask_of(context, "source", phrase, MOST))
             after = grid.mask(*mask_of(context, "candidate", phrase, MOST))

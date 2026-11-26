@@ -2349,6 +2349,15 @@ fn eval_tool_runs_a_method() {
     let per_subject = shipped(include_str!("../../../../pack/tools/per_subject.py"));
     let refused = whizbang::trying::item_arguments(&per_subject, &job, Some("eomt")).unwrap_err();
     assert!(refused.contains("declares no methods"), "{refused}");
+    // A method of no name, or not a name, is refused whatever the tool.
+    let regions = shipped(include_str!("../../../../pack/tools/regions.py"));
+    for given in ["", "eomt sam3", "Eomt"] {
+        let refused = whizbang::trying::item_arguments(&regions, &job, Some(given)).unwrap_err();
+        assert!(
+            refused.contains("a method is a name"),
+            "{given:?}: {refused}"
+        );
+    }
 }
 
 #[test]

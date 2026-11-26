@@ -93,7 +93,8 @@ labelled by the majority class on each side ("floor -> swimming pool", or "wall 
 a disagreement between two classes the segmenter confuses scores `RELABEL` of what it would
 (`whizbang_pack.class_groups`), and `preserve` and `ignore` name classes, raising a region
 either side of which is one and lowering one both sides of which are. Its measurement is
-`class_disagreement`, in place of `subject_disagreement`. A class's confidence is the mean
+`class_disagreement`, in place of `subject_disagreement`: as squint's, the share of the
+confident working pixels that the cleaned disagreement map holds. A class's confidence is the mean
 over its pixels (one figure a class, what `labels` gives), where squint read each pixel's.
 
 What changed from squint. Squint's labels were classes ("floor -> swimming pool") and its
@@ -289,7 +290,8 @@ def find_classes(grid, residual, photometric, before, after, preserve, ignore):
     map's, then the confident class disagreements no photometric region covers. `before`
     and `after` are each working pixel's class and its confidence (`class_groups.on_grid`)
     on the source and the candidate. Also the cleaned disagreement map, the photometric
-    one, and the counts of confident pixels whose classes differ and of confident pixels."""
+    one, and the counts of confident pixels the cleaned disagreement holds and of confident
+    pixels (squint's `class_disagreement`: the cleaned map over the confident pixels)."""
     names_b, sure_b = before
     names_a, sure_a = after
     sure = [sb >= CONFIDENT and sa >= CONFIDENT for sb, sa in zip(sure_b, sure_a)]
@@ -330,7 +332,8 @@ def find_classes(grid, residual, photometric, before, after, preserve, ignore):
             label = "%s -> %s" % (was, now) if was != now else "%s changed" % now
             found.append({"bbox": box, "label": printable(label, LABEL_MOST), "score": round(score, 3), "area": area})
     found.sort(key=lambda r: (-r["score"], -r["area"]))
-    return found, disagree, photometric, sum(differs), sum(sure)
+    confident = int("".join("1" if c else "0" for c in sure), 2) if sure else 0
+    return found, disagree, photometric, (disagree & confident).bit_count(), sum(sure)
 
 
 def run(context):

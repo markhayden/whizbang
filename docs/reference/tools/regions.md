@@ -76,8 +76,25 @@ working pixel counted where its two classes differ and both are sure at 0.5 or m
 region is labelled by the majority class on each side (`floor -> swimming pool`), a
 disagreement between classes the segmenter confuses scores 0.35 of what it would, and
 `preserve` and `ignore` name classes. Its measurement is `class_disagreement`, in place of
-`subject_disagreement`. Its examples under `eomt` run as tests
+`subject_disagreement`: as squint's, the share of the confident working pixels that the
+cleaned disagreement map holds. Its examples under `eomt` run as tests
 (`test_classes.RegionsByClass`); rung 2 chooses between the two (task R2).
+
+Under `eomt`, the record's own source and examples, read by a fake fixed-class segmenter that
+calls each red pixel `swimming pool` and every other `floor` (run as a test,
+`test_classes.MethodRecords`), the subject from the job "The pool keeps its shape.":
+
+<!-- eomt: begin -->
+
+| Example | Subject | Values | Regions |
+|---|---|---|---|
+| tub | the pair | candidates 1 changed_fraction 0.0309 class_disagreement 0.0309 photometric_fraction 0.0198 strongest 0.642 | floor -> swimming pool 0.642 |
+| redrawn | the pair | candidates 1 changed_fraction 0.8456 class_disagreement 0 photometric_fraction 0.8456 strongest 0.453 | floor changed 0.453 |
+
+<!-- eomt: end -->
+
+`tub` is a class disagreement: the floor read as a pool where the tub is. `redrawn` moves
+every edge a little, so its change is photometric and no confident class differs.
 
 ## Examples
 

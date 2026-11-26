@@ -26,8 +26,8 @@ differs between the two sides, one region on the candidate, the box, labelled
   are a model's, so its readings are the model's.
 
 **Its argument.** `bbox`: left, top, right and bottom as fractions of the frame, from 0 to
-1, separated by spaces; the whole frame when not given. `whizbang eval tool` gives none, so
-each item is read over the whole frame and has one number. **Its value**, `class_changed`,
+1, separated by spaces; the whole frame when not given. `whizbang eval tool` gives it `0 0 1
+1`, the whole frame, so each item has one number and no tool feeds another. **Its value**, `class_changed`,
 is the share of the box whose class differs between the two sides (larger is changed).
 
 **The method.** Both pictures are labelled by `eomt-ade20k`, every class of ADE20K, and read
