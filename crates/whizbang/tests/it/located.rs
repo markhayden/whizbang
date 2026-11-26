@@ -366,8 +366,9 @@ fn beside_a_violation_of_rq3_the_retry_uses_the_rq1_findings_place_alone() {
 
 #[test]
 fn a_place_where_nothing_is_found_joins_as_itself() {
-    // The segmenter finds nothing inside the crop.
-    let setup = Setup::answering(vec![remains_at(PLACE), passes()]);
+    // The segmenter finds nothing inside the crop. A second run in the same world has
+    // the place cited as a polygon (below).
+    let setup = Setup::answering(vec![remains_at(PLACE), passes(), polygon_at(), passes()]);
     let (world, finished) = crate::checked::looped("located-itself", &setup);
     assert_eq!(
         finished.outcome().name(),
@@ -405,6 +406,62 @@ fn a_place_where_nothing_is_found_joins_as_itself() {
         );
     }
     assert!(weight(&painted, 2, 2) == 0.0 && weight(&painted, 4, 60) == 0.0);
+    let said = world
+        .diagnostic(finished.run().as_str(), "located-a2.txt")
+        .unwrap();
+    assert!(
+        said.contains("place 1 tiles 1 joined_as_itself\n"),
+        "{said}"
+    );
+
+    // A place cited as a polygon, where nothing is found, joins as its own pixels (plan
+    // mE, task L2, item 2): `rect` makes the polygon a location and `rasterize` a mask of
+    // the pixels inside it, and not of the box around it.
+    let finished = world.run(&world.call());
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(
+        looks(&world, &finished, 2),
+        [VIEW, "segment", "rect", "rasterize"]
+    );
+    let calls = crate::located::looked(&world, &finished, 2);
+    assert_eq!(
+        argument(&calls[2].1, "polygon").as_deref(),
+        Some("40 16;56 16;40 32")
+    );
+    let joined = weights(&world, ArtifactId(calls[3].1.outputs()[0].artifact));
+    // Inside the triangle, and in its box but past its long side.
+    assert_eq!(weight(&joined, 42, 18), 1.0);
+    assert_eq!(weight(&joined, 54, 30), 0.0);
+    let said = world
+        .diagnostic(finished.run().as_str(), "located-a2.txt")
+        .unwrap();
+    assert!(
+        said.contains("place 1 tiles 1 joined_as_itself\n"),
+        "{said}"
+    );
+}
+
+/// The answer that fails an attempt with the named thing in a right triangle over
+/// [`PLACE`], cited as a polygon: its corners at 40,16, 56,16 and 40,32.
+fn polygon_at() -> Json {
+    let triangle = [[40.0, 16.0], [56.0, 16.0], [40.0, 32.0]].map(|[x, y]| [x / 64.0, y / 64.0]);
+    let mut answer = remains_at(PLACE);
+    let item = answer["items"]
+        .as_array_mut()
+        .and_then(|items| {
+            items
+                .iter_mut()
+                .find(|item| item["id"] == "chk:ob:RQ1@candidate")
+        })
+        .unwrap();
+    item["location"] = serde_json::json!({"kind": "polygon", "frame": "raw:candidate",
+        "bbox": null, "polygon": triangle, "yaw": null, "pitch": null, "fov": null});
+    answer
 }
 
 #[test]
@@ -1005,22 +1062,25 @@ fn a_place_over_a_tenth_of_the_picture_does_not_join_as_itself() {
     );
 }
 
-/// Eight places cited on a picture 1,200 pixels wide (plan mE, task L2, item 2): the
+/// Eight places cited on a picture 2,200 pixels wide (plan mE, task L2, item 2): the
 /// first two are cut in two tiles each, since their cuts are over 1,024 across; the
-/// next four in one; the last two no longer fit among the eight crops and are left out
-/// for the bound. The requests, the crops and the masks are counted; the record is
+/// third, across the whole picture, is over 2,048 and left out for its size; the next
+/// four are cut in one tile each; the last no longer fits among the eight crops and is
+/// left out for the bound. The requests, the crops and the masks are counted; the record is
 /// published; the places left out are named in the retry's diagnostic, with what became
 /// of the others and the times; and the picture is decoded once in the run.
 #[test]
 fn eight_places_two_in_tiles_fill_the_eight_crops_and_the_rest_are_named_as_left_out() {
-    let (width, height) = (1100_u32, 16_u32);
-    let wide = |top: f64| [0.0, top, 0.98, top + 0.25];
+    let (width, height) = (2200_u32, 16_u32);
+    let wide = |top: f64| [0.0, top, 0.5, top + 0.25];
     let small = |n: u32| {
-        let left = 0.05 + f64::from(n) * 0.1;
-        [left, 0.6, left + 0.02, 0.9]
+        let left = 0.55 + f64::from(n) * 0.08;
+        [left, 0.6, left + 0.01, 0.9]
     };
-    let mut places = vec![wide(0.0), wide(0.3)];
-    places.extend((0..6).map(small));
+    // Two places of 1,100 pixels across, cut in two tiles each; one across the whole
+    // picture, over 2,048, left out for its size; then five small ones.
+    let mut places = vec![wide(0.0), wide(0.3), [0.0, 0.6, 1.0, 0.9]];
+    places.extend((0..5).map(small));
     let first = citing(&[("RQ1", "violation", "confident")], &[("RQ1", places[0])]);
     let more = places[1..]
         .iter()
@@ -1091,62 +1151,14 @@ fn eight_places_two_in_tiles_fill_the_eight_crops_and_the_rest_are_named_as_left
         [
             "place 1 tiles 2 found_something",
             "place 2 tiles 2 found_something",
-            "place 3 tiles 1 found_something",
+            "place 3 left_out_for_size cut 2200 by 8",
             "place 4 tiles 1 found_something",
             "place 5 tiles 1 found_something",
             "place 6 tiles 1 found_something",
-            "place 7 left_out_for_the_bound cut 26 by 8",
+            "place 7 tiles 1 found_something",
             "place 8 left_out_for_the_bound cut 26 by 8",
         ]
     );
     assert_eq!(times.len(), 7);
     assert!(times.last().unwrap().starts_with("time retry ms "));
-}
-
-/// A place cited as a polygon, where nothing is found, joins as its own pixels (plan mE,
-/// task L2, item 2): `rect` makes the polygon a location and `rasterize` a mask of the
-/// pixels inside it, and not of the box around it.
-#[test]
-fn a_polygon_where_nothing_is_found_joins_as_its_own_pixels() {
-    // A right triangle over the place: its corners at 40,16, 56,16 and 40,32.
-    let triangle = [[40.0, 16.0], [56.0, 16.0], [40.0, 32.0]].map(|[x, y]| [x / 64.0, y / 64.0]);
-    let mut answer = remains_at(PLACE);
-    let item = answer["items"]
-        .as_array_mut()
-        .and_then(|items| {
-            items
-                .iter_mut()
-                .find(|item| item["id"] == "chk:ob:RQ1@candidate")
-        })
-        .unwrap();
-    item["location"] = serde_json::json!({"kind": "polygon", "frame": "raw:candidate",
-        "bbox": null, "polygon": triangle, "yaw": null, "pitch": null, "fov": null});
-    let setup = Setup::answering(vec![answer, passes()]);
-    let (world, finished) = crate::checked::looped("located-polygon", &setup);
-    assert_eq!(
-        finished.outcome().name(),
-        "completed",
-        "{:?}",
-        finished.outcome()
-    );
-    assert_eq!(
-        looks(&world, &finished, 2),
-        [VIEW, "segment", "rect", "rasterize"]
-    );
-    let looked = looked(&world, &finished, 2);
-    assert_eq!(
-        argument(&looked[2].1, "polygon").as_deref(),
-        Some("40 16;56 16;40 32")
-    );
-    let joined = weights(&world, ArtifactId(looked[3].1.outputs()[0].artifact));
-    // Inside the triangle, and in its box but past its long side.
-    assert_eq!(weight(&joined, 42, 18), 1.0);
-    assert_eq!(weight(&joined, 54, 30), 0.0);
-    let said = world
-        .diagnostic(finished.run().as_str(), "located-a2.txt")
-        .unwrap();
-    assert!(
-        said.contains("place 1 tiles 1 joined_as_itself\n"),
-        "{said}"
-    );
 }

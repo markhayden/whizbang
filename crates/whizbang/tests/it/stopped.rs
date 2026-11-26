@@ -207,8 +207,17 @@ fn a_check_that_hands_back_no_verdict_leaves_its_attempt_unchecked() {
 #[test]
 fn a_budget_that_runs_out_inside_a_retry_keeps_the_attempt_before_it() {
     // The segmenter charges far over its bound for the crop of the retry, which puts
-    // the loop in debt: the next call of the retry is refused for want of allowance.
-    let mut setup = Setup::answering(vec![remains_at(PLACE), passes()]);
+    // the loop in debt: the next paid call of the retry, the segmenter's about the second
+    // place, is refused for want of allowance.
+    let first = crate::located::citing(&[("RQ1", "violation", "confident")], &[("RQ1", PLACE)]);
+    let second = crate::located::seen_at(
+        &["RQ1"],
+        "violation",
+        "confident",
+        [0.125, 0.625, 0.375, 0.875],
+    );
+    let cited = crate::checked::submission(first, vec![second]);
+    let mut setup = Setup::answering(vec![cited, passes()]);
     setup.inside = vec![[4, 4, 10, 10]];
     setup.inside_charges = Some(bound_of(3) * 2);
     let (world, finished) = looped("stopped-budget", &setup);
@@ -230,6 +239,16 @@ fn a_budget_that_runs_out_inside_a_retry_keeps_the_attempt_before_it() {
     let record = world.record(finished.run().as_str());
     assert_eq!(record.outcome().refusals.len(), 1);
     assert_eq!(world.kit.unplayed(), 1);
+    // The place the retry was in when it stopped is said not reached (plan mE, task L2).
+    let said = world
+        .diagnostic(finished.run().as_str(), "located-a2.txt")
+        .unwrap();
+    let places: Vec<&str> = said.lines().filter(|l| l.starts_with("place ")).collect();
+    assert_eq!(
+        places,
+        ["place 1 tiles 1 found_something", "place 2 not_reached"],
+        "{said}"
+    );
 }
 
 #[test]
