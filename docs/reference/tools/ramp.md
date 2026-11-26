@@ -59,8 +59,10 @@ A walkthrough gives the same inputs to the command line and to the playground. T
 |---|---|---|---|
 | smooth | image | image | `sha256:4a1f416814e4de643c1c200890a6ebc1e98a9e7f5e2b86a53a390062cfc2393c` |
 | smooth | mask | mask | `sha256:f3368c0597379885b585d448a0d3ca2f937ffe8c1cb162001fb7f4e37fb12d07` |
+| smooth | line of mask | location | `sha256:f33f4f79010ab2a22d3e0a6d08fa77eb9da68237b974107a7e367c68020abf1e` |
 | detail | image | image | `sha256:8a7b5edd4ad1498c199c212d6d2cd9c1875412945a6c1e78291150007bb9f130` |
 | detail | mask | mask | `sha256:1d8d0bf8188627cda88a24a4e236858956ab5cf86635d83513f32f41115347c5` |
+| detail | line of mask | location | `sha256:b9e7f56466326d6c5d1966096202c312d87146bb2f7fdff2aa6b98b98e958e0c` |
 
 <!-- inputs: end -->
 

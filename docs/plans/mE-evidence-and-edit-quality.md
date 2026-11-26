@@ -1361,8 +1361,15 @@ into a store that is there, in one publication, and prints a line for each: its 
 example, its port, its type and its identity. Rascal's records take their inputs' constructors
 from `whizbang_rascal::examples`, which the command uses; squint's inputs are all pictures, the
 files beside their records that the records' tests hold to their constructors byte for byte,
-and `whizbang_squint::examples` gives the images of those files, which its test holds to the
-constructors' images by identity. Each of O1.1's 34 rows of a tool has its record's list
+and `whizbang_squint::examples` gives the images of those files, read from the binary's own
+copy of the records (`whizbang_serve::play::records`), which its test holds to the
+constructors' images by identity. The playground reaches the same inputs: in the same
+publication each image gets a name in the library (`play/pictures/`), and each record's
+example is a saved example (ADR 0048), named "<record> · <example>", whose inputs are its
+call's by port, so opening it gives the form those identities; its arguments are the form's
+defaults, set as the record says. A mask, a location, a band profile or a plan reaches a form
+in no other way: the pickers offer only the outputs of earlier runs (`Workspace.tsx`), which
+is a finding on the carry-over list. Each of O1.1's 34 rows of a tool has its record's list
 between `inputs` marks (`scripts/tool-record.sh inputs` writes them; `details`' is `tiles.md`).
 Every mask and location is on an image that is written with it: the masks of `grow`, `close`,
 `subtract`, `select`, `plug` and `feather` were on an image named by no picture until then, and
@@ -1371,7 +1378,13 @@ inputs are not made: `protect` is given a first pass's composite and mask, which
 makes, so what is written for it is what that first pass takes (the scene, and the box for
 `remove`). Its case so needs one fill first, which O1.1 does not pay for: whether it is walked
 in O1.2, after a first pass under Bria, is the owner's to say. The set builder's row has no
-store inputs.
+store inputs. Nor do the rows walked in later sessions, whose records this command does not
+cover: `segment`, `fill`, `remove_prompt`, `remove`, `repair_area`, `repair`, `seam`,
+`remove_checked`, `check` and its five use cases, and the tool files `per_subject`, `outline`,
+`regions` and `classes`. Their inputs are pictures, brought in by `whizbang store import
+--picture` from the committed dev sets, `segmentation/segment-01` and the labs' corpora, with a
+phrase, a point or a box given as an argument; a mask or a location they take is the output of
+a run the session makes first.
 
 **Each row's cases.** Before its session, each row lists in the record the cases it walks:
 for `check`, the use case `general` as it is (its pictures under a fixed prompt, a verdict in

@@ -61,9 +61,9 @@ that first pass takes, the scene and, for `remove`, the box. They are:
 
 | Example | Input | Type | Identity |
 |---|---|---|---|
-| block | image of the first pass | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
-| feathered | image of the first pass | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
-| feathered | location of the first pass | location | `sha256:f91d20c2928483d8def20ab172334c5c6eeff87186242364516b354ec13f1a82` |
+| block | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| feathered | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| feathered | location | location | `sha256:f91d20c2928483d8def20ab172334c5c6eeff87186242364516b354ec13f1a82` |
 
 <!-- inputs: end -->
 

@@ -7,9 +7,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whizbang::record_inputs::{Input, RECORDS, inputs, line, listed};
-use whizbang_core::artifact::{self, Artifact};
-use whizbang_core::identity::DecodeLimits;
+use whizbang::play_kept::PICTURES;
+use whizbang::play_saved::example_in;
+use whizbang::record_inputs::{Input, RECORDS, example_id, inputs, is_port, line, listed};
+use whizbang_core::artifact::{self, Artifact, ArtifactId};
+use whizbang_core::identity::{Binding, DecodeLimits, PixelDigest};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::scratch::Scratch;
@@ -18,7 +20,25 @@ use whizbang_testkit::scratch::Scratch;
 /// function its one line in the store's commands calls. A test that starts the binary costs
 /// about a second here, the budget of this test, so it is called in process.
 fn record_inputs(store: &Path, inputs: &[Input]) -> Result<String, String> {
-    whizbang::record_inputs::write_these(store, whizbang::wiring::recovery(), inputs)
+    let made = || Ok(inputs.to_vec());
+    whizbang::record_inputs::write_these(store, whizbang::wiring::recovery(), made)
+}
+
+/// What an artifact is on and names: the image its binding is on, and the locations and
+/// line it was drawn from.
+fn needs(artifact: &Artifact) -> (Option<PixelDigest>, Vec<ArtifactId>) {
+    let on = |binding: &Binding| Some(binding.source());
+    match artifact {
+        Artifact::Mask(mask) => {
+            let mut named = mask.source().locations.clone();
+            named.extend(mask.profile().map(|profile| profile.band.line()));
+            (on(mask.binding()), named)
+        }
+        Artifact::Location(location) => (on(location.binding()), Vec::new()),
+        Artifact::BandProfile(band) => (on(band.binding()), vec![band.line()]),
+        Artifact::Plan(plan) => (on(plan.binding()), Vec::new()),
+        _ => (None, Vec::new()),
+    }
 }
 
 fn tools() -> PathBuf {
@@ -42,7 +62,7 @@ fn record(name: &str) -> String {
 
 #[test]
 fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record() {
-    let all = inputs();
+    let all = inputs().expect("the inputs are made");
     let dir = Scratch::new("record-inputs");
     let root = dir.path().join("store");
 
@@ -58,11 +78,47 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
         let ids = all.iter().map(|input| input.artifact.id());
         ids.collect::<std::collections::BTreeSet<_>>().len()
     };
-    want.push(format!(
-        "{} inputs of 34 records: {artifacts} artifacts, {artifacts} new to the store",
-        all.len()
-    ));
+    let images = all
+        .iter()
+        .filter(|i| matches!(i.artifact, Artifact::Image(_)));
+    let pictures = images
+        .map(|input| input.artifact.id())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let mut examples: Vec<(&str, &str)> = all.iter().map(|i| (i.record, i.example)).collect();
+    examples.dedup();
+    let summary = |new: usize, named: usize, saved: usize| {
+        format!(
+            "{} inputs of 34 records: {artifacts} artifacts, {new} new to the store; {named} \
+             pictures named and {saved} of {} saved examples written for the playground",
+            all.len(),
+            examples.len()
+        )
+    };
+    want.push(summary(artifacts, pictures, examples.len()));
     assert_eq!(printed.lines().collect::<Vec<_>>(), want);
+    // Written again, nothing is new.
+    let again = record_inputs(&root, &all).expect("the inputs are written again");
+    assert_eq!(again.lines().last(), Some(summary(0, 0, 0).as_str()));
+
+    // What an input is on, or names, is among its example's inputs.
+    for input in &all {
+        let of = || {
+            all.iter()
+                .filter(|i| (i.record, i.example) == (input.record, input.example))
+        };
+        let (on, named) = needs(&input.artifact);
+        if let Some(on) = on {
+            let images = of().filter_map(|i| match &i.artifact {
+                Artifact::Image(image) => Some(image.identity().pixels),
+                _ => None,
+            });
+            assert!(images.collect::<Vec<_>>().contains(&on), "{}", line(input));
+        }
+        for id in named {
+            assert!(of().any(|i| i.artifact.id() == id), "{}", line(input));
+        }
+    }
 
     // Each is in the store, and each mask reads back as the constructor made it, byte for
     // byte: with its protect plane, its band profile and its prescriptions.
@@ -98,6 +154,31 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
     assert_eq!(back.profile(), written.profile());
     assert_eq!(back.prescriptions(), written.prescriptions());
 
+    // The playground has a name for each image, and a saved example for each record's example
+    // holding its call's inputs, by port, as they were written.
+    let store = Store::open(&root, Arc::new(RealFs)).expect("the store");
+    let generation = store.snapshot().expect("a generation");
+    for input in all
+        .iter()
+        .filter(|i| matches!(i.artifact, Artifact::Image(_)))
+    {
+        let name = format!("{PICTURES}{}", input.artifact.id().0.hex());
+        assert!(generation.get(&name).is_some(), "{}", line(input));
+    }
+    for (record, example) in &examples {
+        let saved = example_in(&store, &generation, &example_id(record, example));
+        let saved = saved.unwrap_or_else(|| panic!("{record} {example} is not saved"));
+        let ports: Vec<(String, String)> = (all.iter())
+            .filter(|i| (i.record, i.example) == (*record, *example) && is_port(i))
+            .map(|i| (i.port.to_owned(), i.artifact.id().to_string()))
+            .collect();
+        let held: Vec<(String, String)> = (saved.inputs.iter())
+            .map(|input| (input.port.clone(), input.id.clone()))
+            .collect();
+        assert_eq!(held, ports, "{record} {example}");
+    }
+    drop(store);
+
     // Every record of the session has inputs, and names the command and lists them.
     for name in RECORDS {
         assert!(all.iter().any(|input| input.record == name), "{name}");
@@ -118,7 +199,7 @@ fn every_input_is_written_whole_printed_by_its_identity_and_listed_in_its_record
 #[test]
 #[ignore = "rewrites the committed records; run it with scripts/tool-record.sh inputs"]
 fn write_the_records_inputs() {
-    let all = inputs();
+    let all = inputs().expect("the inputs are made");
     let (begin, end) = marks();
     for name in RECORDS {
         let text = record(name);
