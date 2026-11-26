@@ -334,11 +334,11 @@ def run(context):
 // --- regions (plan mE, task T1, item 0) ----------------------------------------------------
 
 /// The declaration of [`tool_text`], returning regions as well: at most two, each label at
-/// most 16 bytes.
+/// most 16 bytes, of the kind `change_region`.
 fn regions_text(name: &str, code: &str) -> String {
     tool_text(name, BOUNDS, code).replace(
         "# evidence = \"measurements\"\n",
-        "# evidence = [\"measurements\", \"regions\"]\n# max_regions = 2\n# max_region_label_bytes = 16\n",
+        "# evidence = [\"measurements\", \"regions\"]\n# max_regions = 2\n# max_region_label_bytes = 16\n# region_kind = \"change_region\"\n",
     )
 }
 
@@ -366,7 +366,7 @@ fn a_tool_returns_regions_within_its_bounds() {
     assert!(declaration.regions());
     let output = located(json!([
         {"frame": "candidate", "box": [10, 20, 200, 100], "label": "pool added", "score": 0.75},
-        {"frame": "source", "polygon": [[0, 0], [200, 0], [100, 100]], "label": "", "score": 0},
+        {"frame": "source", "polygon": [[0, 0], [200, 0], [100, 100]], "label": "a", "score": 0},
     ]));
     let read = tool_file::checked(&declaration, &output, &frames()).unwrap();
     assert_eq!(read.regions.len(), 2);
@@ -400,8 +400,12 @@ fn a_tool_returns_regions_within_its_bounds() {
     let outline = Declaration::parse(shipped).unwrap();
     assert!(outline.regions());
     assert_eq!(
-        (outline.max_regions, outline.max_region_label_bytes),
-        (Some(6), Some(120))
+        (
+            outline.max_regions,
+            outline.max_region_label_bytes,
+            outline.region_kind.as_deref()
+        ),
+        (Some(6), Some(120), Some("change_region"))
     );
     assert_eq!(
         (outline.primary.as_str(), outline.bindings.as_slice()),
@@ -416,15 +420,32 @@ fn a_tool_returns_regions_within_its_bounds() {
     image = context.image('candidate')
     return {'readings': [{'subject': 'pool', 'values': {'covered': 0.5}}], 'regions': [{'frame': 'candidate', 'box': [0, 0, image.width, image.height], 'label': 'all of it', 'score': 1.0}]}
 "#;
+    // One that locates a region on an image the run did not hand it fails its run, and
+    // nothing it read is stated (both under one config, so one worker's start).
+    let astray = "def run(context):\n    return {'readings': [], 'regions': [{'frame': 'elsewhere', 'box': [0, 0, 1, 1], 'label': 'a', 'score': 0.5}]}\n";
     let tools = Tools::new(
         "tool-file-regions",
-        &[("located.py", regions_text("located", code))],
+        &[
+            ("located.py", regions_text("located", code)),
+            ("astray.py", regions_text("astray", astray)),
+        ],
     );
     let executor = tools.runner(&tools.over(None));
-    let call = Call::new("located")
-        .input("source", tools.image_id())
-        .input("candidate", tools.image_id());
-    let (run, outcome) = ran(&executor, &call);
+    let call = |name: &str| {
+        Call::new(name)
+            .input("source", tools.image_id())
+            .input("candidate", tools.image_id())
+    };
+    let (run, outcome) = ran(&executor, &call("astray"));
+    let Outcome::Error { message, .. } = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(
+        message.contains("no image the run handed the tool"),
+        "{message}"
+    );
+    assert!(whizbang::door::diagnostic(&tools.root, &run, REPORT).is_err());
+    let (run, outcome) = ran(&executor, &call("located"));
     assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
     let report = whizbang::door::diagnostic(&tools.root, &run, REPORT).unwrap();
     let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
@@ -439,8 +460,8 @@ fn a_tool_returns_regions_within_its_bounds() {
 
 #[test]
 fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
-    // Declarations: regions need both bounds, within theirs; the bounds need regions; and
-    // measurements come first, always.
+    // Declarations: regions need both bounds, within theirs, and their kind; those need
+    // regions; and measurements come first, always.
     let base = regions_text("located", "");
     for (text, said) in [
         (
@@ -470,6 +491,14 @@ fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
             base.replace("[\"measurements\", \"regions\"]", "\"labels\""),
             "evidence is measurements, or measurements and regions",
         ),
+        (
+            base.replace("# region_kind = \"change_region\"\n", ""),
+            "declares region_kind",
+        ),
+        (
+            base.replace("change_region", "Change Region"),
+            "declares region_kind",
+        ),
     ] {
         let refused = Declaration::parse(text.as_bytes()).unwrap_err();
         assert!(refused.contains(said), "{said}: {refused}");
@@ -487,7 +516,7 @@ fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
                 "seventeen bytes!!",
                 json!(0.5)
             )]),
-            "at most the 16 bytes",
+            "1 to the 16 bytes",
         ),
         (
             json!([boxed(
@@ -497,6 +526,10 @@ fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
                 json!(0.5)
             )]),
             "printable text",
+        ),
+        (
+            json!([boxed("candidate", json!([0, 0, 10, 10]), "", json!(0.5))]),
+            "printable text of 1 to the 16 bytes",
         ),
         (
             json!([boxed("candidate", json!([0, 0, 10, 10]), "a", json!(1.5))]),
@@ -532,6 +565,10 @@ fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
             "not inside the 200x100 image source",
         ),
         (
+            json!([{"frame": "source", "polygon": [[0, 0], [5, 5], [10, 10]], "label": "a", "score": 0.5}]),
+            "polygon has no area",
+        ),
+        (
             json!([{"frame": "source", "box": [0, 0, 1, 1], "polygon": [[0, 0], [1, 0], [1, 1]], "label": "a", "score": 0.5}]),
             "a box or a polygon, one of the two",
         ),
@@ -549,24 +586,48 @@ fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
     let plain = Declaration::parse(tool_text("plain", BOUNDS, "").as_bytes()).unwrap();
     let refused = tool_file::checked(&plain, &located(json!([])), &frames()).unwrap_err();
     assert!(refused.contains("which it does not declare"), "{refused}");
-    // Through a run: a region on an image the run did not hand the tool fails the run,
-    // and nothing it read is stated.
-    let code = "def run(context):\n    return {'readings': [], 'regions': [{'frame': 'elsewhere', 'box': [0, 0, 1, 1], 'label': 'a', 'score': 0.5}]}\n";
-    let tools = Tools::new(
-        "tool-file-regions-out",
-        &[("located.py", regions_text("located", code))],
-    );
-    let executor = tools.runner(&tools.over(None));
-    let call = Call::new("located")
-        .input("source", tools.image_id())
-        .input("candidate", tools.image_id());
-    let (run, outcome) = ran(&executor, &call);
-    let Outcome::Error { message, .. } = outcome else {
-        panic!("{outcome:?}");
+}
+
+#[test]
+fn the_rules_hints_are_given_to_a_tool_as_the_arguments_of_text_it_declares() {
+    // Plan mE, task T1, item 4: what `eval tool` adds to each item's arguments.
+    use whizbang::trying::{Declared, hinted_arguments};
+    use whizbang_core::contract::Value;
+    use whizbang_squint::use_case::{Hints, OutlineHints, RegionHints};
+    let hints = Hints {
+        regions: Some(RegionHints {
+            preserve: vec!["wall".into(), "pool".into()],
+            ignore: vec!["chair".into()],
+        }),
+        outline: Some(OutlineHints {
+            classes: vec!["pool".into()],
+        }),
     };
-    assert!(
-        message.contains("no image the run handed the tool"),
-        "{message}"
+    let declared = |tool: &str, texts: &[&str]| Declared {
+        tool: tool.to_owned(),
+        primary: "strongest".to_owned(),
+        changed: whizbang_eval::tool::Changed::Larger,
+        report: REPORT.to_owned(),
+        file: true,
+        takes_job: true,
+        texts: texts.iter().map(|t| (*t).to_owned()).collect(),
+    };
+    assert_eq!(
+        hinted_arguments(&declared("regions", &["job", "preserve", "ignore"]), &hints),
+        [
+            ("preserve".to_owned(), Value::text("wall; pool")),
+            ("ignore".to_owned(), Value::text("chair")),
+        ]
     );
-    assert!(whizbang::door::diagnostic(&tools.root, &run, REPORT).is_err());
+    // Only what the tool declares: a tool that takes no `ignore` is given none.
+    assert_eq!(
+        hinted_arguments(&declared("regions", &["preserve"]), &hints),
+        [("preserve".to_owned(), Value::text("wall; pool"))]
+    );
+    assert_eq!(
+        hinted_arguments(&declared("outline", &["job", "phrases"]), &hints),
+        [("phrases".to_owned(), Value::text("pool"))]
+    );
+    assert!(hinted_arguments(&declared("per_subject", &["phrases"]), &hints).is_empty());
+    assert!(hinted_arguments(&declared("regions", &["preserve"]), &Hints::default()).is_empty());
 }

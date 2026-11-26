@@ -863,6 +863,7 @@ class Imports(unittest.TestCase):
                 "fakes.py",
                 "front.py",
                 "installed.py",
+                "masks.py",
                 "owlv2_sam2.py",
                 "proto.py",
                 "sam3.py",

@@ -73,7 +73,7 @@ fn every_record_that_states_a_mark_is_shown_by_describe() {
         );
     }
     assert_eq!(stating.len(), shown.len());
-    assert_eq!(shown.len(), 19);
+    assert_eq!(shown.len(), 20);
 }
 
 #[test]
@@ -103,14 +103,17 @@ fn the_control_carries_no_mark() {
 
 #[test]
 fn tiles_and_per_subject_are_shown_experimental() {
-    // None is an action: two tool files and a detail, each offered only when a run names
-    // it (`outline`: plan mE, task T1).
-    assert_eq!(marks::OFFERED, ["per_subject", "outline", "tiles"]);
+    // None is an action: three tool files and a detail, each offered only when a run names
+    // it (`outline` and `regions`: plan mE, task T1).
+    assert_eq!(
+        marks::OFFERED,
+        ["per_subject", "outline", "regions", "tiles"]
+    );
     for tool in marks::OFFERED {
         assert_eq!(marks::of(tool), Some(Mark::Experimental), "{tool}");
     }
     let shown = shown();
-    let tail: Vec<(&str, &str)> = shown[shown.len() - 3..]
+    let tail: Vec<(&str, &str)> = shown[shown.len() - 4..]
         .iter()
         .map(|(t, m)| (t.as_str(), m.as_str()))
         .collect();
@@ -119,6 +122,7 @@ fn tiles_and_per_subject_are_shown_experimental() {
         [
             ("per_subject", "experimental"),
             ("outline", "experimental"),
+            ("regions", "experimental"),
             ("tiles", "experimental")
         ]
     );
@@ -130,7 +134,7 @@ fn tiles_and_per_subject_are_shown_experimental() {
     assert!(
         text.ends_with(
             "tools a run offers a judge only when it names them:\n  per_subject  \
-             [experimental]\n  outline  [experimental]\n  tiles  [experimental]\n"
+             [experimental]\n  outline  [experimental]\n  regions  [experimental]\n  tiles  [experimental]\n"
         ),
         "{text}"
     );

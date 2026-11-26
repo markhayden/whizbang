@@ -7,6 +7,7 @@ mod binding;
 mod cache;
 mod change_map;
 mod check;
+mod checklist;
 mod compare_record;
 mod details;
 mod edge_similarity;

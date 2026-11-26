@@ -152,7 +152,7 @@ pub const EXTRA_HOST: Host = Host {
 };
 
 /// The files of the pack this build carries, by their place in the pack's folder.
-const CARRIED: [(&str, &[u8]); 18] = [
+const CARRIED: [(&str, &[u8]); 20] = [
     (
         "pyproject.toml",
         include_bytes!("../../../pack/pyproject.toml"),
@@ -193,6 +193,10 @@ const CARRIED: [(&str, &[u8]); 18] = [
         include_bytes!("../../../pack/src/whizbang_pack/installed.py"),
     ),
     (
+        "src/whizbang_pack/masks.py",
+        include_bytes!("../../../pack/src/whizbang_pack/masks.py"),
+    ),
+    (
         "src/whizbang_pack/owlv2_sam2.py",
         include_bytes!("../../../pack/src/whizbang_pack/owlv2_sam2.py"),
     ),
@@ -217,7 +221,7 @@ const CARRIED: [(&str, &[u8]); 18] = [
         include_bytes!("../../../pack/src/whizbang_pack/worker.py"),
     ),
     // The tool files, for a config to list: per-subject comparison (plan 2C, task X1; ADR
-    // 0032) and `outline` (plan mE, task T1).
+    // 0032), `outline` and `regions` (plan mE, task T1).
     (
         "tools/outline.py",
         include_bytes!("../../../pack/tools/outline.py"),
@@ -225,6 +229,10 @@ const CARRIED: [(&str, &[u8]); 18] = [
     (
         "tools/per_subject.py",
         include_bytes!("../../../pack/tools/per_subject.py"),
+    ),
+    (
+        "tools/regions.py",
+        include_bytes!("../../../pack/tools/regions.py"),
     ),
 ];
 

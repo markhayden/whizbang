@@ -809,6 +809,7 @@ fn the_pack_this_build_carries_is_the_repositorys() {
         ".python-version",
         "tools/outline.py",
         "tools/per_subject.py",
+        "tools/regions.py",
     ]
     .iter()
     .map(|name| (*name).to_owned())
