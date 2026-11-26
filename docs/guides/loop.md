@@ -307,8 +307,11 @@ outside the work tree, and are never committed.
   <file> --receipt <file>` scores the recipe's gate, `edit-gate/1`, from the store, with
   `--labels marks.json --sheet assignment.json` for a person's marks and `--assignment
   --picks` for the pairs. Its receipt, `edit-receipt/1`, holds aggregates only, and `eval
-  admitted` lists the recipe a rung 4 receipt admitted. The marks, the picks and both
-  assignments are refused inside a git work tree.
+  admitted` lists the recipe a rung 4 receipt admitted. The marks, the picks, both
+  assignments and a rung 4 gate's cases are refused inside a git work tree. The gate's
+  `[quality] outcomes` is the list of the decode's outcomes it accepts for every group
+  (`preferred`, `not_worse`, or both); its `corpus` names where the cases come from, and a
+  rung 4 gate on an exposed corpus is refused.
 
 ## What it does not do yet
 

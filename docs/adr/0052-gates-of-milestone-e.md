@@ -119,8 +119,9 @@ balanced accuracy.
    and a bar for each measure: task success (a share of every case, from the checks of the
    finished edits on rung 3, from a person's marks on rung 4 and only there); preservation
    outside the kept mask, exact; the outcomes the decode of the pairs must reach and the
-   pairs that must be picked; operational errors; cost (the mean settled cost of a run
-   against the recipe's guide figure times a multiple); and latency of the local work alone
+   pairs that must be picked; operational errors; cost (the mean cost of a run, settled
+   and unresolved, against the recipe's guide figure times a multiple); and latency of the
+   local work alone
    (a run's time less its backend requests', over the record's time at the nearest size,
    the median against a multiple).
 2. **Task success's lower bound is the lower of two**, each at the level corrected across
@@ -130,9 +131,19 @@ balanced accuracy.
    on their spread. A run that failed, or is missing, is an error and not a success, never
    replaced by a later one; a finished edit with no check or mark leaves the gate
    inconclusive.
-3. **The outcome**: rejected when preservation, errors, cost, latency or quality fails;
-   inconclusive when the data are short, whatever task success read; rejected when task
-   success misses a bar; else admitted. `whizbang eval edits gate` writes the receipt,
+3. **The outcome**: rejected when preservation, errors, cost (settled and unresolved, of
+   every run under a case's request id, a failed one's too), latency or quality fails, or
+   when task success misses a bar even with every unscored edit counted a success, on
+   enough families; inconclusive when the data are short; rejected when task success
+   misses a bar; else admitted. On R5's 8 cases at up to 8 hypotheses that is 7 of 8; on
+   R6's 10 cases at 6, 9 of 10 and no operational error. A check counts for an edit when
+   it was given the finished picture then the given picture, the job the loop writes for
+   the case's phrase, and the gate's judge; when there are several, every one must pass;
+   an edit that changed nothing counts only a check made under its own run. A mask on a
+   cut's canvas (`seam`'s) is mapped onto the panorama through the plan of its run's cut;
+   one that cannot be mapped stops the scoring. A gate names its corpus: a rung 4 gate on
+   an exposed one is refused, its receipt admits nothing, and its cases are read only from
+   outside a git work tree. `whizbang eval edits gate` writes the receipt,
    `edit-receipt/1`, aggregates only, and `eval admitted` lists its recipe when it was
    admitted on rung 4 from marks.
 4. **Marks and pairs of any recipe's runs**: `eval loop sheet --cases` and `lab pairs

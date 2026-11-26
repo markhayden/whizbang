@@ -11,9 +11,15 @@
 //! **What is read of a finished run**, from the store alone: preservation, every pixel
 //! where the kept mask weighs nothing compared with the given picture's; the settled cost
 //! of the run and of every run nested under it; its time, and the time of every backend
-//! request made under it. Task success from a check (rung 3): every completed or failed
-//! run of `source-fidelity` given the finished picture and the given picture, under the
-//! gate's judge when it names one; a success only when there is one and every one passed.
+//! request made under it. A mask on a cut's canvas (`seam` hands back its ramp's) is mapped
+//! onto the panorama through the plan of the cut its run made; a mask in another space that
+//! cannot be mapped stops the scoring. Cost is what every run under the case's request id
+//! and under them settled, and what no answer settled, a failed run's too. Task success
+//! from a check (rung 3): every run of `source-fidelity`, completed or failed, given the
+//! finished picture then the given picture, as the loop writes them, the job the loop
+//! writes for the case's `what`, under the gate's judge when it names one; a success only
+//! when there is one and every one passed. An edit that changed nothing is a success only
+//! by a check made under its own run.
 //! From a person's marks (`--labels`, the marks the contact sheet of these cases saves,
 //! with `--sheet`, its assignment: `whizbang eval loop sheet --cases`): a success when the
 //! picture's mark says the named thing is gone and nothing else was damaged.
@@ -77,6 +83,15 @@ pub fn frozen(file: &Path) -> Result<Frozen, String> {
     let bytes = loop_score::read_limited(file, "the edit gate")?;
     let text = std::str::from_utf8(&bytes).map_err(|_| "the edit gate is not UTF-8")?;
     let gate = EditGate::parse(text)?;
+    let cases_file = file.with_file_name(&gate.cases);
+    let folder = cases_file.parent().unwrap_or(Path::new("."));
+    if gate.rung == 4 && crate::edits::inside_a_work_tree(folder) {
+        return Err(
+            "a rung 4 gate's cases are of a fresh corpus, the owner's, read only from outside a \
+             git work tree; nothing was scored"
+                .to_owned(),
+        );
+    }
     let cases_bytes = beside(file, &gate.cases)?;
     if digest_of(&cases_bytes) != gate.cases_sha256 {
         return Err("the cases are not the file the gate pins (another SHA-256)".to_owned());
@@ -84,6 +99,14 @@ pub fn frozen(file: &Path) -> Result<Frozen, String> {
     let cases = Cases::parse(std::str::from_utf8(&cases_bytes).map_err(|_| "cases not UTF-8")?)?;
     if cases.action != gate.recipe {
         return Err("the cases are runs of another action than the gate's recipe".to_owned());
+    }
+    let unsaid = cases.case.iter().any(|c| c.what.is_none());
+    if gate.success.from == edit_gate::ReadFrom::Check && unsaid {
+        return Err(
+            "a gate scored from checks needs each case's what: its check's job is the one the \
+             loop writes for it"
+                .to_owned(),
+        );
     }
     let protocol_bytes = beside(file, &gate.quality.protocol)?;
     let (protocol, protocol_digest) = Protocol::parse(&protocol_bytes)?;
@@ -103,9 +126,11 @@ pub fn frozen(file: &Path) -> Result<Frozen, String> {
 #[derive(Debug, Clone)]
 pub struct CaseRun<'a> {
     pub case: &'a Case,
-    /// The run's id, when the store holds one.
+    /// The run's id, when the store holds one; the first, when it holds more.
     pub run: Option<String>,
-    /// How it ended: an error unless it completed.
+    /// Every run under the case's request id.
+    pub all: Vec<String>,
+    /// How it ended: an error unless every run under its id completed.
     pub finished: bool,
     pub given: Option<ArtifactId>,
     pub image: Option<ArtifactId>,
@@ -113,11 +138,24 @@ pub struct CaseRun<'a> {
     pub end_ms: u64,
 }
 
-/// What one run of the store says of its place, its spend and its time.
+/// What one run of the store says of its place, its spend, its time, and, for a cut, the
+/// panorama it cut and the plan it handed back.
 struct Seen {
     parent: Option<String>,
-    settled_micros: u64,
+    spent_micros: u64,
     requests_ms: u64,
+    cut: Option<(ArtifactId, ArtifactId)>,
+}
+
+/// A run of the check, as much as is needed to match it to an edit: its two pictures in
+/// order (the candidate, then the source), the SHA-256 of its job, its judge, and whether
+/// it passed. Nothing else of its record is kept.
+struct CheckSeen {
+    run: String,
+    images: [ArtifactId; 2],
+    job: Option<Digest>,
+    judge: Option<String>,
+    passed: bool,
 }
 
 /// What the store holds of the cases' runs, and of every run, for the walk down.
@@ -125,7 +163,7 @@ pub struct Held<'a> {
     pub runs: Vec<CaseRun<'a>>,
     records: BTreeMap<String, RunRecord>,
     seen: BTreeMap<String, Seen>,
-    checks: Vec<RunRecord>,
+    checks: Vec<CheckSeen>,
 }
 
 fn port(record: &RunRecord, name: &str) -> Option<ArtifactId> {
@@ -137,6 +175,31 @@ fn text_argument<'a>(record: &'a RunRecord, name: &str) -> Option<&'a str> {
     (record.asked().arguments.iter()).find_map(|a| match &a.value {
         ArgumentValue::Text(text) if a.name == name => Some(text.as_str()),
         _ => None,
+    })
+}
+
+fn input(record: &RunRecord, name: &str) -> Option<ArtifactId> {
+    let found = record.inputs().iter().find(|i| i.port == name);
+    found.map(|i| ArtifactId(i.artifact))
+}
+
+/// A check of two pictures, kept small; any other run of the check is passed over.
+fn check_of(record: &RunRecord, id: &str) -> Option<CheckSeen> {
+    if record.outcome().status == Status::Cancelled {
+        return None;
+    }
+    let images: Vec<ArtifactId> = (record.inputs().iter())
+        .filter(|i| i.port == "images")
+        .map(|i| ArtifactId(i.artifact))
+        .collect();
+    let images: [ArtifactId; 2] = images.try_into().ok()?;
+    Some(CheckSeen {
+        run: id.to_owned(),
+        images,
+        job: text_argument(record, "job").map(|j| Digest::of_bytes(j.as_bytes())),
+        judge: text_argument(record, "judge").map(str::to_owned),
+        passed: record.outcome().status == Status::Completed
+            && matches!(record.verdict(), Some((Decision::Pass, _))),
     })
 }
 
@@ -156,24 +219,30 @@ pub fn case_runs<'a>(root: &Path, cases: &'a Cases) -> Result<Held<'a>, String> 
             .filter(|d| d.of == Timed::Request)
             .map(|d| d.ms)
             .sum();
-        let settled_micros: u64 = (record.spend().requests.iter())
-            .map(|p| p.settled_micros())
+        // Settled, and what no answer settled, as a gate's cost counts it.
+        let spent_micros: u64 = (record.spend().requests.iter())
+            .map(|p| p.settled_micros() + p.unresolved_micros())
             .sum();
+        let action = record.asked().action.as_deref();
+        let cut = (action == Some(whizbang_rascal::cut::NAME))
+            .then(|| input(record, "image").zip(port(record, "plan")))
+            .flatten();
         let parent = record.identity().parent.clone();
         seen.insert(
             id.to_owned(),
             Seen {
                 parent,
-                settled_micros,
+                spent_micros,
                 requests_ms,
+                cut,
             },
         );
-        if record.asked().action.as_deref() == Some(CHECK) {
-            checks.push(record.clone());
+        if action == Some(CHECK) {
+            checks.extend(check_of(record, id));
         }
         let request = record.identity().request.as_deref();
         if let Some((key, _)) = request.and_then(|r| wanted.get_key_value(r)) {
-            if record.asked().action.as_deref() != Some(cases.action.as_str()) {
+            if action != Some(cases.action.as_str()) {
                 foreign = true;
             }
             under.entry(*key).or_default().push((id.to_owned(), ended));
@@ -184,21 +253,20 @@ pub fn case_runs<'a>(root: &Path, cases: &'a Cases) -> Result<Held<'a>, String> 
         return Err("a run under a case's request id is of another action".to_owned());
     }
     let mut runs = Vec::new();
+    let mut givens = std::collections::BTreeSet::new();
     for case in &cases.case {
-        let list = under
-            .get(case.run.as_str())
+        let list = (under.get(case.run.as_str()))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         let finished = !list.is_empty() && list.iter().all(|(_, e)| *e == Ended::Completed);
         let first = list.first().map(|(id, _)| id.clone());
         let record = first.as_ref().and_then(|id| records.get(id));
-        let given = record.and_then(|r| {
-            let input = r.inputs().iter().find(|i| i.port == "image");
-            input.map(|i| ArtifactId(i.artifact))
-        });
+        let given = record.and_then(|r| input(r, "image"));
+        givens.extend(given);
         runs.push(CaseRun {
             case,
             run: first,
+            all: list.iter().map(|(id, _)| id.clone()).collect(),
             finished,
             given,
             image: record.and_then(|r| port(r, "image")),
@@ -206,6 +274,8 @@ pub fn case_runs<'a>(root: &Path, cases: &'a Cases) -> Result<Held<'a>, String> 
             end_ms: record.map_or(0, |r| r.time().end_ms),
         });
     }
+    // Only the checks of a picture a case's run was given are kept.
+    checks.retain(|c| givens.contains(&c.images[1]));
     Ok(Held {
         runs,
         records,
@@ -215,53 +285,76 @@ pub fn case_runs<'a>(root: &Path, cases: &'a Cases) -> Result<Held<'a>, String> 
 }
 
 impl Held<'_> {
-    /// The settled cost and the backends' time of a run and every run under it.
-    fn under(&self, run: &str) -> (u64, u64) {
+    /// Every run under each of `runs`, those runs among them.
+    fn tree(&self, runs: &[String]) -> Vec<String> {
         let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for (id, s) in &self.seen {
             if let Some(parent) = &s.parent {
-                children
-                    .entry(parent.as_str())
-                    .or_default()
-                    .push(id.as_str());
+                (children.entry(parent.as_str()).or_default()).push(id.as_str());
             }
         }
-        let (mut settled, mut ms) = (0, 0);
-        let mut next = vec![run];
-        let mut walked = 0;
+        let mut out = Vec::new();
+        let mut next: Vec<&str> = runs.iter().map(String::as_str).collect();
         while let Some(at) = next.pop() {
-            walked += 1;
-            if walked > NESTING_LIMIT {
+            if out.len() >= NESTING_LIMIT {
                 break;
             }
-            if let Some(s) = self.seen.get(at) {
-                settled += s.settled_micros;
-                ms += s.requests_ms;
-            }
+            out.push(at.to_owned());
             next.extend(children.get(at).into_iter().flatten().copied());
         }
-        (settled, ms)
+        out
     }
 
-    /// Whether every check of this finished picture of this given picture, under the judge
-    /// when one is named, passed; none when there is none.
-    fn checked(&self, image: ArtifactId, given: ArtifactId, judge: Option<&str>) -> Option<bool> {
-        let of = |r: &&RunRecord| {
-            let images: Vec<ArtifactId> = (r.inputs().iter())
-                .filter(|i| i.port == "images")
-                .map(|i| ArtifactId(i.artifact))
-                .collect();
-            images.contains(&image)
-                && images.contains(&given)
-                && judge.is_none_or(|j| text_argument(r, "judge") == Some(j))
-                && r.outcome().status != Status::Cancelled
-        };
-        let found: Vec<&RunRecord> = self.checks.iter().filter(of).collect();
-        let passed = |r: &&RunRecord| {
-            r.outcome().status == Status::Completed
-                && matches!(r.verdict(), Some((Decision::Pass, _)))
-        };
-        (!found.is_empty()).then(|| found.iter().all(passed))
+    /// What the runs under a case's request id and every run under them spent, settled
+    /// and unresolved, and the time their backend requests took.
+    fn spent(&self, runs: &[String]) -> (u64, u64) {
+        let mut out = (0, 0);
+        for at in self.tree(runs) {
+            if let Some(s) = self.seen.get(&at) {
+                out.0 += s.spent_micros;
+                out.1 += s.requests_ms;
+            }
+        }
+        out
+    }
+
+    /// The plan of the cut a run under `run` made of `given`, when there is one.
+    fn plan_of(&self, run: &str, given: ArtifactId) -> Option<ArtifactId> {
+        let plans: Vec<ArtifactId> = (self.tree(&[run.to_owned()]).into_iter())
+            .filter_map(|at| self.seen.get(&at).and_then(|s| s.cut))
+            .filter(|(cut, _)| *cut == given)
+            .map(|(_, plan)| plan)
+            .collect();
+        (plans.len() == 1).then(|| plans[0])
+    }
+
+    /// Whether the edit passed its checks: those of `image` as the candidate and `given` as
+    /// the source, in that order (as the loop writes them), given the job the loop writes
+    /// for the case's phrase, under the judge when one is named. Every such check must
+    /// have passed, however many there are; none when there is none. An edit that changed
+    /// nothing is not a success unless a check of it was made under its own run.
+    fn checked(
+        &self,
+        run: &CaseRun<'_>,
+        image: ArtifactId,
+        given: ArtifactId,
+        judge: Option<&str>,
+    ) -> Option<bool> {
+        let job = run
+            .case
+            .what
+            .as_deref()
+            .map(|what| Digest::of_bytes(whizbang_rascal::checked::job(what).as_bytes()));
+        let found: Vec<&CheckSeen> = (self.checks.iter())
+            .filter(|c| c.images == [image, given] && job.is_some() && c.job == job)
+            .filter(|c| judge.is_none_or(|j| c.judge.as_deref() == Some(j)))
+            .collect();
+        if image == given {
+            let own = self.tree(&run.all);
+            let ours: Vec<&&CheckSeen> = found.iter().filter(|c| own.contains(&c.run)).collect();
+            return Some(!ours.is_empty() && ours.iter().all(|c| c.passed));
+        }
+        (!found.is_empty()).then(|| found.iter().all(|c| c.passed))
     }
 }
 
@@ -273,33 +366,77 @@ fn pixels_of(reader: &Reader, id: ArtifactId) -> Result<CanonicalPixels, String>
     }
 }
 
-/// The pixels outside the mask's support that differ from the given picture's: every
-/// pixel when the pictures or the mask are not of one size.
-fn changed_outside(
+/// The kept mask's weights over the given picture: the mask's own, when it is of the
+/// picture's size; mapped through the wrap of the cut whose plan `plan` is, when it is on
+/// that cut's canvas (as `seam` hands back its ramp's mask): the canvas's left half on the
+/// panorama's last `s` columns, its right half on the first `s`, nothing elsewhere. A mask
+/// in any other space is refused, and nothing is scored.
+fn weights_over(
     reader: &Reader,
     given: &CanonicalPixels,
-    image: ArtifactId,
     mask: ArtifactId,
-) -> Result<u64, String> {
-    let edited = pixels_of(reader, image)?;
+    plan: Option<ArtifactId>,
+) -> Result<Vec<f32>, String> {
     let limits = DecodeLimits::default();
     let read = artifact::get_anywhere(reader, ArtifactType::Mask, mask, &limits);
     let mask = (read.map_err(|e| e.to_string())?)
         .into_mask()
         .map_err(|e| e.to_string())?;
     let (w, h) = (given.width(), given.height());
-    let all = u64::from(w) * u64::from(h);
     let space = mask.space();
-    if (edited.width(), edited.height()) != (w, h) || (space.width(), space.height()) != (w, h) {
-        return Ok(all);
+    let weight = |x: u32, y: u32| mask.weight(x, y).unwrap_or(0.0);
+    if (space.width(), space.height()) == (w, h) {
+        return Ok((0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| weight(x, y))
+            .collect());
     }
-    let mut weights = Vec::with_capacity(all as usize);
+    let refused = "a case's kept mask is in another space than its picture, and no cut of its \
+                   run maps it there; nothing was scored";
+    let plan = plan.ok_or(refused)?;
+    let Ok(Artifact::Plan(plan)) =
+        artifact::get_anywhere(reader, ArtifactType::Plan, plan, &limits)
+    else {
+        return Err(refused.to_owned());
+    };
+    let s = plan.strip();
+    let canvas = whizbang_rascal::cut::canvas_of(given, s).map_err(|_| refused)?;
+    let on_the_cut = plan.binding().source() == given.digest()
+        && (space.width(), space.height()) == (2 * s, h)
+        && mask.image() == canvas.digest()
+        && 2 * s <= w;
+    if !on_the_cut {
+        return Err(refused.to_owned());
+    }
+    let mut out = Vec::with_capacity(w as usize * h as usize);
     for y in 0..h {
         for x in 0..w {
-            weights.push(mask.weight(x, y).unwrap_or(0.0));
+            let column = if x >= w - s {
+                Some(x - (w - s))
+            } else if x < s {
+                Some(s + x)
+            } else {
+                None
+            };
+            out.push(column.map_or(0.0, |c| weight(c, y)));
         }
     }
-    crate::edits::changed_outside(given.rgba(), edited.rgba(), &weights)
+    Ok(out)
+}
+
+/// The pixels outside the mask's support that differ from the given picture's: every
+/// pixel when the finished picture is of another size.
+fn changed_outside(
+    reader: &Reader,
+    given: &CanonicalPixels,
+    image: ArtifactId,
+    weights: &[f32],
+) -> Result<u64, String> {
+    let edited = pixels_of(reader, image)?;
+    if (edited.width(), edited.height()) != (given.width(), given.height()) {
+        return Ok(u64::from(given.width()) * u64::from(given.height()));
+    }
+    crate::edits::changed_outside(given.rgba(), edited.rgba(), weights)
 }
 
 /// What each case's run did, as the gate counts it.
@@ -313,33 +450,36 @@ pub fn observe(
     let mut out = Vec::new();
     for run in &held.runs {
         let family = run.case.family.clone();
+        let (spent, backend_ms) = held.spent(&run.all);
+        let spent_micros = (!run.all.is_empty()).then_some(spent);
         let (Some(id), true, Some(given), Some(image), Some(mask)) =
             (&run.run, run.finished, run.given, run.image, run.mask)
         else {
             out.push(Observation {
                 family,
                 observed: Observed::Error,
+                spent_micros,
             });
             continue;
         };
         let given_pixels = pixels_of(&reader, given)?;
-        let (settled_micros, backend_ms) = held.under(id);
+        let weights = weights_over(&reader, &given_pixels, mask, held.plan_of(id, given))?;
         let record = &held.records[id];
         let total = (record.time().start_ms).map_or(0, |s| record.time().end_ms.saturating_sub(s));
         let success = match marks {
             Some(marks) => marks.get(id).map(|m| !m.visible && !m.damaged),
-            None => held.checked(image, given, gate.success.judge.as_deref()),
+            None => held.checked(run, image, given, gate.success.judge.as_deref()),
         };
         out.push(Observation {
             family,
             observed: Observed::Finished(Finished {
                 success,
-                changed_outside: changed_outside(&reader, &given_pixels, image, mask)?,
-                settled_micros,
+                changed_outside: changed_outside(&reader, &given_pixels, image, &weights)?,
                 local_ms: total.saturating_sub(backend_ms),
                 backend_ms,
                 pixels: u64::from(given_pixels.width()) * u64::from(given_pixels.height()),
             }),
+            spent_micros,
         });
     }
     Ok(out)
@@ -465,6 +605,7 @@ pub struct Receipt {
     pub gate_sha256: String,
     pub recipe: String,
     pub rung: u8,
+    pub corpus: String,
     pub cases_sha256: String,
     pub protocol_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -520,6 +661,7 @@ pub fn score(gating: &Gating<'_>) -> Result<Receipt, String> {
         gate_sha256: frozen.digest.clone(),
         recipe: gate.recipe.clone(),
         rung: gate.rung,
+        corpus: gate.corpus.clone(),
         cases_sha256: gate.cases_sha256.clone(),
         protocol_sha256: frozen.protocol_digest.clone(),
         assignment_sha256,
@@ -549,7 +691,7 @@ impl Receipt {
         format!(
             "gate: {} ({}), rung {}\ncases: {}, families: {}, finished: {}, errors: {}\n\
              task success: {} of {} ({} unscored), lower bound {}\npreserved: {} of {}\n\
-             pairs picked: {}\nmean settled: {} micros of {}\nmedian local time: {} of the \
+             pairs picked: {}\nmean spent: {} micros of {}\nmedian local time: {} of the \
              record's\noutcome: {}{}\n",
             self.gate,
             &self.gate_sha256[..16.min(self.gate_sha256.len())],
@@ -565,7 +707,7 @@ impl Receipt {
             d.preservation.preserved,
             d.preservation.finished,
             d.quality.picked,
-            shown(d.cost.mean_settled_micros),
+            shown(d.cost.mean_spent_micros),
             d.cost.limit_micros,
             shown(d.latency.median_ratio),
             d.outcome,

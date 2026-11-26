@@ -29,17 +29,31 @@
 //! - blinded quality: every group of the lab decode of this round's pairs ends in one of
 //!   `outcomes`, with at least `min_picked` pairs picked;
 //! - operational errors: their share below `below`;
-//! - cost: the mean settled cost of a finished run at most `guide_micros` times `times`;
+//! - cost: the mean cost of a run, settled and unresolved, its nested runs' included, over
+//!   every case whose run the store holds, a failed one's too, at most `guide_micros` times
+//!   `times`;
 //! - latency of the local work alone: each finished run's time less the time its backend
 //!   requests took, over the record's time at the size nearest its picture; the median of
 //!   that ratio at most `times`. The backends' time is reported, not gated.
 //!
-//! **The outcome**: `rejected` when preservation, errors, cost, latency or quality fails;
-//! else `inconclusive` when anything is short (fewer families than the minimum, an unscored
-//! edit, a tail the resamples cannot resolve, no finished edit, no decode, fewer pairs
-//! picked than the minimum, a group the decode leaves inconclusive), whatever task success
-//! read, since more data could move it; else `rejected` when task success misses either
-//! bar; else `admitted`. Too little data is never a pass.
+//! **The outcome**: `rejected` when preservation, errors, cost, latency or quality fails, or
+//! when task success misses either bar even with every unscored edit counted a success, on
+//! at least the minimum of families (so no one is asked to mark or pick for a recipe that
+//! has lost already); else `inconclusive` when anything is short (fewer families than the
+//! minimum, an unscored edit, a tail the resamples cannot resolve, no finished edit, no
+//! decode, fewer pairs picked than the minimum, a group the decode leaves inconclusive);
+//! else `rejected` when task success misses either bar; else `admitted`. Too little data
+//! is never a pass.
+//!
+//! **What clears the bars that R5 and R6 freeze** (task success of at least 0.75 and a
+//! corrected lower bound above 0.4; errors below 0.10): on R5's 8 cases in their own
+//! families, 7 of 8 at up to 8 hypotheses, never 6 of 8, which reaches the share but
+//! whose bound is about 0.32; on R6's 10 cases, 9 of 10 at 6 hypotheses, never 8 of 10,
+//! and no operational error, since 1 of 10 is not below 0.10.
+//!
+//! **The corpus.** A gate names the corpus its cases are drawn from. A rung 4 gate on one
+//! of [`EXPOSED_CORPORA`] is refused, and its cases file is read only from outside a git
+//! work tree (the binary's), since a fresh corpus's phrases are the owner's.
 
 use std::collections::BTreeSet;
 
@@ -63,6 +77,15 @@ pub const RECEIPT: &str = "edit-receipt/1";
 pub const CASES_LIMIT: usize = 500;
 pub const WHAT_LIMIT: usize = 200;
 
+/// The corpora a rung 3 round runs on (plan mE, task R5), and earlier rounds: seen, so a
+/// rung 4 gate on one admits nothing (`SPEC.md` section 8: rung 4 needs fresh data).
+pub const EXPOSED_CORPORA: [&str; 4] = [
+    "segmentation/segment-01",
+    "labs/m3-edits",
+    "labs/m3-seam",
+    "labs/e-loop",
+];
+
 /// The outcomes a group of the decode may be required to reach.
 pub const QUALITY_OUTCOMES: [&str; 2] = ["preferred", "not_worse"];
 
@@ -76,6 +99,9 @@ pub struct EditGate {
     pub recipe: String,
     /// 3 or 4.
     pub rung: u8,
+    /// The corpus its cases are drawn from, by name: a rung 4 gate's is never one of
+    /// [`EXPOSED_CORPORA`].
+    pub corpus: String,
     /// The cases file, beside the gate file, and the SHA-256 of its bytes.
     pub cases: String,
     pub cases_sha256: String,
@@ -196,6 +222,12 @@ impl EditGate {
         }
         if !matches!(gate.rung, 3 | 4) {
             return refuse("its rung is 3 or 4");
+        }
+        if !crate::lab::is_plain_relative(&gate.corpus) {
+            return refuse("it names its corpus, by a plain name");
+        }
+        if gate.rung == 4 && EXPOSED_CORPORA.contains(&gate.corpus.as_str()) {
+            return refuse("a rung 4 gate's corpus is fresh, never one of the exposed corpora");
         }
         if gate.rung == 4 && gate.success.from != ReadFrom::Marks {
             return refuse("a rung 4 gate reads task success from a person's marks, not a check");
@@ -345,7 +377,6 @@ pub struct Finished {
     pub success: Option<bool>,
     /// Pixels outside the kept mask's support that are not the picture's own.
     pub changed_outside: u64,
-    pub settled_micros: u64,
     /// The run's time less its backend requests' time, and that time.
     pub local_ms: u64,
     pub backend_ms: u64,
@@ -358,6 +389,9 @@ pub struct Finished {
 pub struct Observation {
     pub family: String,
     pub observed: Observed,
+    /// What its run and every run under it settled at, with what no answer settled; none
+    /// when the store holds no run of it. A failed run's spend counts.
+    pub spent_micros: Option<u64>,
 }
 
 /// One group of the lab decode of the round's pairs.
@@ -412,8 +446,9 @@ pub struct QualityRead {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CostRead {
+    /// The mean over the cases whose run the store holds, finished or not.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mean_settled_micros: Option<f64>,
+    pub mean_spent_micros: Option<f64>,
     pub limit_micros: f64,
 }
 
@@ -509,16 +544,47 @@ fn median(mut values: Vec<f64>) -> Option<f64> {
 }
 
 /// Successes and cases of each family, in the order of the families' names.
-fn by_family(observations: &[Observation]) -> Vec<(usize, usize)> {
+fn by_family(observations: &[Observation], unscored_succeed: bool) -> Vec<(usize, usize)> {
     let mut families: std::collections::BTreeMap<&str, (usize, usize)> = Default::default();
     for o in observations {
         let held = families.entry(o.family.as_str()).or_default();
         held.1 += 1;
         if let Observed::Finished(f) = &o.observed {
-            held.0 += usize::from(f.success == Some(true));
+            let success = f.success.unwrap_or(unscored_succeed);
+            held.0 += usize::from(success);
         }
     }
     families.into_values().collect()
+}
+
+/// Task success's two lower bounds at the corrected level: the bootstrap's percentile over
+/// families, at the gate's resamples and seed, and Wilson's over the cases.
+fn bounds(
+    gate: &EditGate,
+    families: &[(usize, usize)],
+    alpha: f64,
+) -> Result<(Option<f64>, Option<f64>), String> {
+    let (successes, cases) = (families.iter()).fold((0, 0), |(s, n), f| (s + f.0, n + f.1));
+    let z = normal_quantile(1.0 - alpha);
+    let wilson_lower = wilson(successes as u64, cases as u64, z).map(|(low, _)| low);
+    if families.is_empty() {
+        return Ok((None, wilson_lower));
+    }
+    // The draws `resample_indices` makes, one family at a time, in one list.
+    let k = families.len();
+    let count = u32::try_from(k).map_err(|_| "too many families to resample")?;
+    let resamples = gate.resamples();
+    let drawn = draws(gate.seed, count, resamples * k);
+    let mut estimates = Vec::with_capacity(resamples);
+    for picks in drawn.chunks(k) {
+        let (s, n) = (picks.iter()).fold((0, 0), |(s, n), &i| {
+            let (successes, cases) = families[i as usize];
+            (s + successes, n + cases)
+        });
+        estimates.push(s as f64 / n.max(1) as f64);
+    }
+    estimates.sort_by(f64::total_cmp);
+    Ok((Some(quantile_type7(&estimates, alpha)), wilson_lower))
 }
 
 /// The gate decided on its cases and the decode of its pairs (none when not decoded yet).
@@ -538,7 +604,7 @@ pub fn decide(
         })
         .collect();
     let cases = observations.len();
-    let families = by_family(observations);
+    let families = by_family(observations, false);
     if families.len() < gate.min_families {
         short.push("too_few_families");
     }
@@ -553,39 +619,38 @@ pub fn decide(
     }
     let alpha = (1.0 - gate.level) / 2.0 / gate.hypotheses as f64;
     let resamples = gate.resamples();
-    let mut bootstrap_lower = None;
-    if !families.is_empty() {
-        // The draws `resample_indices` makes, one family at a time, in one list.
-        let k = families.len();
-        let count = u32::try_from(k).map_err(|_| "too many families to resample")?;
-        let drawn = draws(gate.seed, count, resamples * k);
-        let mut estimates = Vec::with_capacity(resamples);
-        for picks in drawn.chunks(k) {
-            let (s, n) = (picks.iter()).fold((0, 0), |(s, n), &i| {
-                let (successes, cases) = families[i as usize];
-                (s + successes, n + cases)
-            });
-            estimates.push(s as f64 / n.max(1) as f64);
-        }
-        estimates.sort_by(f64::total_cmp);
-        bootstrap_lower = Some(quantile_type7(&estimates, alpha));
-    }
+    let (bootstrap_lower, wilson_lower) = bounds(gate, &families, alpha)?;
     let insufficient_tail = alpha * (resamples as f64) < MIN_TAIL_RESAMPLES;
     if insufficient_tail {
         short.push("a_tail_the_resamples_cannot_resolve");
     }
-    let z = normal_quantile(1.0 - alpha);
-    let wilson_lower = wilson(successes as u64, cases as u64, z).map(|(low, _)| low);
     let lower = match (bootstrap_lower, wilson_lower) {
         (Some(b), Some(w)) => Some(b.min(w)),
         _ => None,
     };
     let rate = successes as f64 / cases.max(1) as f64;
-    if cases > 0 && rate < gate.success.bar {
-        low.push("task_success_below_its_bar");
+    let misses = |rate: f64, lower: Option<f64>| {
+        let mut out = Vec::new();
+        if cases > 0 && rate < gate.success.bar {
+            out.push("task_success_below_its_bar");
+        }
+        if lower.is_some_and(|l| l <= gate.success.lower_above) {
+            out.push("task_success_bound_not_above_its_bar");
+        }
+        out
+    };
+    low.extend(misses(rate, lower));
+    // Missed even with every unscored edit counted a success, on enough families: lost
+    // whatever is still to be scored or picked, so no one is asked to.
+    let mut lost = !low.is_empty() && unscored == 0;
+    if unscored > 0 && !low.is_empty() {
+        let hopeful = by_family(observations, true);
+        let (b, w) = bounds(gate, &hopeful, alpha)?;
+        let best = (successes + unscored) as f64 / cases.max(1) as f64;
+        lost = !misses(best, b.zip(w).map(|(b, w)| b.min(w))).is_empty();
     }
-    if lower.is_some_and(|l| l <= gate.success.lower_above) {
-        low.push("task_success_bound_not_above_its_bar");
+    if lost && families.len() >= gate.min_families && !insufficient_tail {
+        failed.append(&mut low);
     }
     // Preservation.
     let preserved = finished.iter().filter(|f| f.changed_outside == 0).count();
@@ -601,14 +666,11 @@ pub fn decide(
     // Cost and latency, over the finished edits.
     let limit_micros = gate.cost.guide_micros as f64 * gate.cost.times;
     let n = finished.len();
-    let mean_settled = (n > 0).then(|| {
-        finished
-            .iter()
-            .map(|f| f.settled_micros as f64)
-            .sum::<f64>()
-            / n as f64
-    });
-    if mean_settled.is_some_and(|m| m > limit_micros) {
+    let spent: Vec<f64> = (observations.iter())
+        .filter_map(|o| o.spent_micros.map(|m| m as f64))
+        .collect();
+    let mean_spent = (!spent.is_empty()).then(|| spent.iter().sum::<f64>() / spent.len() as f64);
+    if mean_spent.is_some_and(|m| m > limit_micros) {
         failed.push("cost_over_its_limit");
     }
     let nearest = |pixels: u64| {
@@ -695,7 +757,7 @@ pub fn decide(
             groups,
         },
         cost: CostRead {
-            mean_settled_micros: mean_settled,
+            mean_spent_micros: mean_spent,
             limit_micros,
         },
         latency: LatencyRead {

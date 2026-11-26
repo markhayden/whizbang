@@ -10,7 +10,7 @@ const PIN: &str = "sha256:000000000000000000000000000000000000000000000000000000
 fn gate_text(rung: u8, from: &str, min_families: usize) -> String {
     format!(
         "gate = \"edit-gate/1\"\nname = \"e-edit-rung3-remove\"\nrecipe = \"remove\"\n\
-         rung = {rung}\ncases = \"cases.toml\"\ncases_sha256 = \"{PIN}\"\nhypotheses = 6\n\
+         rung = {rung}\ncorpus = \"owners/fresh-edits\"\ncases = \"cases.toml\"\ncases_sha256 = \"{PIN}\"\nhypotheses = 6\n\
          level = 0.95\nseed = 20261125\nmin_families = {min_families}\n\n\
          [success]\nfrom = \"{from}\"\nbar = 0.75\nlower_above = 0.4\n\n\
          [preservation]\nexact = true\n\n\
@@ -30,7 +30,6 @@ fn good() -> Finished {
     Finished {
         success: Some(true),
         changed_outside: 0,
-        settled_micros: 40_000,
         local_ms: 900,
         backend_ms: 30_000,
         pixels: 1_000_000,
@@ -43,6 +42,7 @@ fn cases(n: usize) -> Vec<Observation> {
         .map(|i| Observation {
             family: format!("f{i:02}"),
             observed: Observed::Finished(good()),
+            spent_micros: Some(40_000),
         })
         .collect()
 }
@@ -93,7 +93,7 @@ fn a_recipe_passes_only_with_every_measure() {
         }),
         ("cost_over_its_limit", |o| {
             for one in o.iter_mut() {
-                finished(one).settled_micros = 80_001;
+                one.spent_micros = Some(80_001);
             }
         }),
         ("latency_over_its_limit", |o| {
@@ -183,6 +183,7 @@ fn too_few_runs_is_inconclusive() {
         .map(|i| Observation {
             family: format!("f{i}"),
             observed: Observed::Error,
+            spent_micros: None,
         })
         .collect();
     assert_ne!(
@@ -265,5 +266,99 @@ fn a_cases_file_names_each_run_once() {
         text(["e-r5-c01", "e-r5-c02"], "two\\nlines"),
     ] {
         assert!(Cases::parse(&bad).is_err(), "{bad}");
+    }
+}
+
+/// `n` cases in families of their own, the first `fails` of them failures.
+fn of(n: usize, fails: usize) -> Vec<Observation> {
+    let mut out = cases(n);
+    for one in out.iter_mut().take(fails) {
+        finished(one).success = Some(false);
+    }
+    out
+}
+
+#[test]
+fn what_clears_r5s_and_r6s_bars() {
+    // R5: 8 cases at up to 8 hypotheses: 7 of 8 is admitted, 6 of 8 is not.
+    for hypotheses in [6, 8] {
+        let gate = EditGate {
+            hypotheses,
+            ..gate()
+        };
+        let seven = decide(&gate, &of(8, 1), decoded("preferred", 8)).unwrap();
+        assert_eq!(
+            seven.outcome, "admitted",
+            "{hypotheses}: {:?}",
+            seven.success
+        );
+        let six = decide(&gate, &of(8, 2), decoded("preferred", 8)).unwrap();
+        assert_eq!(six.outcome, "rejected", "{hypotheses}");
+    }
+    // R6: 10 cases at 6 hypotheses: 9 of 10 is admitted, 8 of 10 is not, and 9 of 10 with
+    // the tenth an operational error is not, since 1 of 10 is not below 0.10.
+    let gate = EditGate {
+        min_families: 8,
+        ..gate()
+    };
+    assert_eq!(
+        decide(&gate, &of(10, 1), decoded("preferred", 10))
+            .unwrap()
+            .outcome,
+        "admitted"
+    );
+    assert_eq!(
+        decide(&gate, &of(10, 2), decoded("preferred", 10))
+            .unwrap()
+            .outcome,
+        "rejected"
+    );
+    let mut errored = cases(10);
+    errored[0].observed = Observed::Error;
+    let decided = decide(&gate, &errored, decoded("preferred", 10)).unwrap();
+    assert_eq!(decided.outcome, "rejected");
+    assert!(
+        decided
+            .why
+            .contains(&"operational_errors_over_their_bar".to_owned())
+    );
+}
+
+#[test]
+fn a_recipe_that_has_lost_is_rejected_before_it_is_picked() {
+    let gate = gate();
+    // Four failures of eight with one unscored: even that one a success, 5 of 8 misses
+    // the bar, so no pairs are needed to say so.
+    let mut lost = of(8, 4);
+    finished(&mut lost[7]).success = None;
+    let decided = decide(&gate, &lost, None).unwrap();
+    assert_eq!(decided.outcome, "rejected", "{:?}", decided.why);
+    // One failure and one unscored: it could still clear its bars, so inconclusive.
+    let mut open = of(8, 1);
+    finished(&mut open[7]).success = None;
+    assert_eq!(decide(&gate, &open, None).unwrap().outcome, "inconclusive");
+    // On too few families a miss stays inconclusive.
+    assert_eq!(
+        decide(&gate, &of(3, 3), None).unwrap().outcome,
+        "inconclusive"
+    );
+    // A failed run's spend counts toward the mean cost.
+    let mut costly = cases(8);
+    costly[0].observed = Observed::Error;
+    costly[0].spent_micros = Some(700_000);
+    let decided = decide(&gate, &costly, decoded("preferred", 8)).unwrap();
+    assert!(decided.why.contains(&"cost_over_its_limit".to_owned()));
+}
+
+#[test]
+fn a_rung_4_gate_names_a_fresh_corpus() {
+    let text = gate_text(4, "marks", 4);
+    for exposed in whizbang_eval::edit_gate::EXPOSED_CORPORA {
+        let on = text.replace("owners/fresh-edits", exposed);
+        let refused = EditGate::parse(&on).unwrap_err();
+        assert!(refused.contains("fresh"), "{refused}");
+        // A rung 3 gate may run on one.
+        let three = gate_text(3, "check", 4).replace("owners/fresh-edits", exposed);
+        assert!(EditGate::parse(&three).is_ok());
     }
 }

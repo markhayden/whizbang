@@ -6,7 +6,8 @@
 //! `blind`, never admits; `SPEC.md` section 8, "Evaluation data"). A receipt of a rung 3
 //! gate, of a gate on a dev or exposed set, of a gate that names nothing it admits, or of
 //! version 1, admits nothing. An edit gate's receipt (`edit-receipt/1`, plan mE, task M2)
-//! admits its recipe when it is admitted on rung 4 with task success read from marks.
+//! admits its recipe when it is admitted on rung 4 with task success read from marks, on a
+//! corpus that is not exposed.
 
 use std::path::{Path, PathBuf};
 
@@ -81,7 +82,9 @@ fn admits_an_edit(digest: &str, receipt: &serde_json::Value) -> Option<Admission
     let admits = receipt.get("admits")?;
     let marked = receipt.get("success")?.get("from")?.as_str() == Some("marks");
     let fourth = rung(receipt.get("rung")) == Some(4) && rung(admits.get("rung")) == Some(4);
-    if text("outcome") != Some("admitted") || !marked || !fourth {
+    let exposed =
+        text("corpus").is_none_or(|c| whizbang_eval::edit_gate::EXPOSED_CORPORA.contains(&c));
+    if text("outcome") != Some("admitted") || !marked || !fourth || exposed {
         return None;
     }
     Some(Admission {

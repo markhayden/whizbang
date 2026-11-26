@@ -159,7 +159,7 @@ fn gate(recorded: &Recorded, recipe: &str, cases: &Path, rung: u8, from: &str) -
     };
     let text = format!(
         "gate = \"edit-gate/1\"\nname = \"m2-{rung}\"\nrecipe = \"{recipe}\"\nrung = {rung}\n\
-         cases = \"{name}\"\ncases_sha256 = \"{}\"\nhypotheses = 1\nlevel = 0.95\nseed = 3\n\
+         corpus = \"owners/fresh\"\ncases = \"{name}\"\ncases_sha256 = \"{}\"\nhypotheses = 1\nlevel = 0.95\nseed = 3\n\
          min_families = 1\n\n[success]\nfrom = \"{from}\"\n{judge}bar = 0.75\n\
          lower_above = 0.1\n\n[preservation]\nexact = true\n\n[quality]\n\
          protocol = \"protocol.toml\"\nprotocol_sha256 = \"{}\"\n\
@@ -199,7 +199,7 @@ fn a_loops_runs_are_gated_from_their_checks_and_the_receipt_holds_no_case() {
     assert_eq!(d.outcome, "admitted", "{:?}", d.why);
     assert_eq!((d.success.successes, d.success.of), (1, 1));
     assert_eq!((d.preservation.finished, d.preservation.preserved), (1, 1));
-    assert!(d.cost.mean_settled_micros.unwrap() > 0.0);
+    assert!(d.cost.mean_spent_micros.unwrap() > 0.0);
     assert_eq!(d.quality.groups[0].outcome, "preferred");
     let written = std::fs::read_to_string(&receipt).unwrap();
     for word in [
@@ -312,6 +312,11 @@ fn a_rung_4_gate_reads_a_persons_marks_and_admits_its_recipe() {
         (admitted[0].kind.as_str(), admitted[0].name.as_str()),
         ("recipe", REMOVE)
     );
+    // A receipt on an exposed corpus admits nothing, whatever it says.
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt).unwrap()).unwrap();
+    json["corpus"] = "labs/m3-edits".into();
+    assert!(whizbang::admitted::admits("d", &json).is_none());
     // Something else damaged: no success, and the recipe is not admitted.
     let damaged = marks(false, true);
     let gating = Gating {
@@ -338,4 +343,111 @@ fn a_rung_4_gate_reads_a_persons_marks_and_admits_its_recipe() {
     };
     let refused = edits_gate::score(&gating).unwrap_err();
     assert!(refused.contains("inside a git work tree"), "{refused}");
+    // A rung 4 gate's cases are read only from outside a work tree.
+    for name in ["remove-cases.toml", "protocol.toml"] {
+        std::fs::copy(recorded.dir.path().join(name), tree.join(name)).unwrap();
+    }
+    let inside_gate = tree.join("gate.toml");
+    std::fs::copy(&file, &inside_gate).unwrap();
+    let gating = Gating {
+        gate: &inside_gate,
+        marks: Some((gone.as_path(), sheet.as_path())),
+        ..gating
+    };
+    let refused = edits_gate::score(&gating).unwrap_err();
+    assert!(refused.contains("fresh corpus"), "{refused}");
+}
+
+#[test]
+fn a_seams_mask_is_mapped_onto_its_panorama_through_its_cut() {
+    // `seam` hands back its ramp's mask on the cut's canvas, 2s columns wide: through the
+    // plan of its run's cut, it falls on the panorama's two edge strips, and nothing the
+    // seam left alone is counted as changed.
+    let world = Looped::new("m2-gate-seam", &Setup::answering(Vec::new()).on_disk());
+    // A panorama of 128 by 64 whose wrap edge is a step, as `rascal seam`'s test has.
+    let (w, h) = (128_u32, 64_u32);
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|at| [(100 + (at % w) / 4) as u8, 120, 90, 255])
+        .collect();
+    let pixels = whizbang_core::identity::CanonicalPixels::from_rgba(w, h, rgba).unwrap();
+    let panorama = whizbang_core::artifact::Image::new(
+        whizbang_core::identity::encode::png(&pixels).unwrap(),
+        whizbang_core::identity::Projection::Equirectangular,
+        whizbang_core::identity::Topology::Wrap,
+        whizbang_core::artifact::ImageRole::Picture,
+        whizbang_core::artifact::Origin::new(whizbang_core::artifact::Step::new("fixture", "1"))
+            .unwrap(),
+        &whizbang_core::identity::DecodeLimits::default(),
+    )
+    .unwrap();
+    let image = {
+        let store = whizbang_core::store::Store::open(
+            &world.root,
+            std::sync::Arc::new(whizbang_core::store::fs::RealFs),
+        )
+        .unwrap();
+        let mut publication = store.begin().unwrap();
+        let artifact = whizbang_core::artifact::Artifact::Image(panorama);
+        let id = whizbang_core::artifact::put(&mut publication, &artifact).unwrap();
+        publication.publish().unwrap();
+        id
+    };
+    let engine = world.engine();
+    let id = engine.request_id("m2-seam-c01").unwrap();
+    let call = Call::new("seam").input("image", image);
+    match engine.request(&Request::new(call).with_id(id)).unwrap() {
+        Answer::Ran(finished) => {
+            let record = world.record(finished.run().as_str());
+            assert_eq!(
+                finished.outcome().name(),
+                "completed",
+                "{:?}",
+                record.outcome()
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    drop(engine);
+    world.spill();
+    let dir = Scratch::new("m2-gate-seam-files");
+    let cases = dir.path().join("seam-cases.toml");
+    std::fs::write(&cases, cases_text("seam", "m2-seam-c01")).unwrap();
+    let text = std::fs::read_to_string(&cases).unwrap();
+    let cases_read = whizbang_eval::edit_gate::Cases::parse(&text).unwrap();
+    let held = edits_gate::case_runs(&world.root, &cases_read).unwrap();
+    let gate = whizbang_eval::edit_gate::EditGate::parse(&format!(
+        "gate = \"edit-gate/1\"\nname = \"m2-seam\"\nrecipe = \"seam\"\nrung = 3\n\
+         corpus = \"owners/fresh\"\ncases = \"seam-cases.toml\"\ncases_sha256 = \"{}\"\n\
+         hypotheses = 1\nlevel = 0.95\nseed = 3\nmin_families = 1\n\n[success]\n\
+         from = \"check\"\nbar = 0.75\nlower_above = 0.1\n\n[preservation]\nexact = true\n\n\
+         [quality]\nprotocol = \"protocol.toml\"\nprotocol_sha256 = \"{}\"\n\
+         outcomes = [\"preferred\"]\nmin_picked = 1\n\n[errors]\nbelow = 0.5\n\n[cost]\n\
+         guide_micros = 1000000\ntimes = 2.0\n\n[latency]\ntimes = 2.0\n\n\
+         [[latency.record]]\npixels = 4096\nms = 600000\n",
+        digest_of(text.as_bytes()),
+        digest_of(b"none")
+    ))
+    .unwrap();
+    let observed = edits_gate::observe(&world.root, &held, &gate, None).unwrap();
+    let whizbang_eval::edit_gate::Observed::Finished(finished) = &observed[0].observed else {
+        panic!("the seam's run did not finish");
+    };
+    assert_eq!(finished.changed_outside, 0);
+    // Its mask is not of the panorama's size: without the plan it could not be read.
+    let mask = held.runs[0].mask.unwrap();
+    let reader = whizbang_core::store::Reader::open(
+        &world.root,
+        std::sync::Arc::new(whizbang_core::store::fs::RealFs),
+    )
+    .unwrap();
+    let read = whizbang_core::artifact::get_anywhere(
+        &reader,
+        whizbang_core::artifact::ArtifactType::Mask,
+        mask,
+        &whizbang_core::identity::DecodeLimits::default(),
+    )
+    .unwrap()
+    .into_mask()
+    .unwrap();
+    assert!(read.space().width() < 128, "{}", read.space().width());
 }
