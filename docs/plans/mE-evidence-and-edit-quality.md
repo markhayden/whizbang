@@ -275,7 +275,7 @@ panorama side, P1).
 
 ## How the work is split
 
-Twenty-four tasks. Sizes are changed lines of source, tests and hand-written documents, by
+Twenty-five tasks (O1 added on the owner's word, 2026-11-25). Sizes are changed lines of source, tests and hand-written documents, by
 milestone 3's rate (about 2,500 for a large one). The orchestrator's rounds are named as
 theirs; builders make no live call.
 
@@ -303,6 +303,7 @@ theirs; builders make no live call.
 | K1 | The segmenters compared on segment-01's truth masks; `segment`'s rung 2; the rule for milestone 8 (the orchestrator's) | T2 | Small: about 400, a record |
 | R6 | Rung 4 of the edit recipes on fresh cases (the orchestrator's, with the owner); `segment` and `fill` credited | R5, K1 | Small: about 400, records |
 | W1 | What milestone 8 builds: K1's outcome; the protocols for local fill and judge | K1, R4, R6 | Medium: about 600, an ADR and protocol files |
+| O1 | The walkthroughs with the owner: every tool, one at a time, through the playground and the command line, before any paid round measures it (the orchestrator's, with the owner) | each session after the tasks its tools wait on (O1's table) | Small: a record of 55 rows, and the fixes its findings need |
 | N1 | The note | all | Small: about 500, no code |
 
 **Waves.** Each from `main` once what it builds on has landed.
@@ -322,6 +323,10 @@ theirs; builders make no live call.
 5. **V1** (it may start any time after P0, as the owner's time allows); **R5** when V1, L2,
    C1 and P1 are in; then **R6**.
 6. **W1**, then **N1**.
+
+**O1's sessions** fall between these waves, as its table says: O1.1 at once; O1.2 before K1
+and V1; O1.3 before R2; O1.4 before F2; O1.5 before R5. A round never starts before the
+session of each tool it measures is in O1's record.
 
 **Shared files, each with one owner in a wave.** `docs/carry-over.md`: each task changes only
 the rows the table "Carry-over rows owned by milestone E" gives it; the second to land in a
@@ -1240,6 +1245,59 @@ row on the panorama side of `view`):
 - [ ] Done when: the receipts are recorded. If the owner says the photos or panoramas are not
   wanted, the recipes that needed them end E experimental, said in the record and the row.
 
+## O1. The walkthroughs with the owner (the orchestrator's, with the owner)
+
+The owner and the orchestrator take **every tool** through the playground and the command line
+together, **one tool at a time**, before any paid round measures it. Nothing is skipped
+because a test covers it. This task was added on the owner's word (2026-11-25).
+
+**The definitive list.** The build's description (`whizbang describe`, `docs/reference/
+description.json` at 5a927af2) has 48 actions. E adds four tool files and has three options of
+`check`. That is 55 walkthroughs:
+
+| Session | Tools, in this order | When | Spend |
+|---|---|---|---|
+| O1.1 | The 30 primitives E does not measure, in `describe`'s order: `align`, `details`, `close`, `feather`, `grow`, `plug`, `render`, `resize`, `select`, `subtract`, `view`, `paste`, `cut`, `put`, `window`, `unwindow`, `apply`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`, `carry`, `tighten`, `inspect`, `fan`, `profile`, `ramp`, `measure`; then the two recipes E does not measure, `mask_rect` and `protect` | Now: none of them changes in E (P1 changes `view`'s panorama side, whose step is walked again after P1) | Nothing |
+| O1.2 | `segment` (SAM 3 on the Mac), `fill` (Bria through fal) | Before K1 and V1 | `fill`: a few cents a run, from E's store |
+| O1.3 | `change_map`, `edge_similarity`, `per_subject`, `outline`, `regions`, `classes`; then `check`'s options `tiles`, the second look, details first | After T2 and P1, before R2 | Nothing for the tools; the options' `check` runs cost cents each |
+| O1.4 | `check`, then its five use cases: `source-fidelity`, `reference-consistency`, `reality-checks`, `brief-compliance`, `product-fidelity`; each under submission v1, v2 and v3 | After F1, before F2 | Cents a run |
+| O1.5 | `remove_prompt`, `remove`, `repair_area`, `repair`, `seam`, `remove_checked`; the clicked removal if C1 builds it | After L2, P1 and C1, before R5 | Cents a run; `remove_checked` up to its cap |
+
+A tool C1, T2 or any later task adds, or drops, changes this table in the same pull request.
+
+**Each walkthrough, the same steps for every tool.** On the owner's Mac, from `main`'s release
+build, the playground started by `whizbang play`, pictures from the tool's record or the
+committed sets (never owner storage, but in O1.5 where the owner brings a photo of their own):
+
+*Command line*
+1. `whizbang describe`: the tool is listed with its kind and the mark its record states.
+2. `whizbang <tool> --help` (or its kit's form): every argument the record names, and no other.
+3. The record's first example, by the command the record gives: the output read against the
+   record's, picture by picture.
+4. `whizbang runs show <run>`: the record of the run; `whizbang runs replay <run>`: reproduced.
+5. One refusal: an input the record says is refused (a missing field, a wrong size, a value out
+   of range). The message names the fault and nothing runs.
+6. For a run that spends: `whizbang spend status` shows the charge.
+
+*Playground*
+1. The search palette finds the tool; its record opens and reads as the file does.
+2. Its task opens; the same example's inputs go in from the library; Run.
+3. The result page: each output, the run's record, the spend chip.
+4. History lists it; Run again makes the same call; Compare against the command line's run of
+   step 3 shows them the same, or names what differs.
+5. The same refusal as the command line's step 5, shown in the form before Run where the form
+   can know it.
+6. For a recipe: Bundle this run, then Replay from the bundle.
+
+**What is written.** `docs/results/mE-walkthroughs.md`: one row per tool with the date, each
+step's outcome (works, or a finding with its number) and the pull request that fixed each
+finding. A finding that changes what a tool does is fixed before the round that measures the
+tool, and the steps it touched are walked again. A wording finding goes to the carry-over list.
+The record holds no owner photo, path or label.
+
+- [ ] Done when: all 55 rows are in the record, every behaviour finding is fixed or the tool
+  ends E dropped with the row saying why, and no paid round ran on a tool before its row.
+
 ## W1. What milestone 8 builds (medium; the orchestrator's measure)
 
 1. **A further segmenter**, from K1's table and its rule, frozen in K1.
@@ -1487,6 +1545,8 @@ P1 ──────────────────┘
 - K1 after T2 (its model is compared); R6 after K1 (`segment`'s rung 2 before its upper rungs
   are credited).
 - W1 after K1, R4 (the fresh set is spent) and R6.
+- Every round after the O1 session of each tool it measures: K1 and V1 after O1.2, R2 and R3
+  after O1.3, F2 and R4 after O1.4, R5 and R6 after O1.5.
 
 ## Risks
 
@@ -1540,7 +1600,8 @@ P1 ──────────────────┘
 
 ## What the owner is told, not asked
 
-- Twenty-four tasks, nine of them the orchestrator's rounds; squint's ladder first, then
+- Twenty-five tasks: O1, the walkthroughs of every tool with the owner (added 2026-11-25),
+  and nine of them the orchestrator's rounds; squint's ladder first, then
   rascal's.
 - One fresh set, for source fidelity, kept whole in owner storage until its one round, seen
   by no agent; published after it, as `blind-v3` was.
