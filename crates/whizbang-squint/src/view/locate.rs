@@ -4,9 +4,11 @@
 //! Ported from squint, `crates/squint-core/src/frames/mod.rs` (`to_root` and
 //! `map_through_bbox`), for boxes through crops; and `frames/aligned.rs`
 //! (`map_through_homography`, `map_into_homography`), for a box on an aligned frame and back.
-//! Other shapes and other mappings are on `docs/carry-over.md`.
+//! A box on a perspective view, or a crop of one, lands on its panorama through `carry`
+//! (`box_onto_panorama`); other shapes are carried by `whizbang_core::artifact::carry`.
 
-use whizbang_core::identity::{Binding, Direction, IdentityError, Mapping, Point};
+use whizbang_core::artifact::{Location, Origin, Shape, Step, Toward, carry};
+use whizbang_core::identity::{Binding, Destination, Direction, IdentityError, Mapping, Point};
 
 use super::{ViewError, invalid};
 
@@ -221,4 +223,93 @@ fn invert(m: &[f64; 9]) -> Option<[f64; 9]> {
         (m[1] * m[6] - m[0] * m[7]) / det,
         (m[0] * m[4] - m[1] * m[3]) / det,
     ])
+}
+
+/// A box on a perspective view, or on a crop of one, on the panorama the view looks into:
+/// the parts of its footprint there (plan mE, task P1, item 4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Footprint {
+    /// The polygon of the box's boundary on the panorama; two, cut at the seam, when it
+    /// crosses it; or a band the panorama's full width when the box holds a pole.
+    pub parts: Vec<Shape>,
+    /// True when the box reached past the crop it was stated on and was clipped to it.
+    pub partial: bool,
+}
+
+/// Maps a box stated in the pixels of a perspective view, or of a chain of crops cut from
+/// one, onto the panorama the view looks into. `chain` is as [`box_to_root`] takes it,
+/// and its last binding is the view's, a perspective mapping stated from the view: the
+/// crops before it bring the box onto the view as [`box_to_root`] does, and the view's
+/// binding carries it onto the panorama ([`whizbang_core::artifact::carry`]).
+pub fn box_onto_panorama(bbox: [f64; 4], chain: &[Binding]) -> Result<Footprint, ViewError> {
+    let refuse = |why: String| Err(ViewError::from(IdentityError::Binding(why)));
+    let Some((view, crops)) = chain.split_last() else {
+        return refuse("a box maps onto a panorama through at least one binding".to_owned());
+    };
+    let perspective = matches!(view.mapping(), Mapping::Perspective { .. })
+        && view.direction() == Direction::SourceToDestination;
+    if !perspective {
+        return refuse(format!(
+            "a box maps onto a panorama through a perspective view stated from the view, and \
+             {:?} is not one",
+            view.mapping()
+        ));
+    }
+    let (on_view, partial) = if crops.is_empty() {
+        let space = view.source_space();
+        let (width, height) = (f64::from(space.width()), f64::from(space.height()));
+        if bbox.iter().any(|v| !v.is_finite()) || bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
+            return invalid(format!(
+                "box {bbox:?} must have left < right and top < bottom"
+            ));
+        }
+        let clipped = [
+            bbox[0].max(0.0),
+            bbox[1].max(0.0),
+            bbox[2].min(width),
+            bbox[3].min(height),
+        ];
+        if clipped[0] >= clipped[2] || clipped[1] >= clipped[3] {
+            return invalid(format!(
+                "box {bbox:?} lies wholly outside the {}x{} view",
+                space.width(),
+                space.height()
+            ));
+        }
+        (clipped, clipped != bbox)
+    } else {
+        // The crops end on the view: the last one's destination is the view's picture,
+        // in the view's space.
+        let last = &crops[crops.len() - 1];
+        let ends_on_view = last.destination() == Destination::Image(view.source())
+            && last.destination_space() == view.source_space();
+        if !ends_on_view {
+            return refuse(
+                "the crops do not end on the perspective view the last binding places".to_owned(),
+            );
+        }
+        let located = box_to_root(bbox, crops)?;
+        (located.bbox, located.partial)
+    };
+    let shape = Shape::Box {
+        left: on_view[0],
+        top: on_view[1],
+        right: on_view[2],
+        bottom: on_view[3],
+    };
+    let origin = Origin::new(Step::new("locate", "1"))?;
+    let at = Location::new(
+        Binding::root(view.source(), view.source_space()),
+        shape,
+        origin,
+    )?;
+    let carried = carry(&at, view, Toward::Destination)?;
+    Ok(Footprint {
+        parts: carried
+            .parts
+            .iter()
+            .map(|part| part.shape().clone())
+            .collect(),
+        partial: partial || carried.partial,
+    })
 }

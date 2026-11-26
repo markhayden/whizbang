@@ -21,14 +21,17 @@ mod locate;
 mod perspective;
 mod scale;
 
-pub use locate::{Located, Traced, box_through_homography, box_to_root, points_into_homography};
+pub use locate::{
+    Footprint, Located, Traced, box_onto_panorama, box_through_homography, box_to_root,
+    points_into_homography,
+};
 pub use perspective::{MIN_VIEW, looked, side};
 use scale::Region as Cut;
 
 /// The action's name, as an artifact's origin records it.
 pub const NAME: &str = "view";
 /// The action's version. It changes when the same request would give other pixels.
-pub const VERSION: &str = "1";
+pub const VERSION: &str = "2";
 /// The longer side of a crop is at most this many pixels; a larger cut is scaled down.
 pub const MAX_SIDE: u32 = 1024;
 /// A cut smaller than this on either side is refused as too small to show anything.

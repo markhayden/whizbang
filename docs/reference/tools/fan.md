@@ -92,7 +92,7 @@ Rascal's four constant sets are the alternatives, each held by the rung 2 test; 
 
 | Limit | Example |
 |---|---|
-| At a width far under `ref_width` the windows shrink to a column or two, and a texture reads in few pixels | The examples: the step windows are one column each |
+| At a width far under `ref_width` the windows shrink to a column or two, and a texture reads in few pixels. The scale is meant: the windows are rascal's geometry at `ref_width`, scaled with the picture, so a small canvas is read as a large one would be at its own resolution. No floor is set | The seam's canvas of a panorama 800 wide (strip 80) is 160 wide: `thin` is 1.48 pixels, and with the line at column 80 the step windows are column 77 and column 83, one a side, and the texture windows 63 to 79 and 82 to 98 (`on_a_small_panorama_the_windows_are_the_scale_meant_one_column_a_side`) |
 | The band is symmetric about the line: one side's detail closes both | `detail` |
 | Only a whole column: a seam that is not straight is not measured | The action's refusal of a path |
 
@@ -109,5 +109,6 @@ this one does.
 
 **Gates.** None faced.
 
-**History.** Plan m3, task O3: ported from rascal's `fan.rs` at the pinned commit.
+**History.** Plan m3, task O3: ported from rascal's `fan.rs` at the pinned commit. Plan
+mE, task P1: the scale of the windows on a small panorama stated as meant, with an example.
 Plan m3, task D2: this record.
