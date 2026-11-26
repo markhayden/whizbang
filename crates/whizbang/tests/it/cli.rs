@@ -2097,11 +2097,12 @@ fn try_runs_one_tool_on_a_pair_with_no_judge() {
 /// A set of source-fidelity under `dir` of three items in three families, each its source
 /// and candidate from `fixtures/compare/`, labelled as given; its pictures in a folder beside.
 pub(crate) fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
-    three_items_keeping(dir, None)
+    items_keeping(dir, None, &["restyled", "darkened", "added"])
 }
 
-/// The same, each item's job holding this requirement of kind `must_hold` when one is given.
-pub(crate) fn three_items_keeping(dir: &Path, keeps: Option<&str>) -> (PathBuf, PathBuf) {
+/// The same set of those of its items named in `only`, each item's job holding this
+/// requirement of kind `must_hold` when one is given.
+pub(crate) fn items_keeping(dir: &Path, keeps: Option<&str>, only: &[&str]) -> (PathBuf, PathBuf) {
     const SET: &str = "source-fidelity/compare-v1";
     let (root, from) = (dir.join("evalsets"), dir.join("pictures"));
     let set = root.join(SET);
@@ -2118,6 +2119,9 @@ pub(crate) fn three_items_keeping(dir: &Path, keeps: Option<&str>) -> (PathBuf, 
         ("added", "before", "after", "fail"),
     ];
     for (item, source, candidate, expected) in items {
+        if !only.contains(&item) {
+            continue;
+        }
         let mut job =
             "[job]\nuse_case = \"source-fidelity\"\nbrief = \"Keep the scene.\"\n".to_owned();
         if let Some(text) = keeps {
@@ -2299,60 +2303,96 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
 }
 
 #[test]
-fn outline_runs_under_try_and_eval_tool_against_the_fake_segmenter() {
-    // Plan mE, task T1: the tool file the pack ships, listed by a config, asks the fake
-    // segmenter for its subject on each side and compares the two shapes. The fake finds
-    // `pool` in one box on every picture, so the shapes agree wholly.
+fn outline_and_regions_run_under_try_and_eval_tool_against_the_fake_segmenter() {
+    // Plan mE, task T1: the tool files the pack ships, listed by one config. `outline`,
+    // tried on a pair, asks the fake segmenter for its subject on each side; the fake finds
+    // `pool` in one box on every picture, so the shapes agree wholly. `regions`, scored by
+    // `eval tool`, finds the blob an item's candidate adds: its regions pass through the
+    // binary's check of them into the run's diagnostic.
     use crate::tool_file::Tools;
-    let shipped = include_str!("../../../../pack/tools/outline.py").to_owned();
-    let tools = Tools::new("cli-outline", &[("outline.py", shipped)]);
+    let tools = Tools::new(
+        "cli-outline-regions",
+        &[
+            (
+                "outline.py",
+                include_str!("../../../../pack/tools/outline.py").to_owned(),
+            ),
+            (
+                "regions.py",
+                include_str!("../../../../pack/tools/regions.py").to_owned(),
+            ),
+        ],
+    );
     let root = tools.root.clone();
     let ids = ["before", "after"].map(|name| {
         let id = imported(&tools.dir, &root, name);
         whizbang_core::artifact::ArtifactId(id.parse().unwrap())
     });
-    let (sets_root, from) = three_items_keeping(
+    let (sets_root, from) = items_keeping(
         &tools.dir.path().join("set"),
         Some("The pool keeps its shape."),
+        &["darkened", "added"],
     );
     let set = "source-fidelity/compare-v1";
     let found = whizbang_eval::sets::find(&sets_root, set).unwrap();
     whizbang::evaluation::from_folder(&found, &from, &root, &wiring::recovery()).unwrap();
     let over = tools.over(None);
     let files = over.tool_files().unwrap();
-    let declared = whizbang::trying::declared_in("outline", files.as_deref()).unwrap();
-    assert!(declared.takes_job);
+    let outline = whizbang::trying::declared_in("outline", files.as_deref()).unwrap();
+    let regions = whizbang::trying::declared_in("regions", files.as_deref()).unwrap();
+    assert!(outline.takes_job && regions.takes_job);
     let executor = tools.runner(&over);
-    // Tried on a pair, the subject named by a phrase.
+    // `outline` tried on a pair, the subject named by a phrase.
     let phrases = [(
         "phrases".to_owned(),
         whizbang_core::contract::Value::text("pool"),
     )];
     let tried =
-        whizbang::trying::read_pair_with(&executor, &root, &declared, ids[0], ids[1], &phrases)
+        whizbang::trying::read_pair_with(&executor, &root, &outline, ids[0], ids[1], &phrases)
             .unwrap();
-    let text = whizbang::trying::tried_text(&declared, &tried).unwrap();
+    let text = whizbang::trying::tried_text(&outline, &tried).unwrap();
     assert!(text.contains("\none_minus_iou 0 ratio\n"), "{text}");
-    let run = tried.tool.clone().unwrap();
-    let report = door::diagnostic(&root, &run, whizbang::tool_file::REPORT).unwrap();
-    let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+    let report = door::diagnostic(&root, &tried.tool.unwrap(), whizbang::tool_file::REPORT);
+    let report: serde_json::Value = serde_json::from_slice(&report.unwrap()).unwrap();
     assert_eq!(report["readings"][0]["subject"], "pool");
     assert_eq!(report["regions"], serde_json::json!([]));
-    // Scored on a set of three items, each subject read from its job.
+    // `regions` scored on two items, a pass and a fail (the score needs both), each
+    // subject read from its job.
     let (scored, said) = whizbang::trying::eval_tool(
         &executor,
         &root,
         &sets_root,
-        &declared,
+        &regions,
         &[set.to_owned()],
         50,
     )
     .unwrap();
-    assert_eq!((scored.items, scored.families), (3, 3), "{said}");
+    assert_eq!((scored.items, scored.families), (2, 2), "{said}");
     assert!(
-        said.contains("outline one_minus_iou (larger is changed): 3 items"),
+        said.contains("regions strongest (larger is changed): 2 items"),
         "{said}"
     );
+    let run = said
+        .lines()
+        .filter(|line| line.contains("/added "))
+        .find_map(|line| line.split(" run ").nth(1))
+        .expect("the added item's run");
+    let run = whizbang_core::contract::RunId::parse(run.trim()).unwrap();
+    let report = door::diagnostic(&root, &run, whizbang::tool_file::REPORT).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+    let located = report["regions"].as_array().unwrap();
+    assert!(!located.is_empty(), "{report}");
+    for region in located {
+        assert_eq!(region["frame"], "candidate");
+        let edges: Vec<f64> = (region["box"].as_array().unwrap().iter())
+            .map(|e| e.as_f64().unwrap())
+            .collect();
+        assert!(
+            edges[0] < edges[2] && edges[1] < edges[3] && edges[2] <= 128.0 && edges[3] <= 96.0
+        );
+        let score = region["score"].as_f64().unwrap();
+        assert!((0.0..=1.0).contains(&score) && score > 0.0, "{region}");
+    }
 }
 
 #[test]

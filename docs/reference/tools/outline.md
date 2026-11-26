@@ -34,9 +34,9 @@ subject found on neither picture is not applicable, by its name.
 
 **The method.** For each subject, the segmenter is asked once on the source and once on the
 candidate as `align` registered it onto the source (at most four instances each, their
-union the subject's mask). Both masks are brought by their nearest pixel to a working grid
-whose longer side is `WORK`, specks are removed from both by one bar, and the shapes are
-compared there:
+union the subject's mask). Both masks are brought to a working grid whose longer side is
+`WORK`, each working pixel taking the mask's pixel under its centre; specks are removed from
+both by one bar, and the shapes are compared there:
 
 - the overlap, IoU, and each shape's area as a share of the frame;
 - how far the boundary moved, both ways: for each point of either shape's edge (at most
@@ -63,6 +63,12 @@ per-subject comparison's; `ASPECT` 0.01, how far the two pictures' shapes may di
 still be one grid; `CELL` 32, the cells the boundary's points are sorted into to find the
 nearest. Squint's `PRESENT`, its class groups and its scan of every class read its
 segmenter's classes, and come only with task T2's method.
+
+**Where it may differ from squint by a little.** The boundary's points are taken evenly as
+`int(k * step)` where squint took numpy's `linspace`, so a subsampled side may differ from
+squint's by one point; and distances are worked out in Python's double precision where squint
+used single. Neither moves a reading past its third decimal on the examples. The shared
+mask code is `whizbang_pack.masks`, which `regions` uses too.
 
 **Outputs.** `one_minus_iou`, the item's value, in the run's diagnostic `tool_file.json`,
 with every subject's readings beside it (`one_minus_iou`, `area_source`, `area_candidate`,

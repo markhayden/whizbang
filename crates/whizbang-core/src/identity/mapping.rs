@@ -8,6 +8,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use serde::{Deserialize, Serialize};
 
 use super::digest::{FieldSource, Fields};
+use super::perspective::Perspective;
 use super::space::{Point, Space, Topology};
 use super::{IdentityError, Result};
 
@@ -42,6 +43,11 @@ pub enum Mapping {
     /// wide and as tall, that holds the panorama's last `strip` columns and then its first
     /// `strip`, so the seam is the canvas's middle column.
     Wrap { strip: u32 },
+    /// A square perspective view into a panorama (ADR 0051): `from` is the view, flat and
+    /// square; `to` is a complete panorama. The view looks along `yaw` degrees from the
+    /// panorama's middle column, growing to the right, and `pitch` degrees above the
+    /// horizon, with a field of view of `fov` degrees across and down.
+    Perspective { yaw: f64, pitch: f64, fov: f64 },
 }
 
 impl Mapping {
@@ -128,6 +134,24 @@ impl Mapping {
                     ));
                 }
             }
+            Mapping::Perspective { yaw, pitch, fov } => {
+                let view = Perspective {
+                    yaw: *yaw,
+                    pitch: *pitch,
+                    fov: *fov,
+                };
+                view.check()?;
+                if !to.is_sphere() {
+                    return refuse("a perspective view looks into a complete panorama".to_owned());
+                }
+                if !from.is_flat() || from.width() != from.height() {
+                    return refuse(format!(
+                        "a perspective view is flat and square, not {}x{}",
+                        from.width(),
+                        from.height()
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -151,6 +175,21 @@ impl Mapping {
             Mapping::Homography { matrix } => project(matrix, point)?,
             Mapping::Rotation { matrix } => rotate(matrix, from, to, point),
             Mapping::Wrap { strip } => Point::new(point.x - f64::from(*strip), point.y),
+            Mapping::Perspective { yaw, pitch, fov } => {
+                let view = Perspective {
+                    yaw: *yaw,
+                    pitch: *pitch,
+                    fov: *fov,
+                };
+                let (x, y) = view.basis().to_panorama(
+                    f64::from(from.width()),
+                    f64::from(to.width()),
+                    f64::from(to.height()),
+                    point.x,
+                    point.y,
+                );
+                Point::new(x, y)
+            }
         };
         to.land(mapped)
     }
@@ -196,6 +235,27 @@ impl Mapping {
                     )));
                 }
             }
+            Mapping::Perspective { yaw, pitch, fov } => {
+                let view = Perspective {
+                    yaw: *yaw,
+                    pitch: *pitch,
+                    fov: *fov,
+                };
+                let seen = view.basis().from_panorama(
+                    f64::from(from.width()),
+                    f64::from(to.width()),
+                    f64::from(to.height()),
+                    point.x,
+                    point.y,
+                );
+                let Some((x, y)) = seen else {
+                    return Err(IdentityError::Outside(format!(
+                        "({}, {}) is behind the view",
+                        point.x, point.y
+                    )));
+                };
+                Point::new(x, y)
+            }
         };
         from.land(mapped)
     }
@@ -222,7 +282,7 @@ impl Mapping {
                 1.0,
             ]),
             Mapping::Homography { matrix } => Some(*matrix),
-            Mapping::Rotation { .. } | Mapping::Wrap { .. } => None,
+            Mapping::Rotation { .. } | Mapping::Wrap { .. } | Mapping::Perspective { .. } => None,
         }
     }
 
@@ -256,6 +316,12 @@ impl Mapping {
             Mapping::Wrap { strip } => {
                 encoder.unsigned(4);
                 encoder.unsigned(u64::from(*strip));
+            }
+            Mapping::Perspective { yaw, pitch, fov } => {
+                encoder.unsigned(5);
+                for value in [yaw, pitch, fov] {
+                    encoder.float(*value);
+                }
             }
         }
     }
@@ -292,6 +358,11 @@ impl Mapping {
                     })?,
                 }
             }
+            5 => Mapping::Perspective {
+                yaw: source.float()?,
+                pitch: source.float()?,
+                fov: source.float()?,
+            },
             other => {
                 return Err(IdentityError::Binding(format!(
                     "{other} is not a kind of mapping"

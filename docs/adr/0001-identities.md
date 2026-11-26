@@ -1,6 +1,7 @@
 # 0001. Identities: two digests for an image, a space without content, a binding between images
 
-Status: accepted
+Status: accepted, changed by 0051: a sixth kind of mapping in `binding/1`, the perspective
+view into a panorama (kind 5)
 Date: 2026-11-12
 Spec: section 3, "Identities"; section 16, checkpoint 1A
 

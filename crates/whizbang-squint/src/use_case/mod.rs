@@ -7,10 +7,11 @@
 //! `prompts/v1.md`, byte for byte), the aggregation table (`aggregate.rs`) and the rules
 //! a submission is held to (`submission.rs`).
 //!
-//! What is cut, and why: a rule file's profile, `extends`, `[hints]` and `[screen]`, and
-//! a consumer's own rule files, which no base file and no command of whizbang uses
-//! (`docs/carry-over.md`); and the evidence items a tool's regions add to the checklist,
-//! which wait for tools that return regions.
+//! What is cut, and why: a rule file's profile, `extends` and `[screen]`, and a consumer's
+//! own rule files, which no base file, arm, set or user of whizbang has asked for (dropped by
+//! plan mE, task T1, item 4, with a line in `docs/carry-over.md`); a file that holds one is
+//! refused when read. `[hints]` is read ([`Hints`]), and the evidence items a tool's regions
+//! add to the checklist are `crate::checklist`'s.
 //!
 //! **The judge disposes; the code decides.** The verdict is worked out from the judge's
 //! dispositions by squint's table ([`row`]), for every kind, `must_not` included, and
@@ -111,7 +112,8 @@ pub struct Obligation {
     /// reference.
     #[serde(default)]
     pub evidence: Option<Vec<String>>,
-    /// Tool evidence kinds whose regions bear on this; kept, and read by no tool yet.
+    /// Tool evidence kinds whose regions bear on this: an evidence item from a tool's
+    /// regions of one of these kinds binds to it (`crate::checklist::ingest`).
     #[serde(default)]
     pub evidence_kinds: Option<Vec<String>>,
     /// Exemptions only: the mandatory obligation ids this may waive.
@@ -151,6 +153,69 @@ pub struct Rules {
     pub rules: Header,
     #[serde(default, rename = "rule")]
     pub obligations: Vec<Obligation>,
+    #[serde(default)]
+    pub hints: Hints,
+}
+
+/// A rule file's `[hints]` (squint's, plan mE, task T1, item 4): what the rules tell a tool
+/// of what matters, handed to a tool file as its arguments ([`Hints::arguments`]). Squint
+/// held a free table for each tool; whizbang reads the two its tools take, and refuses any
+/// other.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Hints {
+    /// `regions`: things whose change matters more, and less.
+    #[serde(default)]
+    pub regions: Option<RegionHints>,
+    /// `outline`: the protected things whose shape it compares.
+    #[serde(default)]
+    pub outline: Option<OutlineHints>,
+}
+
+/// `[hints.regions]`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegionHints {
+    #[serde(default)]
+    pub preserve: Vec<String>,
+    #[serde(default)]
+    pub ignore: Vec<String>,
+}
+
+/// `[hints.outline]`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineHints {
+    #[serde(default)]
+    pub classes: Vec<String>,
+}
+
+impl Hints {
+    /// The arguments the hints give the tool of this name, each a list of phrases
+    /// separated by semicolons: `regions` takes `preserve` and `ignore`, `outline` its
+    /// `classes` as `phrases`. None for another tool, or for a hint with no phrase. A
+    /// phrase is cleaned to one line, and a semicolon in it becomes a comma.
+    pub fn arguments(&self, tool: &str) -> Vec<(String, String)> {
+        let listed = |phrases: &[String]| {
+            (phrases.iter())
+                .map(|p| render::clean(p).replace(';', ","))
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        let given: Vec<(&str, String)> = match (tool, &self.regions, &self.outline) {
+            ("regions", Some(hints), _) => vec![
+                ("preserve", listed(&hints.preserve)),
+                ("ignore", listed(&hints.ignore)),
+            ],
+            ("outline", _, Some(hints)) => vec![("phrases", listed(&hints.classes))],
+            _ => Vec::new(),
+        };
+        (given.into_iter())
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect()
+    }
 }
 
 /// The rules of the use case of this name, read from its file; none for a name that is
@@ -171,6 +236,10 @@ pub struct Instance {
     pub text: String,
     /// Image ids consulted to judge this instance.
     pub evidence: Vec<String>,
+    /// The kinds of a tool's regions that bear on it: its obligation's `evidence_kinds`,
+    /// else its rule file's `default_evidence_kinds` (squint's resolution), which an
+    /// evidence item binds by (`crate::checklist::ingest`).
+    pub evidence_kinds: Vec<String>,
     /// `rules` or `job`.
     pub provenance: &'static str,
 }
@@ -407,6 +476,8 @@ pub fn resolve(job: &Job) -> Result<Resolved, String> {
                     ));
                 }
                 let evidence = expand(o.evidence.as_ref().unwrap_or(&default_evidence), job);
+                let evidence_kinds = (o.evidence_kinds.clone())
+                    .unwrap_or_else(|| rules.rules.default_evidence_kinds.clone());
                 for target in targets {
                     resolved.instances.push(Instance {
                         obligation_id: o.id.clone(),
@@ -416,6 +487,7 @@ pub fn resolve(job: &Job) -> Result<Resolved, String> {
                         hidden_ok: o.hidden_ok,
                         text: o.text.clone(),
                         evidence: evidence.clone(),
+                        evidence_kinds: evidence_kinds.clone(),
                         provenance,
                     });
                 }

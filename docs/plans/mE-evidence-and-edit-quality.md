@@ -701,7 +701,16 @@ pinned commit, as tool files in ADR 0032's shape under `pack/tools/`, beside `pe
    no arm, set or user has asked for them since the port, and a rule file that holds one is
    still refused when read.
 
-- [ ] Done when: both tools run under `whizbang try` and `eval tool` against the fake models;
+   As built (the second pull request): `regions` is a tool file on `change_map`'s photometric
+   map and SAM 3's masks of the subjects disagreeing, its labels the subjects'; the shared
+   mask code is `whizbang_pack.masks`; a region declares its kind (`region_kind`), which
+   `checklist::ingest` binds by. `[hints]` reaches a tool file as its arguments through
+   `eval tool`. `check`'s loop does not call `ingest` yet: its submission's keys are fixed
+   when a run opens, in `check.rs`, which this plan gives to M1 and F1 (ADR 0032, "Amended:
+   regions"). To keep the fast tier's time, one test runs `outline` under `try` and
+   `regions` under `eval tool`, both against the fake segmenter.
+
+- [x] Done when: both tools run under `whizbang try` and `eval tool` against the fake models;
   their records' examples run as tests; the row is closed. **Reviewer reads hardest:** that a
   tool file reaches pictures and SAM 3 only through its context, and that its output is held
   to its declared bounds.

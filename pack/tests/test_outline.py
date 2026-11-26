@@ -7,6 +7,7 @@ are run here: their pictures are drawn and held to the committed files, and the 
 regions the record shows are held to the tool's."""
 
 import importlib.util
+import inspect
 import json
 import os
 import struct
@@ -135,14 +136,21 @@ class Compare(unittest.TestCase):
 class Subjects(unittest.TestCase):
     def test_subjects_are_read_by_per_subjects_rule_shared(self):
         per_subject = load(PER_SUBJECT, "per_subject_beside_outline")
+        # One rule: the same function, word for word, over the same constants.
+        self.assertEqual(inspect.getsource(subjects.subjects_of), inspect.getsource(per_subject.subjects_of))
+        self.assertEqual((subjects.KEEPS, subjects.ARTICLES), (per_subject.KEEPS, per_subject.ARTICLES))
         cases = [
             {"requirements": [{"id": "RQ1", "kind": "must_hold", "text": "The rectangular swimming pool keeps its shape."}]},
             {"requirements": [{"id": "RQ1", "kind": "must_hold", "text": "Nothing about the sky changes."}, {"id": "RQ2", "kind": "must_not", "text": "The lawn keeps its stripes."}]},
             {"requirements": [{"id": "RQ1", "kind": "must_hold", "text": "An old shed keeps its roof."}, {"kind": "must_hold", "text": "keeps"}]},
+            {"requirements": [{"id": "RQ1", "kind": "must_hold", "text": "THE Pool keeps its shape."}, {"id": "RQ2", "kind": "must_hold", "text": "The keeps x"}]},
             {},
         ]
         for job in cases:
             self.assertEqual(subjects.subjects_of(job), per_subject.subjects_of(job), job)
+        # An article in capitals is dropped; "The" before " keeps " with no space after it is
+        # a subject of its own.
+        self.assertEqual(subjects.subjects_of(cases[3]), (["Pool", "The"], []))
         # outline reads them from the shared module, and from nowhere of its own.
         self.assertIs(outline.subjects_of, subjects.subjects_of)
 
@@ -258,14 +266,27 @@ def encoded(image):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
 
 
-def record_rows(marker):
-    """The rows of the record's table between `<!-- <marker>: begin -->` and its end, each
-    a list of cells, its heading and rule left out."""
-    with open(RECORD, encoding="utf-8") as file:
+def record_rows(marker, record=RECORD):
+    """The rows of a record's table between `<!-- <marker>: begin -->` and its end, each a
+    list of cells, its heading and rule left out."""
+    with open(record, encoding="utf-8") as file:
         text = file.read()
     part = text.split("<!-- %s: begin -->" % marker)[1].split("<!-- %s: end -->" % marker)[0]
     lines = [line for line in part.strip().splitlines() if line.startswith("|")]
     return [[cell.strip() for cell in line.strip("|").split("|")] for line in lines[2:]]
+
+
+def assert_region_held(test, region, candidate, label_most):
+    """A region as `tool-file/1` holds it (ADR 0032, "Amended: regions"): a box on the
+    candidate inside it with area, a printable label of 1 to `label_most` bytes, a score from
+    0 to 1, and nothing else."""
+    test.assertEqual(set(region), {"frame", "box", "label", "score"})
+    test.assertEqual(region["frame"], "candidate")
+    left, top, right, bottom = region["box"]
+    test.assertTrue(0 <= left < right <= candidate.width and 0 <= top < bottom <= candidate.height, region)
+    test.assertTrue(1 <= len(region["label"].encode()) <= label_most, region)
+    test.assertTrue(all(" " <= c <= "~" for c in region["label"]), region)
+    test.assertTrue(0.0 <= region["score"] <= 1.0, region)
 
 
 class Record(unittest.TestCase):
@@ -282,6 +303,7 @@ class Record(unittest.TestCase):
                 v = reading["values"]
                 read.append([example, reading["subject"]] + ["%.3f" % v[k] for k in ("one_minus_iou", "area_source", "area_candidate", "area_change", "added", "removed")] + ["%.1f" % v[k] for k in ("shift_p95_px", "shift_max_px")])
             for region in output["regions"]:
+                assert_region_held(self, region, pictures[example], outline.LABEL_MOST)
                 regions.append([example, " ".join("%g" % e for e in region["box"]), region["label"], "%.3f" % region["score"]])
         self.assertEqual(record_rows("read"), read)
         self.assertEqual(record_rows("regions"), regions)
