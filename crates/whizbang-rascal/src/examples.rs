@@ -840,13 +840,18 @@ fn of(tool: &str) -> Vec<Given> {
             })
             .collect()
         }
-        "line" | "rect" | "mask_rect" => {
+        "line" | "mask_rect" => {
             let names = match tool {
                 "line" => ["column", "path"],
                 _ => ["box", "edge"],
             };
             both(&|name| image(name, &scene), names)
         }
+        // The polygon in place of a box (plan mE, task L2, item 2).
+        "rect" => ["box", "edge", "polygon"]
+            .into_iter()
+            .flat_map(|name| image(name, &scene))
+            .collect(),
         "stroke" => {
             let mut out = image("path", &scene);
             out.extend(image("scratch", &image_of(&scratched())));

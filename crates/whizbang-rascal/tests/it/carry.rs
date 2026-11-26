@@ -169,3 +169,29 @@ fn a_mask_on_a_crop_of_another_picture_is_refused() {
     );
     assert!(why.contains("is not the picture's"), "{why}");
 }
+
+/// The comparison looks at the run's signal before each row of the crop (plan mE, task
+/// L2, item 4): told to stop after five rows, it stops there, having asked six times.
+#[test]
+fn the_comparison_stops_at_the_next_row_once_told_to() {
+    let image = picture(SIDE as u32, SIDE as u32);
+    let crop = cut(&image, CUT);
+    let at = [CUT[0] as u32, CUT[1] as u32];
+    let asked = std::cell::Cell::new(0_u32);
+    let stop = || {
+        asked.set(asked.get() + 1);
+        asked.get() > 5
+    };
+    let limits = DecodeLimits::default();
+    let stopped = Placed::checked_until(&crop, &image, at, &limits, &stop);
+    assert!(matches!(stopped, Err(CarryError::Stopped)), "{stopped:?}");
+    assert_eq!(asked.get(), 6);
+    // Never told to stop, it asks once a row, 16 rows.
+    asked.set(0);
+    let never = || {
+        asked.set(asked.get() + 1);
+        false
+    };
+    assert!(Placed::checked_until(&crop, &image, at, &limits, &never).is_ok());
+    assert_eq!(asked.get(), 16);
+}

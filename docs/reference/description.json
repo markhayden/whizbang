@@ -4059,7 +4059,16 @@
           "type": {
             "type": "text"
           },
-          "required": true,
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "polygon",
+          "purpose": "In place of a box, a polygon: its points in pixels of the image, X Y each, apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
           "default": null
         }
       ],

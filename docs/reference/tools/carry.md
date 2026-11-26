@@ -99,7 +99,11 @@ The examples in numbers, the same on every machine:
 ## Speed and cost
 
 `carry` spends nothing. It decodes both pictures to compare them, once for a call, and
-copies each mask's three planes row by row. The crop here is half the picture each way.
+copies each mask's three planes row by row. It looks at its run's signal before each row
+it compares, so a run cancelled or past its deadline stops at the next row
+(`carry::the_comparison_stops_at_the_next_row_once_told_to`; plan mE, task L2, item 4). Under
+the loop `remove_checked`, which keeps what is decoded while it runs, the picture is
+decoded once for every `carry` and `view` of the run, not once for each call. The crop here is half the picture each way.
 
 <!-- timed: begin -->
 
@@ -143,4 +147,5 @@ this one does.
 **Gates.** None faced.
 
 **History.** Plan m4, task L2: ported from rascal's `invert.rs` (`map_plane_to_parent`) at
-the pinned commit, with this record.
+the pinned commit, with this record. Plan mE, task L2: the comparison looks at the run's
+signal row by row.
