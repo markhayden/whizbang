@@ -157,6 +157,8 @@ pub struct Union {
     given: usize,
     /// The image's size, when the pixel to keep by is outside it.
     outside: Option<(f64, f64)>,
+    /// The space of the first mask given, which the pixel to keep by is read in.
+    first_space: Option<whizbang_core::identity::Space>,
 }
 
 impl Union {
@@ -171,6 +173,7 @@ impl Union {
             at,
             given: 0,
             outside: None,
+            first_space: None,
         }
     }
 
@@ -179,6 +182,23 @@ impl Union {
     /// union is finished, naming how many masks were given.
     pub fn add(&mut self, mask: &Mask) -> Result<(), SelectError> {
         self.given += 1;
+        // Kept by a pixel first, as `holding` keeps them: the pixel's place in the
+        // image of the first mask given, and only a mask that holds it is joined, or
+        // compared with the others' image.
+        if let Some([x, y]) = self.at {
+            let space = *self
+                .first_space
+                .get_or_insert_with(|| mask.binding().source_space());
+            let (width, height) = (f64::from(space.width()), f64::from(space.height()));
+            if !(x >= 0.0 && y >= 0.0 && x < width && y < height) {
+                self.outside = Some((width, height));
+                return Ok(());
+            }
+            let at = y.floor() as usize * space.width() as usize + x.floor() as usize;
+            if mask.core().get(at).is_none_or(|sample| *sample == 0) {
+                return Ok(());
+            }
+        }
         match &self.binding {
             None => {
                 self.binding = Some(mask.binding().clone());
@@ -193,18 +213,6 @@ impl Union {
                 )));
             }
             Some(_) => {}
-        }
-        if let Some([x, y]) = self.at {
-            let space = mask.binding().source_space();
-            let (width, height) = (f64::from(space.width()), f64::from(space.height()));
-            if !(x >= 0.0 && y >= 0.0 && x < width && y < height) {
-                self.outside = Some((width, height));
-                return Ok(());
-            }
-            let at = y.floor() as usize * space.width() as usize + x.floor() as usize;
-            if mask.core().get(at).is_none_or(|sample| *sample == 0) {
-                return Ok(());
-            }
         }
         for (out, sample) in self.core.iter_mut().zip(mask.core()) {
             if *sample != 0 {
@@ -228,11 +236,11 @@ impl Union {
     /// The selection, every box of `exclude` cleared: refused when no mask was given,
     /// when none held the pixel to keep by, and when no pixel is left.
     pub fn finish(mut self, exclude: &[Exclude], use_case: UseCase) -> Result<Mask, SelectError> {
-        let Some(binding) = self.binding.take() else {
+        if self.given == 0 {
             return Err(SelectError::Invalid(
                 "select takes at least one mask".to_owned(),
             ));
-        };
+        }
         if let (Some((width, height)), Some([x, y])) = (self.outside, self.at) {
             return Err(SelectError::Invalid(format!(
                 "the pixel at {} {} is outside the image of the {} masks, {width} by {height}",
@@ -241,16 +249,15 @@ impl Union {
                 self.given
             )));
         }
-        if self.ids.is_empty()
-            && let Some([x, y]) = self.at
-        {
+        let Some(binding) = self.binding.take() else {
+            let [x, y] = self.at.unwrap_or_default();
             return Err(SelectError::Invalid(format!(
                 "none of the {} masks holds the pixel at {} {}",
                 self.given,
                 crate::grow::text_of(x),
                 crate::grow::text_of(y)
             )));
-        }
+        };
         let mut core = self.core;
         let space = binding.source_space();
         let width = space.width() as usize;

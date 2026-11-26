@@ -4049,7 +4049,7 @@
     },
     {
       "name": "rect",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "A box as a location on an image, from its left, top, right and bottom edges in pixels.",
       "arguments": [

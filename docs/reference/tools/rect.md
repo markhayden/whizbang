@@ -15,7 +15,7 @@ both); `remove` and `repair_area` take it as their location.
   polygon.
 - **Kind.** A pure operation on a shape: rungs 1 and 2 apply. No model, no spend.
 
-The action `rect`, version 1.0.0:
+The action `rect`, version 1.1.0 (1.0.0 took a box alone, and required it):
 
 ```
 whizbang rascal rect --image <identity> --box "20 10 70 40" --store <dir>

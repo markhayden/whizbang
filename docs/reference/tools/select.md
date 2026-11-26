@@ -105,8 +105,10 @@ differs.
 with a box over a quarter of the image. A run reads its masks one at a time into the union,
 and lets each go before it reads the next (plan mE, task L2, item 3): it holds one mask and
 the union, where it held every mask at once, about 1.2 GB by arithmetic for the 33 masks a
-located retry of the loop may give it on a picture of 12 megapixels. Its pixels and its
-origin are what they were (`select::a_union_made_one_mask_at_a_time_is_the_selection_of_them_all`).
+located retry of the loop may give it on a picture of 12 megapixels. Its pixels, its
+origin and its refusals are what they were, in the same order: with `at`, a mask is kept
+by the pixel first, in the image of the first mask given, and only a kept mask is held to
+the others' image (`select::a_union_made_one_mask_at_a_time_is_the_selection_of_them_all`).
 
 <!-- timed: begin -->
 

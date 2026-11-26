@@ -32,7 +32,8 @@ use crate::select::boxes;
 pub const NAME: &str = "rect";
 
 /// The action's version, which a location it made records in its origin.
-pub const VERSION: &str = "1.0.0";
+/// 1.1.0 (plan mE, task L2): a polygon in place of the box, which is no longer required.
+pub const VERSION: &str = "1.1.0";
 
 /// What the command says the action does.
 pub const ABOUT: &str = "Make a box on an image a location, from its left, top, right and bottom edges in pixels; \
