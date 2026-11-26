@@ -1,6 +1,7 @@
 //! What the `whizbang` binary and its tests share. The binary itself (`main.rs`) is
 //! argument parsing; this is the wiring it calls.
 
+pub mod admitted;
 pub mod backend_status;
 pub mod baseline;
 pub mod baseline_live;
@@ -11,6 +12,7 @@ pub mod engining;
 pub mod evaluation;
 pub mod gating;
 pub mod harness;
+pub mod held_out;
 pub mod import;
 pub mod judges;
 pub mod laboratory;

@@ -13,7 +13,7 @@ Check by a job: a task of the kit `squint`.
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
 
-Arguments: `tools` (text), `judge` (text), `use_case` (text), `job` (text), `details` (choice), `detail` (text), `projection` (choice), `second_look` (choice), `submission` (choice), `measured` (text), `recipe_digest` (text), `cell` (text), `max_output_tokens` (integer).
+Arguments: `tools` (text), `judge` (text), `use_case` (text), `job` (text), `details` (choice), `detail` (text), `projection` (choice), `second_look` (choice), `submission` (choice), `methods` (text), `measured` (text), `recipe_digest` (text), `cell` (text), `max_output_tokens` (integer).
 
 Takes: `images` (image, 1 to 10), `measured_images` (image, 0 to 32).
 

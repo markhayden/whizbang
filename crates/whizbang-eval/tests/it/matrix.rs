@@ -543,3 +543,64 @@ fn a_matrix_without_lists_keeps_its_cells_and_identity() {
     assert_eq!(listed.cells(&two_items(&listed)), cells);
     assert_ne!(listed.identity(), m.identity());
 }
+
+#[test]
+fn an_arm_freezes_a_tools_method_in_its_identity() {
+    // Plan mE, task M1, item 12: a tool file's method in an arm, named or as a table.
+    let arm: matrix::Arm = "C+regions@eomt".parse().unwrap();
+    assert_eq!(arm.tools, ["regions"]);
+    assert_eq!(arm.methods.get("regions").map(String::as_str), Some("eomt"));
+    assert_eq!(arm.offered(), "view,align,regions");
+    assert_eq!(arm.to_string(), "C+regions@eomt");
+    let table = Matrix::parse(&with_arms(
+        r#"[{ arm = "C", tools = [{ tool = "regions", method = "eomt" }] }]"#,
+    ))
+    .unwrap();
+    assert_eq!(table.matrix.arms[0], arm);
+    let named = Matrix::parse(&with_arms(r#"["C+regions@eomt"]"#)).unwrap();
+    assert_eq!(table.identity(), named.identity());
+    // The method is in the identity: two methods of one tool are two arms of one matrix.
+    let plain = Matrix::parse(&with_arms(r#"["C+regions"]"#)).unwrap();
+    assert_ne!(plain.identity(), named.identity());
+    let both = Matrix::parse(&with_arms(r#"["C+regions", "C+regions@eomt"]"#)).unwrap();
+    assert_eq!(both.matrix.arms.len(), 2);
+    for refused in [
+        "C+regions@",
+        "C+regions@Eomt",
+        "C+regions+regions@eomt",
+        "C+@eomt",
+    ] {
+        assert!(refused.parse::<matrix::Arm>().is_err(), "{refused}");
+    }
+    assert!(
+        Matrix::parse(&with_arms(
+            r#"[{ arm = "C+regions", tools = [{ tool = "regions", method = "eomt" }] }]"#
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn a_matrix_states_the_hypotheses_of_its_round_and_its_resamples_follow() {
+    // Plan mE, task M1, item 6: 13 hypotheses leave 2,000 resamples about 4 draws a tail;
+    // the count needs 20 a tail, at least 20,000.
+    assert_eq!(matrix::resamples_for(13), 20_000);
+    assert_eq!(matrix::resamples_for(21), 20_000);
+    assert_eq!(matrix::resamples_for(27), 22_000);
+    assert_eq!(matrix::resamples_for(40), 32_000);
+    for h in [1, 13, 21, 27, 40, 100] {
+        let draws = 0.05 / 2.0 / h as f64 * matrix::resamples_for(h) as f64;
+        assert!(draws >= 20.0, "{h}: {draws}");
+    }
+    // Stated, it is in the identity; not stated, the identity is as before.
+    let plain = Matrix::parse(&with_arms(r#"["C"]"#)).unwrap();
+    let stated = Matrix::parse(&format!("hypotheses = 21\n{}", with_arms(r#"["C"]"#))).unwrap();
+    assert_eq!(stated.hypotheses, Some(21));
+    assert_ne!(stated.identity(), plain.identity());
+    assert!(
+        !serde_json::to_string(&plain)
+            .unwrap()
+            .contains("hypotheses")
+    );
+    assert!(Matrix::parse(&format!("hypotheses = 0\n{}", with_arms(r#"["C"]"#))).is_err());
+}

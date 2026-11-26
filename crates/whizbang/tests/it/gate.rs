@@ -375,7 +375,7 @@ fn the_unsure_gates_hold_together_with_their_matrices() {
 
 /// A gate file of version 3 over `matrix.toml` beside it: `baseline` its `[baseline]` lines,
 /// `hypotheses` the count it corrects for.
-fn gate_v3(baseline: &str, hypotheses: usize) -> String {
+pub fn gate_v3(baseline: &str, hypotheses: usize) -> String {
     format!(
         "gate_version = 3\n\n[run]\nmatrix = \"matrix.toml\"\n\n[baseline]\n{baseline}\n\
          [measure]\nprimary = \"balanced_accuracy\"\npass = \"pass\"\nfail = \"catch\"\n\
@@ -588,13 +588,19 @@ fn read_of(frozen: &Frozen, sets: Holding<'_>, decide: &dyn Fn(&Cell) -> Option<
                 computed,
                 cost_usd: 0.01,
                 wall_ms: 1_000,
+                // 2026-11-25, at noon.
+                ended_ms: 1_795_608_000_000,
             };
             ended.insert(cell, decided);
         }
     }
+    let splits = (items.iter())
+        .map(|(set, _)| (set.clone(), "dev".to_owned()))
+        .collect();
     Read {
         items,
         labelled,
+        splits,
         ended,
     }
 }
@@ -618,7 +624,11 @@ fn a_gate_reads_its_two_arms_of_a_wider_matrix() {
     freeze(
         &dir,
         &two_judges(&["C", "C+resize", "C+view"]),
-        &[("tool.toml", gate_v3(&arms("C", "C+resize"), 1))],
+        &[(
+            "tool.toml",
+            gate_v3(&arms("C", "C+resize"), 1)
+                + "\n[admits]\nrung = 4\nkind = \"tool\"\nname = \"resize\"\n",
+        )],
     );
     let frozen = gating::frozen(&dir.join("tool.toml")).unwrap();
     // Only the default judge runs both arms, and only on the first set: the second's table
@@ -645,6 +655,25 @@ fn a_gate_reads_its_two_arms_of_a_wider_matrix() {
     assert_eq!(digests, ["source-fidelity/one"]);
     assert_eq!(receipt.receipt_version, 2);
     assert_eq!((receipt.arm.as_deref(), receipt.relabelled), (None, None));
+    // What `eval admitted` reads: the gate's rung and what it admits, its sets' splits, and
+    // the day its last cell ended. A dev set admits nothing, whatever the outcome.
+    assert_eq!(receipt.date.as_deref(), Some("2026-11-25"));
+    let splits: Vec<(&String, &String)> = receipt.splits.iter().collect();
+    assert_eq!(
+        splits,
+        [(&"source-fidelity/one".to_owned(), &"dev".to_owned())]
+    );
+    assert_eq!(receipt.admits.as_ref().map(|a| a.rung), Some(4));
+    let json = serde_json::to_value(&receipt).unwrap();
+    assert_eq!(whizbang::admitted::admits(&"00".repeat(32), &json), None);
+    let mut blind = json.clone();
+    blind["splits"]["source-fidelity/one"] = "heldout".into();
+    blind["outcome"] = "admitted".into();
+    let admitted = whizbang::admitted::admits(&"00".repeat(32), &blind).unwrap();
+    assert_eq!(
+        (admitted.kind.as_str(), admitted.name.as_str()),
+        ("tool", "resize")
+    );
     assert_eq!(receipt.scored.judges.len(), 1);
     let paired = &receipt.scored.judges[0].paired;
     assert_eq!(
@@ -841,12 +870,12 @@ fn two_versions_whose_families_differ_are_refused_before_the_matrix_runs() {
 
 #[test]
 fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
-    // One world, end to end: two versions of a set, b relabelled in the second; three arms on
+    // One world, end to end: two versions of a set, b relabelled in the second; two arms on
     // the first, arm C alone on the second; a gate of a tool and a gate of the versions,
     // two hypotheses between them.
     let judged = Judged::new("gate-listed");
     let dir = judged.world.beside("set");
-    let items = ["a", "b", "c"];
+    let items = ["a", "b"];
     let tiny = crate::fetch::tiny(&dir, &items);
     let second = "source-fidelity/tiny-v2";
     crate::fetch::tiny_of(
@@ -872,7 +901,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     let baseline = format!("arm = \"C\"\ncontrol_set = \"{SET}\"\ntreatment_set = \"{second}\"\n");
     let matrix_text = format!(
         "{}\n[matrix.set.\"{second}\"]\narms = [\"C\"]\n",
-        wide(&[SET, second], &["C", "C+resize", "C+view"])
+        wide(&[SET, second], &["C", "C+resize"])
     );
     let matrix = freeze(
         &gates,
@@ -885,9 +914,9 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     let (named, hypotheses) = gating::gates_on(&gates.join("matrix.toml"), &matrix).unwrap();
     assert_eq!(hypotheses, 2);
     gating::versions_hold(&tiny.root, &named).unwrap();
-    // Only the twelve cells the matrix names run: the first set under three arms, the second
-    // under C. Each answer in order: a, b, c of the first set, each under C, C+resize and
-    // C+view; then a, b, c of the second under C.
+    // Only the six cells the matrix names run: the first set under two arms, the second under
+    // C. Each answer in order: a and b of the first set, each under C and C+resize; then a
+    // and b of the second under C.
     let (pass, fail) = (
         submission("held", "Kept."),
         submission("violation", "Gone."),
@@ -900,9 +929,8 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
         } else {
             pass.clone()
         });
-        answers.push(fail.clone());
     }
-    answers.extend([pass.clone(), fail.clone(), fail]);
+    answers.extend([pass.clone(), fail]);
     let (report, log) = crate::matrix::run_matrix(&judged, answers, &|e| {
         crate::matrix::ran(
             e,
@@ -913,12 +941,12 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
             &crate::matrix::never,
         )
     });
-    assert_eq!(report.unwrap().cells, 12);
-    assert_eq!(log.lock().unwrap().len(), 12);
+    assert_eq!(report.unwrap().cells, 6);
+    assert_eq!(log.lock().unwrap().len(), 6);
     let root = &judged.world.root;
     let identity: String = matrix.identity().chars().take(16).collect();
     let ran = whizbang::evaluation::attempts_under(root, &identity, None).unwrap();
-    assert_eq!(ran.len(), 12);
+    assert_eq!(ran.len(), 6);
     // Each gate reads its own cells; `eval run --gate` runs nothing, under an executor that
     // reaches no judge.
     let executor = judged.runner(&judged.over("https://127.0.0.1:9/v1/messages", None));
@@ -944,7 +972,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     let (tool, json) = score("tool.toml");
     assert_eq!(
         (tool.cells, tool.sets.as_slice()),
-        (6, [SET.to_owned()].as_slice())
+        (4, [SET.to_owned()].as_slice())
     );
     let paired = &tool.scored.judges[0].paired;
     assert_eq!(
@@ -956,7 +984,7 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
     );
     assert!(json.get("arm").is_none() && json.get("relabelled").is_none());
     let (versions, json) = score("requirements.toml");
-    assert_eq!((versions.cells, versions.relabelled), (6, Some(1)));
+    assert_eq!((versions.cells, versions.relabelled), (4, Some(1)));
     assert_eq!(json["arm"], "C");
     let paired = &versions.scored.judges[0].paired;
     assert_eq!(
@@ -965,20 +993,101 @@ fn several_gates_on_one_listed_matrix_score_from_its_runs_alone() {
             paired.control.counts.false_rejects,
             paired.treatment.counts.false_rejects
         ),
-        (2, 0, 1)
+        (1, 0, 0)
     );
     drop(executor);
     assert_eq!(
         whizbang::evaluation::attempts_under(root, &identity, None)
             .unwrap()
             .len(),
-        12
+        6
     );
-    // The receipts hold aggregates and digests only.
+    // The receipts hold aggregates and digests only, and no path of the sets' folder, which
+    // a round names by `--root <owner storage>` (plan mE, task M1, item 11).
+    let roots = [
+        tiny.root.display().to_string(),
+        tiny.root.canonicalize().unwrap().display().to_string(),
+    ];
     for gate in ["tool.toml", "requirements.toml"] {
         let text = std::fs::read_to_string(judged.world.beside(&format!("{gate}.json"))).unwrap();
-        for word in ["\"a\"", "\"b\"", "house", "Kept", "Gone"] {
+        for word in [
+            "\"a\"", "\"b\"", "house", "Kept", "Gone", &roots[0], &roots[1],
+        ] {
             assert!(!text.contains(word), "{gate}: {word}");
         }
     }
+    // `eval judges` reads the runs of a matrix that names its gates, which carry none, and
+    // with `--set` scores the cells the matrix names for that set alone (item 6).
+    let labels = judged.world.beside("labels");
+    std::fs::create_dir_all(&labels).unwrap();
+    let out = judged.world.beside("judges.toml");
+    let files = [gates.join("matrix.toml")];
+    let only = [SET.to_owned()];
+    let reading = whizbang::judges::Reading {
+        matrices: &files,
+        store: root,
+        sets_root: &tiny.root,
+        labels_root: &labels,
+        out: &out,
+        mode: whizbang::judges::Mode::Judges,
+        arm: Some("C"),
+        rule: None,
+        sets: &only,
+        commit: "0000000000000000000000000000000000000000",
+    };
+    let written = whizbang::judges::run(&reading).unwrap();
+    assert_eq!(
+        (
+            written.scored.cells,
+            written.scored.decisions,
+            written.scored.open
+        ),
+        (4, 4, 0)
+    );
+    let record = std::fs::read_to_string(&out).unwrap();
+    assert!(!record.contains(&roots[0]) && !record.contains(&roots[1]));
+}
+
+#[test]
+fn a_matrix_counts_the_judge_rules_hypotheses_beside_its_gates() {
+    // Plan mE, task M1, item 6: a round's correction counts its gates' comparisons and the
+    // judge's rule's; the matrix states the whole, and every gate corrects for it at the
+    // resamples it needs.
+    let world = crate::wired::World::new("gate-declared");
+    let dir = world.beside("gates");
+    let matrix = format!("hypotheses = 21\n{}", wide(&[SET], &["C", "C+resize"]));
+    let at = |n: usize, resamples: usize| {
+        gate_v3(&arms("C", "C+resize"), n)
+            .replace("resamples = 200", &format!("resamples = {resamples}"))
+    };
+    freeze(&dir, &matrix, &[("tool.toml", at(21, 20_000))]);
+    let frozen = gating::frozen(&dir.join("tool.toml")).unwrap();
+    let (_, compared) = gating::gates_on(&dir.join("matrix.toml"), &frozen.matrix).unwrap();
+    assert_eq!(compared, 1);
+    for (text, says) in [
+        (at(1, 20_000), "compare 21"),
+        (at(21, 2_000), "resamples 2000 times"),
+    ] {
+        freeze(&dir, &matrix, &[("tool.toml", text)]);
+        let refused = gating::frozen(&dir.join("tool.toml")).unwrap_err();
+        assert!(refused.contains(says), "{refused}");
+    }
+    // A matrix that states fewer than its gates compare is refused.
+    let few = format!(
+        "hypotheses = 1\n{}",
+        wide(&[SET], &["C", "C+resize", "C+view"])
+    );
+    let gates = [
+        ("tool.toml", at(1, 20_000)),
+        (
+            "view.toml",
+            gate_v3(&arms("C", "C+view"), 1).replace("resamples = 200", "resamples = 20000"),
+        ),
+    ];
+    freeze(&dir, &few, &gates);
+    let refused = gating::frozen(&dir.join("tool.toml")).unwrap_err();
+    assert!(
+        refused.contains("counts 1 hypotheses, and its gates compare 2"),
+        "{refused}"
+    );
 }

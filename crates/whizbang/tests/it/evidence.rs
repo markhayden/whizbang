@@ -3673,3 +3673,225 @@ fn the_records_of_milestone_6_hold_only_aggregates_and_run_ids() {
         );
     }
 }
+
+// --- the judge round's figures, held to their TOML (plan mE, task M1, item 10) ------------------
+
+/// The judge round's record, read as TOML.
+fn judge_round() -> toml::Value {
+    let text = std::fs::read_to_string(repository().join("docs/results/e-judges.toml")).unwrap();
+    toml::from_str(&text).unwrap()
+}
+
+/// A judge's measures in a scope of the judge round.
+fn measured<'a>(round: &'a toml::Value, scope: &str, model: &str) -> &'a toml::Value {
+    let scopes = round["scopes"].as_array().unwrap();
+    let scope = scopes
+        .iter()
+        .find(|s| s["name"].as_str() == Some(scope))
+        .unwrap();
+    (scope["measures"].as_array().unwrap().iter())
+        .find(|m| m["model"].as_str() == Some(model))
+        .unwrap_or_else(|| panic!("{model} has no measures"))
+}
+
+/// A judge's clauses in a scope's pick.
+fn picked<'a>(round: &'a toml::Value, scope: &str, model: &str) -> &'a toml::Value {
+    let picks = round["picks"].as_array().unwrap();
+    let pick = picks
+        .iter()
+        .find(|p| p["scope"].as_str() == Some(scope))
+        .unwrap();
+    (pick["judges"].as_array().unwrap().iter())
+        .find(|j| j["model"].as_str() == Some(model))
+        .unwrap()
+}
+
+fn float(v: &toml::Value) -> f64 {
+    v.as_float()
+        .or_else(|| v.as_integer().map(|i| i as f64))
+        .unwrap()
+}
+
+/// A count with commas between its thousands, as the records write it.
+fn grouped(n: i64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (at, c) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+const JUDGES: [&str; 5] = [
+    "claude-haiku-5-5",
+    "gemini-3.8-flash",
+    "gemini-4-argon",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+];
+
+#[test]
+fn the_judges_figures_outside_their_record_are_its_own() {
+    let round = judge_round();
+    // Each use case's record: its "Another judge" table, row by row, and its "Speed and
+    // cost" line, the range of the five judges' cost and median time.
+    for use_case in whizbang_eval::matrix::USE_CASES {
+        let record = std::fs::read_to_string(
+            repository().join(format!("docs/reference/tools/{use_case}.md")),
+        )
+        .unwrap();
+        let (mut costs, mut medians) = (Vec::new(), Vec::new());
+        for model in JUDGES {
+            let m = measured(&round, use_case, model);
+            let interval = |key: &str| match m.get(key) {
+                Some(e) => format!(
+                    "{:.3} ({:.3} to {:.3})",
+                    float(&e["point"]),
+                    float(&e["lower"]),
+                    float(&e["upper"])
+                ),
+                None => "-".to_owned(),
+            };
+            let cost = float(&m["cost_per_decision_usd"]);
+            let row = format!(
+                "| `{model}` | {} | {} | {} | {} | {} | {cost:.6} |",
+                m["decisions"].as_integer().unwrap(),
+                interval("balanced_accuracy"),
+                interval("decided_correctly"),
+                m["unsure"].as_integer().unwrap(),
+                m["errors"].as_integer().unwrap()
+            );
+            assert!(record.contains(&row), "{use_case}: {row}");
+            costs.push(cost);
+            medians.push(m["median_ms"].as_integer().unwrap());
+        }
+        let low = costs.iter().copied().fold(f64::INFINITY, f64::min);
+        let high = costs.iter().copied().fold(0.0, f64::max);
+        let range = format!(
+            "a decision settled {low:.4} to {high:.4} dollars across the five\njudges, at a median \
+             of {} to {} ms",
+            grouped(*medians.iter().min().unwrap()),
+            grouped(*medians.iter().max().unwrap())
+        );
+        assert!(record.contains(&range), "{use_case}: {range}");
+    }
+    // ADR 0044's figures, each with where the TOML gives it.
+    let adr = std::fs::read_to_string(repository().join("docs/adr/0044-the-default-judge.md"))
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let m = |scope: &str, model: &str| measured(&round, scope, model);
+    let point = |v: &toml::Value| float(&v["point"]);
+    let lower = |scope: &str, model: &str| {
+        float(&picked(&round, scope, model)["difference_from_best_lower"])
+    };
+    let count = |v: &toml::Value| v.as_integer().unwrap();
+    let per_thousand = |model: &str| float(&m("all", model)["cost_per_decision_usd"]) * 1000.0;
+    let behind = |model: &str| {
+        (point(&m("all", "gemini-4-argon")["balanced_accuracy"])
+            - point(&m("all", model)["balanced_accuracy"]))
+            * 100.0
+    };
+    let haiku = m("all", "claude-haiku-5-5");
+    let argon = m("all", "gemini-4-argon");
+    let figures = [
+        format!(
+            "decided correctly {:.3}",
+            point(&m("source-fidelity", "claude-haiku-5-5")["decided_correctly"])
+        ),
+        format!(
+            "decided correctly {:.3}",
+            point(&haiku["decided_correctly"])
+        ),
+        format!(
+            "{} errors of {}",
+            count(&haiku["errors"]),
+            count(&haiku["decisions"])
+        ),
+        format!(
+            "{} unsure verdicts of {}",
+            count(&haiku["unsure"]),
+            count(&haiku["decisions"])
+        ),
+        format!(
+            "{} errors of {}",
+            count(&m("source-fidelity", "gemini-3.8-flash")["errors"]),
+            count(&m("source-fidelity", "gemini-3.8-flash")["decisions"])
+        ),
+        format!(
+            "balanced accuracy ({:.3})",
+            point(&m("dev", "gemini-4-argon")["balanced_accuracy"])
+        ),
+        format!(
+            "`gemini-3.8-flash`'s ({:.3})",
+            point(&m("dev", "gemini-3.8-flash")["balanced_accuracy"])
+        ),
+        format!(
+            "of the five ({:.3})",
+            float(&m("dev", "gemini-4-argon")["false_reject_rate"])
+        ),
+        format!(
+            "are {:.3} and {:.3}",
+            lower("source-fidelity", "gemini-4-argon"),
+            lower("source-fidelity", "gpt-6.1-sol")
+        ),
+        format!("best, {:.3}, is past", lower("all", "gpt-6.1-sol")),
+        format!("its bound {:.3}", lower("all", "gpt-6.1-terra")),
+        format!("its bound {:.3}", lower("all", "gemini-3.8-flash")),
+        format!(
+            "about {:.4} dollars a decision settled against Haiku's {:.4}",
+            float(&argon["settled_usd"]) / float(&argon["decisions"]),
+            float(&haiku["cost_per_decision_usd"])
+        ),
+        format!(
+            "({:.2} against {:.2} dollars per 1,000 checks)",
+            per_thousand("gemini-4-argon"),
+            per_thousand("claude-haiku-5-5")
+        ),
+        format!(
+            "({:.2} dollars per 1,000 checks)",
+            per_thousand("gpt-6.1-sol")
+        ),
+        format!("({:.2} per 1,000)", per_thousand("gpt-6.1-terra")),
+        format!(
+            "{:.1} points of balanced accuracy behind",
+            behind("gpt-6.1-sol")
+        ),
+        format!("{:.1} points behind", behind("gpt-6.1-terra")),
+    ];
+    for figure in &figures {
+        assert!(adr.contains(figure.as_str()), "ADR 0044: {figure}");
+    }
+    // The two guides and the loop's record name the judge the pooled pick chose, and the
+    // pick of the loop's own scope as the round has it.
+    let all = (round["picks"].as_array().unwrap().iter())
+        .find(|p| p["scope"].as_str() == Some("all"))
+        .unwrap();
+    assert_eq!(all["outcome"].as_str(), Some("pick"));
+    let chosen = all["model"].as_str().unwrap();
+    let scoped = (round["picks"].as_array().unwrap().iter())
+        .find(|p| p["scope"].as_str() == Some("source-fidelity"))
+        .unwrap();
+    for guide in [
+        "docs/guides/config.md",
+        "docs/guides/loop.md",
+        "docs/reference/tools/remove_checked.md",
+    ] {
+        let text = std::fs::read_to_string(repository().join(guide)).unwrap();
+        assert!(text.contains(&format!("`{chosen}`")), "{guide}: {chosen}");
+    }
+    let loop_guide = std::fs::read_to_string(repository().join("docs/guides/loop.md"))
+        .unwrap()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(scoped["outcome"].as_str(), Some("no_pick"));
+    assert!(
+        loop_guide.contains("the `source-fidelity` sets, picked no"),
+        "loop.md"
+    );
+}
