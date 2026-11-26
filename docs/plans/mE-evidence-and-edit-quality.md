@@ -1100,7 +1100,7 @@ pull request adds it with the tools that use it.
    the row, by the rule: changed only if more than a quarter of the places looked into were
    left out for size.
 
-- [ ] Done when: the tests pass and each row has its line. Nothing paid.
+- [x] Done when: the tests pass and each row has its line. Nothing paid.
 
 ## L2. The located retry, whole (medium to large)
 
