@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use whizbang_core::capability::{
     Controls, Declaration, Fault, FaultKind, Judge, JudgeHandle, JudgeRequest, Message, Part,
-    Picture, Role, Stage, Turn,
+    Picture, Role, Stage, ToolDefinition, Turn,
 };
 use whizbang_core::contract::Cancellation;
 use whizbang_core::egress::Sender;
@@ -185,6 +185,32 @@ pub(crate) fn words() -> JudgeRequest {
         Controls::new(64).unwrap(),
     )
     .unwrap()
+}
+
+/// A small request of words that offers submission v3's tool for source-fidelity's
+/// shorthand checklist, as the build writes it (plan mE, task F1): the fixture
+/// `fixtures/submission/v3-source-fidelity.json`, which squint's tests hold to
+/// `use_case::submit_tool_v3`. With the tool's schema, as written.
+pub(crate) fn v3_request() -> (JudgeRequest, Value) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/submission/v3-source-fidelity.json");
+    let tool: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let schema = tool["input_schema"].clone();
+    let description = tool["description"].as_str().unwrap();
+    let submit = ToolDefinition::new("submit_verdict", description, schema.clone()).unwrap();
+    let message = Message::new(Role::User, vec![Part::Text("Look.".to_owned())]).unwrap();
+    let controls = Controls::new(64).unwrap();
+    let request = JudgeRequest::new("Judge.", vec![message], vec![submit], controls).unwrap();
+    (request, schema)
+}
+
+/// The body an adapter writes of a request that holds no picture: its pieces, together.
+pub(crate) fn body_of(pieces: &[whizbang_core::egress::Piece]) -> Value {
+    let bytes: Vec<u8> = pieces
+        .iter()
+        .flat_map(|piece| piece.bytes().to_vec())
+        .collect();
+    serde_json::from_slice(&bytes).unwrap()
 }
 
 /// The base64 of RFC 4648, read back.

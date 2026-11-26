@@ -1126,3 +1126,35 @@ fn v1_is_unchanged() {
         ]
     );
 }
+
+#[test]
+fn v3s_tool_is_the_fixture_each_adapter_is_sent() {
+    // The fixture each adapter's test sends (`whizbang-backends`, plan mE, task F1, item
+    // 4) is v3's tool for source-fidelity's shorthand checklist, as the build writes it.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/submission/v3-source-fidelity.json");
+    let fixture: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let tool = use_case::submit_tool_v3(&fidelity_checklist()).unwrap();
+    assert_eq!(
+        fixture,
+        json!({"name": tool.name(), "description": tool.description(),
+               "input_schema": tool.schema()})
+    );
+    // A checklist with an item of several instances is given a form for it, as `anyOf`,
+    // whose findings' instances are an enum of that item's.
+    let job = v3_job("reference-consistency");
+    let resolved = use_case::resolve(&job).unwrap();
+    let checklist = Checklist::build(&resolved, &job);
+    let tool = use_case::submit_tool_v3(&checklist).unwrap();
+    let forms = tool.schema()["properties"]["items"]["items"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(forms.len(), 2);
+    let reference = checklist.get("chk:ref:reference-1").unwrap();
+    assert_eq!(
+        forms[1]["properties"]["findings"]["items"]["properties"]["instances"]["items"]["enum"],
+        json!(reference.instances)
+    );
+    assert!(forms[0]["properties"]["findings"]["items"]["properties"]["instances"].is_null());
+}

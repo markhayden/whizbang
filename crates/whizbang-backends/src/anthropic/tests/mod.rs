@@ -276,3 +276,21 @@ fn an_unlisted_success_status_is_charged_its_bound() {
     );
     assert_eq!(listener.finish(), 1);
 }
+
+#[test]
+fn submission_v3_is_sent_as_the_build_wrote_it() {
+    // Plan mE, task F1, item 4: the conformance fixture of v3 for this adapter.
+    use crate::service::testing::{body_of, v3_request};
+    let (request, schema) = v3_request();
+    let backend = messages(1, "claude-haiku-5-5", None);
+    let Wire::Messages(settings) = &backend.wire else {
+        unreachable!()
+    };
+    let sent = body_of(&wire::request(&request, settings).unwrap().pieces);
+    let tools = sent["tools"].as_array().unwrap();
+    let submit = tools
+        .iter()
+        .find(|t| t["name"] == "submit_verdict")
+        .unwrap();
+    assert_eq!(submit["input_schema"], schema);
+}

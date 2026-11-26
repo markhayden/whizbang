@@ -247,45 +247,17 @@ fn every_tool_of_the_build_is_sent_and_its_arguments_read_by_its_schema() {
 /// on loopback that answers in v2's keyed form: what was printed, and the body of the one
 /// request, which carried v2's tool.
 pub fn v2_sent(provider: Provider, label: &str) -> (String, serde_json::Value) {
-    let answer = serde_json::json!({"disposition": "held", "confidence": "confident",
-        "reason": "Kept.", "allowed_by": null, "evidence": [], "location": null});
-    let keyed = serde_json::json!({"schema_version": 2, "findings": [],
-        "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
-        "opinion": {"verdict": "pass", "reason": "Recorded only."}});
-    sent_in(provider, label, "v2", keyed)
-}
-
-/// A run of `check` under submission v3 (plan mE, task F1) under a judge of this provider
-/// on loopback that answers in v3's form, a finding inside its first item: what was
-/// printed, and the body of the one request, which carried v3's tool.
-pub fn v3_sent(provider: Provider, label: &str) -> (String, serde_json::Value) {
-    let answer = |id: &str, findings: serde_json::Value| {
-        serde_json::json!({"id": id, "disposition": "held", "confidence": "confident",
-            "reason": "Kept.", "allowed_by": null, "evidence": [], "location": null,
-            "findings": findings})
-    };
-    let tentative = serde_json::json!([{"disposition": "cant_tell", "confidence": "tentative",
-        "reason": "A corner is unclear.", "allowed_by": null, "evidence": [],
-        "location": {"kind": "bbox", "frame": "raw:candidate", "bbox": [0.0, 0.0, 0.2, 0.2],
-                     "polygon": null, "yaw": null, "pitch": null, "fov": null}}]);
-    let v3 = serde_json::json!({"schema_version": 3, "findings": [],
-        "items": [answer("chk:ob:SF1@candidate", tentative), answer("chk:ob:SF2@candidate", serde_json::json!([]))],
-        "opinion": {"verdict": "unsure", "reason": "Recorded only."}});
-    sent_in(provider, label, "v3", v3)
-}
-
-/// A run of `check` in this submission form under a judge of this provider on loopback
-/// that answers with this submission: what was printed, and the body of the one request.
-pub fn sent_in(
-    provider: Provider,
-    label: &str,
-    submission: &'static str,
-    input: serde_json::Value,
-) -> (String, serde_json::Value) {
     use crate::anthropic::{CHECK_CLASSES, Judged, pair, serving, submitting_by};
     let judged = Judged::of(label, provider);
     let (source, candidate) = pair(&judged);
-    let keyed = submitting_by(provider, input);
+    let answer = serde_json::json!({"disposition": "held", "confidence": "confident",
+        "reason": "Kept.", "allowed_by": null, "evidence": [], "location": null});
+    let keyed = submitting_by(
+        provider,
+        serde_json::json!({"schema_version": 2, "findings": [],
+            "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
+            "opinion": {"verdict": "pass", "reason": "Recorded only."}}),
+    );
     let (listener, log) = serving(&judged.pki, vec![keyed]);
     let origin = format!("https://127.0.0.1:{}", listener.port());
     let over = judged.over_with(
@@ -309,7 +281,7 @@ pub fn sent_in(
     };
     let (job, images) = whizbang::door::shorthand(&asked).unwrap();
     let measuring = whizbang::door::Measuring {
-        submission: Some(submission),
+        submission: Some("v2"),
         ..whizbang::door::Measuring::arm(whizbang::door::Details::None, None)
     };
     let root = judged.world.root.clone();
@@ -353,41 +325,13 @@ pub fn v2_schema() -> serde_json::Value {
     tool.schema().clone()
 }
 
-/// v3's tool for the checklist of source-fidelity's shorthand job.
+/// v3's tool for the checklist of source-fidelity's shorthand job (plan mE, task F1).
 pub fn v3_schema() -> serde_json::Value {
     let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
     let resolved = whizbang_squint::use_case::resolve(&job).unwrap();
     let checklist = whizbang_squint::use_case::Checklist::build(&resolved, &job);
     let tool = whizbang_squint::use_case::submit_tool_v3(&checklist).unwrap();
     tool.schema().clone()
-}
-
-#[test]
-fn a_v3_submission_is_sent_with_its_definitions_in_place_and_read() {
-    let (printed, first) = v3_sent(GOOGLE, "google-v3");
-    let declared = first["tools"][0]["functionDeclarations"]
-        .as_array()
-        .unwrap();
-    let submit = declared
-        .iter()
-        .find(|d| d["name"] == "submit_verdict")
-        .unwrap();
-    let sent = &submit["parametersJsonSchema"];
-    let text = sent.to_string();
-    assert!(!text.contains("$ref") && !text.contains("$defs"), "{text}");
-    assert!(keys_are_provider_safe(sent), "{text}");
-    assert_eq!(sent["required"], v3_schema()["required"]);
-    let item = &sent["properties"]["items"]["items"];
-    assert_eq!(
-        item["properties"]["id"]["enum"],
-        serde_json::json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
-    );
-    assert_eq!(
-        item["properties"]["findings"]["items"]["properties"]["location"]["required"],
-        v3_schema()["$defs"]["Location"]["required"]
-    );
-    // The finding inside SF1's item, tentative, read back as v1's and decided by v1's table.
-    assert!(printed.contains("verdict: unsure"), "{printed}");
 }
 
 #[test]

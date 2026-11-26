@@ -200,3 +200,39 @@ fn an_error_google_states_is_named_and_a_transient_one_is_sent_again_after_its_s
     }
     assert_eq!(listener.finish(), cases.len());
 }
+
+#[test]
+fn submission_v3_is_sent_with_its_definitions_written_in_place() {
+    // Plan mE, task F1, item 4: the conformance fixture of v3 for this adapter. Its
+    // definitions are written in place; the items' ids stay an enum of the checklist's.
+    use crate::service::testing::{body_of, v3_request};
+    let (request, schema) = v3_request();
+    let backend = generate(1, "gemini-3.8-flash", None);
+    let Wire::Generate(settings) = &backend.wire else {
+        unreachable!()
+    };
+    let sent = body_of(&wire::request(&request, settings).unwrap().pieces);
+    let declared = sent["tools"][0]["functionDeclarations"].as_array().unwrap();
+    let submit = declared
+        .iter()
+        .find(|d| d["name"] == "submit_verdict")
+        .unwrap();
+    let sent = &submit["parametersJsonSchema"];
+    let text = sent.to_string();
+    assert!(!text.contains("$ref") && !text.contains("$defs"), "{text}");
+    assert_eq!(sent["required"], schema["required"]);
+    let item = &sent["properties"]["items"]["items"];
+    assert_eq!(
+        item["properties"]["id"]["enum"],
+        schema["properties"]["items"]["items"]["properties"]["id"]["enum"]
+    );
+    let finding = &item["properties"]["findings"]["items"];
+    assert_eq!(
+        finding["properties"]["location"]["required"],
+        schema["$defs"]["Location"]["required"]
+    );
+    assert_eq!(
+        finding["properties"]["disposition"]["enum"],
+        schema["$defs"]["ItemFindingDisposition"]["enum"]
+    );
+}

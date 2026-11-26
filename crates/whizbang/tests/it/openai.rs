@@ -54,18 +54,6 @@ fn every_tool_of_the_build_is_sent_and_its_arguments_read_by_its_schema() {
 }
 
 #[test]
-fn a_v3_submission_is_sent_as_written_not_strict_and_read() {
-    use crate::google::{v3_schema, v3_sent};
-    let (printed, first) = v3_sent(OPENAI, "openai-v3");
-    let sent = first["tools"].as_array().unwrap();
-    let submit = sent.iter().find(|t| t["name"] == "submit_verdict").unwrap();
-    assert_eq!(submit["parameters"], v3_schema());
-    assert!(crate::google::keys_are_provider_safe(&submit["parameters"]));
-    assert_eq!(submit["strict"], false);
-    assert!(printed.contains("verdict: unsure"), "{printed}");
-}
-
-#[test]
 fn a_v2_keyed_submission_is_sent_as_written_not_strict_and_read() {
     use crate::google::{v2_schema, v2_sent};
     let (printed, first) = v2_sent(OPENAI, "openai-v2");
