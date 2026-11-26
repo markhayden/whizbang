@@ -167,8 +167,15 @@ pub struct Identified {
 }
 
 /// Identifies an image from its file's bytes: hashes them, decodes them within the limits,
-/// and makes the pixels canonical.
+/// and makes the pixels canonical. While a run keeps what is decoded
+/// ([`super::kept::keep_decoded`]), a file decoded under the same limits is not decoded
+/// again.
 pub fn identify(bytes: &[u8], limits: &DecodeLimits) -> Result<Identified> {
+    super::kept::identify(bytes, limits, decode)
+}
+
+/// [`identify`], decoding every time.
+fn decode(bytes: &[u8], limits: &DecodeLimits) -> Result<Identified> {
     if bytes.len() as u64 > limits.max_bytes {
         return Err(IdentityError::Limit(format!(
             "{} bytes is over the limit of {} bytes",

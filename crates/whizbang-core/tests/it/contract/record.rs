@@ -2609,6 +2609,36 @@ fn a_loop_run_recorded_before_run_8_replays_as_reproduced() {
     assert_eq!(said(&newer, &placed(&other)), "differs");
 }
 
+/// A located retry's diagnostic is compared without its times (plan mE, task L2; ADR
+/// 0049): two runs whose places came to the same and took other times are reproduced;
+/// a place that came to something else differs.
+#[test]
+fn a_located_retrys_times_are_not_compared_by_a_replay() {
+    use whizbang_core::contract::replay::{LOCATED_DIAGNOSTIC, Placed, report};
+    let name = format!("diagnostics/{LOCATED_DIAGNOSTIC}a2.txt");
+    let placed = |text: &str| Placed {
+        place: "0".to_owned(),
+        record: RunRecord::from_bytes(of_run_8().as_bytes()).unwrap(),
+        kept: [(name.clone(), text.as_bytes().to_vec())]
+            .into_iter()
+            .collect(),
+    };
+    let was = placed(
+        "located/1\nplace 1 tiles 1 found_something\ntime place 1 ms 12\ntime retry ms 30\n",
+    );
+    let now = placed(
+        "located/1\nplace 1 tiles 1 found_something\ntime place 1 ms 97\ntime retry ms 140\n",
+    );
+    let other = placed(
+        "located/1\nplace 1 tiles 1 joined_as_itself\ntime place 1 ms 12\ntime retry ms 30\n",
+    );
+    let said = |a: &Placed, b: &Placed| {
+        report(std::slice::from_ref(a), std::slice::from_ref(b), None).name()
+    };
+    assert_eq!(said(&was, &now), "reproduced");
+    assert_eq!(said(&was, &other), "differs");
+}
+
 // --- run/7: a model's card and the run replayed (plan m7, task B1, item 6; ADR 0048) -----------
 
 fn schema_7() -> Json {

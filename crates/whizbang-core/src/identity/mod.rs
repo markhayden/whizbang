@@ -14,6 +14,7 @@ mod colour;
 mod container;
 mod digest;
 pub mod encode;
+mod kept;
 mod mapping;
 mod perspective;
 mod pixels;
@@ -23,6 +24,7 @@ mod space;
 pub use binding::{Binding, BindingId, Destination, Direction};
 pub use digest::{Digest, FileDigest, PixelDigest};
 pub(crate) use digest::{Encoder, FieldSource, Fields};
+pub use kept::{KeptDecodes, decodes_of, keep_decoded};
 pub use mapping::Mapping;
 pub use perspective::{Basis, Perspective, panorama_direction};
 pub use pixels::{

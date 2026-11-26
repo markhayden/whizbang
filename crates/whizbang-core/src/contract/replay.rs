@@ -761,16 +761,29 @@ const COMPARED: [&str; 9] = [
 /// `segment.txt` ends with what its backend said of itself, each line after `backend `
 /// (the device, the memory the GPU held, a remote host's dispatch): those lines are left
 /// out, and its masks, scores, boxes and predicted IoUs are compared (plan m7, N1's pass,
-/// finding 2). Every other diagnostic is compared whole.
+/// finding 2).
+///
+/// The diagnostic a located retry of the loop keeps (`located-a<n>.txt`, [`LOCATED_DIAGNOSTIC`];
+/// plan mE, task L2) says what became of each place and how long each took: its lines
+/// that start with `time ` are left out, and what became of the places is compared.
+/// Every other diagnostic is compared whole.
 fn without_readings(name: &str, text: &str) -> String {
-    if name.strip_prefix(DIAGNOSTICS_PREFIX) != Some(recorded::SEGMENT_DIAGNOSTIC) {
-        return text.to_owned();
-    }
+    let named = name.strip_prefix(DIAGNOSTICS_PREFIX);
+    let reading = match named {
+        Some(named) if named == recorded::SEGMENT_DIAGNOSTIC => "backend ",
+        Some(named) if named.starts_with(LOCATED_DIAGNOSTIC) => "time ",
+        _ => return text.to_owned(),
+    };
     text.lines()
-        .filter(|line| !line.starts_with("backend "))
+        .filter(|line| !line.starts_with(reading))
         .map(|line| format!("{line}\n"))
         .collect()
 }
+
+/// The start of the name of the diagnostic a located retry of the loop `remove_checked`
+/// keeps: what became of each place, and, on lines that start with `time `, how long it
+/// took, which [`differences`] does not compare.
+pub const LOCATED_DIAGNOSTIC: &str = "located-";
 
 /// What two families differ in, run matched to run by place, first first: every
 /// difference, in order. A reference to a run of either family is compared through the
