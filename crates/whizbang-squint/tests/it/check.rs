@@ -322,7 +322,7 @@ fn arguments_that_are_not_a_views_make_no_call_and_a_box_past_the_image_is_refus
     assert_eq!(said[..3], [no_box, no_box, no_box]);
     assert_eq!(
         said[3],
-        "not called: the arguments are image, also, and bbox or yaw, pitch and fov, and no other"
+        "not called: the arguments are image, bbox and also, and no other"
     );
     assert_eq!(
         said[4],
@@ -339,38 +339,85 @@ fn arguments_that_are_not_a_views_make_no_call_and_a_box_past_the_image_is_refus
     assert!(!left.has("evidence-001"));
 }
 
+/// What `view` was told before its panorama side (plan mE, task P1), word for word: a run
+/// of flat images is told this still, so its request, and its decision's key, are as
+/// they were.
+const FLAT_VIEW: &str = "Shows a region of an image closer. image is the name of an image you \
+    were shown; bbox is left, top, right and bottom as fractions of the image; also is a \
+    second image to show the same region of.";
+
 #[test]
-fn angles_ask_for_a_perspective_view_and_are_refused_on_a_flat_image() {
-    // The judge is told of yaw, pitch and fov beside bbox (plan mE, task P1). Angles with
-    // a box, or fewer than three, make no call; three angles on the flat photograph are a
-    // call, which `view` refuses as the caller's mistake, saying what to send instead.
+fn a_run_of_flat_images_is_told_of_view_as_before_and_one_with_a_panorama_of_its_angles() {
+    let call = |id: &str, arguments: Json| json!({"tool_call": {"id": id, "name": "view", "arguments": arguments}});
+    let done = (json!([{"text": "unsure"}]), "end_turn");
+
+    // Flat: the definition as it was, and an angle is an argument the tool lacks.
     let world = World::new();
     let photo = world.photo.id().to_string();
-    let call = |id: &str, arguments: Json| json!({"tool_call": {"id": id, "name": "view", "arguments": arguments}});
+    let parts = json!([call(
+        "c1",
+        json!({"image": photo, "yaw": 0, "pitch": 0, "fov": 60})
+    )]);
+    let (finished, _, judge) = run(&world, &turns(&[(parts, "tool_use"), done.clone()]), &[]);
+    assert_eq!(finished.outcome().name(), "completed");
+    let received = judge.received();
+    let told = &received[0].tools()[0];
+    assert_eq!(told.name(), "view");
+    assert_eq!(told.description(), FLAT_VIEW);
+    // The schema as it was written before, key for key.
+    let before = json!({
+        "type": "object",
+        "required": ["image", "bbox"],
+        "properties": {
+            "image": { "type": "string" },
+            "also": { "type": "string" },
+            "bbox": { "type": "array", "items": { "type": "number" } },
+        },
+    });
+    assert_eq!(
+        serde_json::to_string(told.schema()).unwrap(),
+        serde_json::to_string(&before).unwrap()
+    );
+    let said = results(&judge, 1);
+    assert_eq!(
+        said[0].text(),
+        "not called: the arguments are image, bbox and also, and no other"
+    );
+
+    // A panorama among the images: the angles are told and read. Angles with a box, or
+    // fewer than three, make no call; three are a call, and the view comes back.
+    let mut world = World::new();
+    world.photo = super::panorama::panorama(128, 64, noisy(31, false));
+    world.hold(&[&world.photo]);
+    let pano = world.photo.id().to_string();
     let parts = json!([
-        call(
-            "c1",
-            json!({"image": photo, "bbox": [0, 0, 1, 1], "yaw": 0})
-        ),
-        call("c2", json!({"image": photo, "yaw": 0, "pitch": 0})),
-        call("c3", json!({"image": photo})),
+        call("c1", json!({"image": pano, "bbox": [0, 0, 1, 1], "yaw": 0})),
+        call("c2", json!({"image": pano, "yaw": 0, "pitch": 0})),
+        call("c3", json!({"image": pano})),
         call(
             "c4",
-            json!({"image": photo, "yaw": 0, "pitch": 0, "fov": "wide"})
+            json!({"image": pano, "yaw": 0, "pitch": 0, "fov": "wide"})
         ),
         call(
             "c5",
-            json!({"image": photo, "yaw": 10, "pitch": 0, "fov": 60})
+            json!({"image": pano, "yaw": 180, "pitch": 0, "fov": 60})
         ),
     ]);
-    let done = (json!([{"text": "unsure"}]), "end_turn");
     let (finished, _, judge) = run(&world, &turns(&[(parts, "tool_use"), done]), &[]);
     assert_eq!(finished.outcome().name(), "completed");
-    let said = results(&judge, 1);
-    assert!(said.iter().all(|result| result.is_error()));
-    let said: Vec<&str> = said.iter().map(ToolResult::text).collect();
+    let received = judge.received();
+    let told = &received[0].tools()[0];
+    assert_ne!(told.description(), FLAT_VIEW);
+    assert!(told.description().contains("yaw, pitch and fov together"));
+    assert_eq!(told.schema()["required"], json!(["image"]));
     assert_eq!(
-        said[..4],
+        told.schema()["properties"]["fov"],
+        json!({"type": "number"})
+    );
+    let said = results(&judge, 1);
+    let texts: Vec<&str> = said.iter().map(ToolResult::text).collect();
+    assert_eq!(
+        texts[..4],
         [
             "not called: give either bbox or yaw, pitch and fov, not both",
             "not called: yaw, pitch and fov go together: send all three for a perspective view",
@@ -378,11 +425,8 @@ fn angles_ask_for_a_perspective_view_and_are_refused_on_a_flat_image() {
             "not called: fov must be a number",
         ]
     );
-    assert!(
-        said[4].starts_with("rejected: image is flat: send bbox [left, top, right, bottom]"),
-        "{}",
-        said[4]
-    );
+    assert!(!said[4].is_error(), "{}", texts[4]);
+    assert_eq!(said[4].images().len(), 1);
 }
 
 const CUT_OFF: &str = r#"{"script":"judge-script/1","entries":[

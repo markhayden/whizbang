@@ -104,10 +104,12 @@ fn value_json(value: &Value) -> Json {
 }
 
 /// The revision of a tool this build links, by its name: the action's version, and
-/// for `align`, `change_map` and `edge_similarity` the version of squint's code beside it.
+/// for `view`, `align`, `change_map` and `edge_similarity` the version of the code beside
+/// it. `view`'s descriptor version moves with what a judge may be told of it (its
+/// perspective view, plan mE, task P1), so a decision kept before cannot answer after.
 pub fn tool_version(name: &str) -> Option<String> {
     match name {
-        view::NAME => Some(view::VERSION.to_owned()),
+        view::NAME => Some(format!("{}+{}", view::ACTION_VERSION, view::VERSION)),
         align::NAME => Some(format!("{}+{}", align::ACTION_VERSION, align::VERSION)),
         resize::NAME => Some(resize::VERSION.to_owned()),
         compare::CHANGE_MAP => Some(format!(
