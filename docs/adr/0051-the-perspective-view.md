@@ -69,23 +69,31 @@ of crops that ends in it.
 **Locations.** A location is carried through this kind as its footprint (`carry`):
 
 - from the view onto the panorama, a box, a polygon or the whole view is sampled along its
-  boundary, a box at 15 points an edge and a polygon's edges divided evenly to at most 60
+  boundary, a box at 60 points an edge and a polygon's edges divided evenly to at most 240
   points, and each point mapped forward. When the shape holds a pole, the pole the view
   sees mapped back into the shape, the footprint is a band the panorama's full width from
-  that pole to the farthest point the boundary reaches. Otherwise each point is taken
-  round the seam to within half the width of the one before; a ring that then lies within
-  the panorama is one polygon, and one that passes an edge is clipped to the panorama, and
-  again shifted by its width, into two polygons, one each side of the seam;
+  that pole to the farthest point the boundary reaches, and the whole panorama when it
+  holds both. Otherwise each point is taken round the seam to within half the width of
+  the one before, and a step still over a quarter of the width is refused, since which
+  way round it went is not known. The ring is then clipped to the panorama once for each
+  whole turn of the width it reaches into, so a part on either side of the seam, or on
+  both, is kept. A part over 64 vertices is thinned evenly to 64;
 - from the panorama into the view, a box is sampled as above and a polygon by its
-  vertices, each mapped backward; points behind the view are left out, the rest held to
-  the view, and the result is the box around them for a box and the polygon for a
-  polygon, partial when anything was left out or held. The whole panorama is the whole
-  view;
+  vertices, each made a direction; the ring of directions is clipped to what lies in
+  front of the view (a depth of at least `1e-6`), so an edge that passes behind it ends
+  where it leaves the view's half of the sphere, and is not drawn as a chord; what is
+  left is seen in the view and clipped to the view's square. The result is the box around
+  it for a box and the polygon for a polygon, partial when anything was clipped. The whole
+  panorama is the whole view;
 - a line, a stroke and a view are refused: their width, and a view's angles, have no one
   value through it.
 
-A rotation carries a polygon vertex by vertex and a box sampled as above, onto the same
-footprint: cut at the seam, or a band at a pole the shape holds.
+A rotation carries a box sampled as above, and a polygon by its vertices, each mapped as
+it always was, onto the same footprint: cut at the seam, or a band at a pole the shape
+holds. Which way round the panorama each vertex lies is read from the polygon's edges,
+sampled as a box's are, so a polygon wider than half the panorama is taken round the way
+its edges go, and one whose edge leaps over a quarter of the width between two samples is
+refused.
 
 ### The slack past an edge
 
@@ -93,7 +101,8 @@ ADR 0001 brings a computed point back onto an edge of a bounded space when it is
 `1e-9` of a pixel past it. A point that comes through a crop that magnifies, into the
 crop, carries the rounding of the space it came from times that magnification, which can be
 far more. So the slack a mapping gives a point where it lands is `1e-9` times how many
-pixels there one pixel where it came from becomes, and never less than `1e-9`: for a crop
+pixels there one pixel where it came from becomes, never less than `1e-9` and never more
+than `1e-3` (a thousandth of a pixel where it lands): for a crop
 toward its picture, the larger of the picture's width over the box's and its height over
 the box's; toward the box, the inverse; 1 for every other kind. A point on an edge of a
 crop of a crop magnified 2.8 million times, mapped up to the root and back, then lands
@@ -108,8 +117,10 @@ did. Each pixel `(u, v)` shows the panorama at the forward mapping of its centre
 `(u + 0.5, v + 0.5)`, sampled bilinearly between the centres of the four pixels around
 it: columns taken round the seam, rows held to the first and the last. Alpha is the blend
 of the four alphas; each colour the blend of the four weighted by alpha as well, divided
-by the blended alpha, or the plain blend where the four alphas are equal or all 0. Each is
-rounded to the nearest level, a half away from zero. The view is bound onto the panorama by this mapping, stated from
+by the blended alpha, or the plain blend where the four alphas are equal or all 0. The
+plain blend is taken across, then down, as squint's `sample` did, and alpha is always the
+plain blend, so an opaque view has the pixels it had before alpha was weighed, to the
+bit. Each is rounded to the nearest level, a half away from zero. The view is bound onto the panorama by this mapping, stated from
 the view. It is the arithmetic of the mapping, so the pixel a view shows and the point its
 binding maps it to are one.
 

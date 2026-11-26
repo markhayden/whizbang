@@ -115,7 +115,10 @@ request gives the same bytes on every machine.
 4. **The sample.** Bilinear, between the centres of the four panorama pixels around that
    point: columns taken round the seam, rows held to the first and the last. Alpha is the
    blend of the four alphas; each colour the blend weighted by alpha as well, as in step 5
-   above, or the plain blend where the four alphas are equal or all 0. Each is rounded to
+   above, or the plain blend where the four alphas are equal or all 0. The plain blend is
+   taken across, then down, as squint's `sample` did, and alpha is always the plain
+   blend, so an opaque view has the pixels it had before alpha was weighed, to the bit
+   (`an_opaque_view_has_the_pixels_of_the_first_version_to_the_bit`). Each is rounded to
    the nearest level, a half going up.
 5. **The file.** As step 6 above.
 6. **The binding.** The view's pixels onto the panorama's, by a perspective mapping with
@@ -392,7 +395,7 @@ opaque image changed. The action's version went from 1 to 2.
 | `also` has the projection of `image`, as in squint: a flat image and a panorama are refused together, whichever way round | "also is a panorama and image is flat: the two have one projection" (`a_second_image_of_another_projection_is_refused`) |
 | A perspective view can be enlarged, where a crop never is: its side is at least 256, so a panorama under `256 × 360 / fov` pixels wide is magnified, and one pixel of it covers several of the view's | Every view of squint's 512-pixel panorama in the third table under "Rung 2 results" is 256 square |
 | A perspective view's pixels are a resampling, not the panorama's own: a thing a pixel wide is spread over its neighbours, and its colour is a blend | The scene's columns of the third table: up to 23 levels from the scene at single pixels, and under a fifth of a level on average |
-| A box on a perspective view lands on the panorama as a polygon sampled at 60 points of its boundary, not as a box: its edges curve there. A line, a stroke and a view are not carried through a perspective view, and a box on the panorama lands in a view as the box around what the view sees of it | `a_box_on_a_view_or_on_a_crop_of_one_lands_on_the_panorama`; `a_box_on_a_panorama_lands_in_the_view_and_one_behind_it_is_refused` |
+| A box on a perspective view lands on the panorama as a polygon of at most 64 vertices, sampled at 240 points of its boundary and thinned, not as a box: its edges curve there. A line, a stroke and a view are not carried through a perspective view, and a box on the panorama lands in a view as the box around what the view sees of it | `a_box_on_a_view_or_on_a_crop_of_one_lands_on_the_panorama`; `a_box_on_a_panorama_lands_in_the_view_and_one_behind_it_is_refused` |
 | A large box loses fine detail, and can show a pattern the source does not have | The second example above |
 | A crop is never enlarged, and a cut under 8 pixels a side is refused | `[0.5, 0.5, 0.51, 0.51]` of a 256 by 192 image covers 3 by 2 pixels and is refused (`a_bad_request_is_the_callers_mistake`) |
 | A fraction meant to fall on a pixel edge can fall a hair off it, and the cut is then a whole pixel wider on that side: past it on the high side, short of it on the low side. Squint's `view` did the same. Of the 78,989 pairs of a fraction from 0 to 1 written with one, two or three decimals and a width from 8 to 4096 pixels on which it names a whole number of pixels, 1,539 widen a high edge and 826 a low edge (`how_often_a_fraction_meant_as_a_pixel_edge_falls_a_hair_off_it`) | 0.07 of 100 pixels is 7.000000000000001 as a double, so the cut ends at pixel 8; 0.7 of 90 pixels is 62.99999999999999, so the cut starts at column 62 (`a_fraction_a_hair_past_a_pixel_edge_widens_the_cut_by_a_pixel`) |
@@ -471,4 +474,6 @@ and 2, and this record shows them for flat images and for panoramas, so `view` i
   and their digests were worked out again apart from the tool. No crop of an opaque image
   changed. A box on a perspective view lands on its panorama (`box_onto_panorama`), and a
   point computed past an edge of a magnified crop is given slack in proportion to the
-  magnification (ADR 0051, "The slack past an edge").
+  magnification, at most a thousandth of a pixel where it lands (ADR 0051, "The slack
+  past an edge"). After its review: an opaque perspective view is sampled across then
+  down, as before, to the bit; a box on a crop that does not end on the view is refused.
