@@ -151,6 +151,25 @@ What to look for:
   before a fill is pasted through it. Nothing in whizbang feathers a mask yet: `feather`
   arrives with rascal's operations in milestone 3 (`SPEC.md` section 7).
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| blob | mask | mask | `sha256:087c63fa8153a3e3c0fec1cf140b5df8609b999faffb54385ce643b93fedb361` |
+| blob | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| band | mask | mask | `sha256:32308e10abd2ccd639bea8fc06b31311425820c6beedc4afe759ce0b54326efd` |
+| band | image of mask | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| band | line of mask | location | `sha256:7c10ac2ef0d61a3f6a237248812b576fb07874e3cfd1dba6aa6aede993b59238` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Scored alone, for a pure pixel operation, means exact against an analytic or reference

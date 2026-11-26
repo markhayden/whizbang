@@ -18,6 +18,8 @@ pub mod close;
 pub mod composite;
 pub mod constants;
 pub mod cut;
+// The inputs of the tool records' worked examples (plan E, task O1).
+pub mod examples;
 pub mod feather;
 pub mod fill;
 pub mod grow;

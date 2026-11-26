@@ -48,6 +48,30 @@ What to look for: unchanged, nothing differs; painted, the four columns about th
 seam land on the panorama's first two and last two columns, 256 pixels, and nothing else
 moves.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| unchanged | image | image | `sha256:31f1498cbc70550fabce91da76dd45cda0cab258cef8d63e5b12fcfc73312c82` |
+| unchanged | canvas | image | `sha256:6cdce5d307e6a3160df21c2eecc118973c57cf27a7b383c960a7d8deefd76651` |
+| unchanged | plan | plan | `sha256:3dbf794b86a6c8e37f9264cdbf481b41c570a66e91b506ea6a69dbff5a09bf07` |
+| unchanged | mask | mask | `sha256:dcb605e9394522b829adbf58e4f2c02f8f3fde1dbbf2ab303f17c8c0b360c051` |
+| unchanged | image of mask | image | `sha256:6cdce5d307e6a3160df21c2eecc118973c57cf27a7b383c960a7d8deefd76651` |
+| painted | image | image | `sha256:31f1498cbc70550fabce91da76dd45cda0cab258cef8d63e5b12fcfc73312c82` |
+| painted | canvas | image | `sha256:9d5a95ffdc78d5d2ef42d1d3e6ecd89611186f94b482072885943d95cd8c0caf` |
+| painted | plan | plan | `sha256:3dbf794b86a6c8e37f9264cdbf481b41c570a66e91b506ea6a69dbff5a09bf07` |
+| painted | mask | mask | `sha256:dcb605e9394522b829adbf58e4f2c02f8f3fde1dbbf2ab303f17c8c0b360c051` |
+| painted | image of mask | image | `sha256:6cdce5d307e6a3160df21c2eecc118973c57cf27a7b383c960a7d8deefd76651` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

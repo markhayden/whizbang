@@ -48,6 +48,24 @@ What to look for: the first window is a square of 24, the support centred in it;
 second is a square of 20, its own support's larger side and context, slid down and left to
 fit, so the support sits in its top right corner.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| middle | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| middle | mask | mask | `sha256:16c497dda63e7a8f125e0c5753d5dec26dfeb281e67090ec2b6c68fadae1e02d` |
+| corner | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| corner | mask | mask | `sha256:060e63f6c557b517fc2dae1f4ce6ca73684b51596a689bdb18d131f10b021b43` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

@@ -13,7 +13,7 @@ use super::support::*;
 
 /// A picture with one-pixel detail: a checker of single pixels on the left, lines one
 /// pixel wide on the right.
-fn fine() -> Image {
+pub fn fine() -> Image {
     picture(240, 160, |x, y| {
         let v = if x < 120 {
             if (x + y) % 2 == 0 { 255 } else { 0 }
@@ -26,7 +26,7 @@ fn fine() -> Image {
     })
 }
 
-fn scene(width: u32, height: u32) -> Image {
+pub fn scene(width: u32, height: u32) -> Image {
     let scene = Scene::random(34, 160, f64::from(height) / f64::from(width));
     scene.render(width, (width, height), &IDENTITY, scenes::same)
 }

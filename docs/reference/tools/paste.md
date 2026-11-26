@@ -67,6 +67,26 @@ protected across it.
 What to look for: only the block's unprotected pixels changed, 1,904 of them; the stripe
 and everything outside are the base's, though the fill repainted them.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| feathered | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| feathered | fill | image | `sha256:d2709184acfb077a260637285c893a2b9548325c03afea6ae0b405eb2298a26f` |
+| feathered | mask | mask | `sha256:5403d259c34845b90789f0ceb1dd664f79a3f25f929155fd508f133b6ded16e2` |
+| protected | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| protected | fill | image | `sha256:7789febc56cdef3312a8b78f855fb36b614bb7cb52a6567c9c485a92bca6d4cf` |
+| protected | mask | mask | `sha256:daff6255b44d68677bd34be2e8bea7ad833d7d4d62b2d7194ea528ccabf61654` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

@@ -1,7 +1,9 @@
 //! The record of `subtract`, `docs/reference/tools/subtract.md`.
 
 use whizbang_core::artifact::{Location, Mask, Shape};
-use whizbang_rascal::feather::feather;
+use whizbang_rascal::examples::{
+    subtract_bar as bar, subtract_faint as faint, subtract_oval as oval,
+};
 use whizbang_rascal::subtract::{Other, subtract};
 
 use super::super::grow::{made_by, mask_of, plane};
@@ -9,36 +11,9 @@ use super::super::record::{picture, tiled, time};
 use super::{Page, SIZES, count, hold, timed_head, timed_row};
 
 const W: usize = 96;
-const H: usize = 64;
 
 fn never() -> bool {
     false
-}
-
-/// The mask both examples subtract from: an oval, feathered by a sigma of 2.
-fn oval() -> Mask {
-    let core = plane(W, H, |x, y| {
-        let (dx, dy) = (x as i64 - 48, y as i64 - 32);
-        dx * dx * 256 + dy * dy * 576 <= 147_456
-    });
-    feather(mask_of(W, H, core, &[0; W * H]), 2.0, &never)
-        .unwrap()
-        .unwrap()
-}
-
-/// A bar four columns wide from top to bottom, with no blend.
-fn bar() -> Mask {
-    mask_of(W, H, plane(W, H, |x, _| (46..50).contains(&x)), &[0; W * H])
-}
-
-/// A disc of radius 4, feathered by a sigma of 3: a faint blend nine pixels past its core.
-fn faint() -> Mask {
-    let core = plane(W, H, |x, y| {
-        (x as i64 - 30).pow(2) + (y as i64 - 32).pow(2) <= 16
-    });
-    feather(mask_of(W, H, core, &[0; W * H]), 3.0, &never)
-        .unwrap()
-        .unwrap()
 }
 
 struct Example {

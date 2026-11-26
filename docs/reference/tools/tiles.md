@@ -57,6 +57,23 @@ What to look for: the lines are whole in the bottom right tile, at the picture's
 judge's provider scales a large picture down before the model sees it; a tile is small enough
 not to be.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. These are the
+inputs of `details` too, whose record this is. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| scene | images | image | `sha256:9386792f9b1ad4ecd2057142dd207c50e66391aac7e68baa9c337b87974092d4` |
+| fine | images | image | `sha256:bfcc8bba8e69d1e7d18cae96022474897d4688b52b7769061f6192de87ca3ca1` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 None of its own: it measures nothing. What it does to a judge's verdicts is measured by the

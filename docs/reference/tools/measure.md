@@ -62,6 +62,28 @@ What to look for: before `apply` drift has no `before` and is not applicable, so
 five measure; after it continuity falls to 0 on the smooth canvas, where the two columns
 beside the line are now alike, and the tone step to a tenth.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| smooth | after | image | `sha256:a1784862a52d1df621f21f5ecb87b29cab8669b480ad4f192603794170e85bc7` |
+| smooth | before | image | `sha256:4a1f416814e4de643c1c200890a6ebc1e98a9e7f5e2b86a53a390062cfc2393c` |
+| smooth | mask | mask | `sha256:b36cd15c2de89c179cec1e216246a0dd015567158130a46080d1b672a964dc54` |
+| smooth | line of mask | location | `sha256:f33f4f79010ab2a22d3e0a6d08fa77eb9da68237b974107a7e367c68020abf1e` |
+| detail | after | image | `sha256:ec6ee8d7c5f736ff43111951db09dfe7c3dbefcd0044f14d165a29e0048a49fc` |
+| detail | before | image | `sha256:8a7b5edd4ad1498c199c212d6d2cd9c1875412945a6c1e78291150007bb9f130` |
+| detail | mask | mask | `sha256:75551e90e24dc74f10e6bdbb3db610857fd8f9867fd22a01baf3e49c83603574` |
+| detail | line of mask | location | `sha256:b9e7f56466326d6c5d1966096202c312d87146bb2f7fdff2aa6b98b98e958e0c` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

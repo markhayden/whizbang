@@ -50,6 +50,24 @@ What to look for: the feathered disc's core, its whole feather (even its faintes
 and its protected patch are all protected after, 1,288 pixels; the 4,856 others are the
 core. A blend weighing a few levels protects its pixel as fully as the core does.
 
+### The inputs, in a store
+
+`whizbang store record-inputs --store <dir>` writes the inputs of these examples into a store
+that is there, as canonical artifacts made by the constructors this record's tests use, each
+with what it depends on, and prints each one's identity (`crates/whizbang/src/record_inputs.rs`).
+A walkthrough gives the same inputs to the command line and to the playground. They are:
+
+<!-- inputs: begin -->
+
+| Example | Input | Type | Identity |
+|---|---|---|---|
+| feathered | mask | mask | `sha256:2a80f9215a7f976a4e8a3072c26dfeaf72f98b3fdd3bebfba89d083d8d463edc` |
+| feathered | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+| cornered | mask | mask | `sha256:370c8e8c666df7f418814f67b8c65b300ddefc2e0c7f3bcb140f96b2506c6c32` |
+| cornered | image | image | `sha256:5b673f00862bdb77dc9805e663c997175b329f97a6a31eb55469d099fef74f33` |
+
+<!-- inputs: end -->
+
 ## Rung 2 results
 
 Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.

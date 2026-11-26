@@ -14,17 +14,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use whizbang_core::artifact::{
-    self, Artifact, BandProfile, Line, Location, Mask, Series, Shape, Source, UseCase, Windows,
-};
+use whizbang_core::artifact::{self, Artifact, Mask};
 use whizbang_core::contract::{Engine, Executor, NoBackends, Registry};
 use whizbang_core::identity::{DecodeLimits, Digest};
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
+use whizbang_rascal::examples::{grow_band, grow_blob};
 use whizbang_rascal::grow::{Grow, grow, grown, radius_squared, rows_down};
 use whizbang_testkit::scratch::Scratch;
 
-use super::grow::{VECTORS, made_by, mask_of, on, plane, vector_mask, vector_result};
+use super::grow::{VECTORS, mask_of, plane, vector_mask, vector_result};
 use super::grow_action::call;
 
 fn never() -> bool {
@@ -148,97 +147,6 @@ pub(crate) fn png_file(
 const WIDTH: usize = 96;
 const HEIGHT: usize = 64;
 
-/// The first example's mask: a blob, as a segmenter finds one, and a thin protected bar
-/// beside it.
-fn blob() -> Mask {
-    let core = plane(WIDTH, HEIGHT, |x, y| {
-        let (dx, dy) = (x as i64 - 40, y as i64 - 22);
-        dx * dx * 100 + dy * dy * 256 <= 25_600
-    });
-    let bar = plane(WIDTH, HEIGHT, |x, y| {
-        (59..61).contains(&x) && (8..56).contains(&y)
-    });
-    mask_of(WIDTH, HEIGHT, core, &bar)
-}
-
-/// The second example's mask: a band along column 48 with a feathered edge, a profile
-/// and a tone ramp, and a protected patch beside it.
-fn band() -> Mask {
-    let binding = on(WIDTH as u32, HEIGHT as u32);
-    let line = Location::new(
-        binding.clone(),
-        Shape::Line {
-            line: Line::Column(48.0),
-            width: 4.0,
-        },
-        made_by("line"),
-    )
-    .unwrap();
-    let mut mask = Mask::from_core(
-        binding.clone(),
-        UseCase::Seam,
-        plane(WIDTH, HEIGHT, |x, _| (46..50).contains(&x)),
-        Source {
-            locations: vec![line.id()],
-            instances: Vec::new(),
-        },
-        made_by("profile"),
-    )
-    .unwrap();
-    // Six columns of feather on each side, fading outward.
-    let blend = (0..WIDTH * HEIGHT).map(|at| {
-        let x = at % WIDTH;
-        let out = if x < 46 {
-            46 - x
-        } else {
-            (x + 1).saturating_sub(50)
-        };
-        if (1..=6).contains(&out) {
-            (260 - 40 * out) as u8
-        } else {
-            0
-        }
-    });
-    mask.set_blend(blend.collect()).unwrap();
-    mask.protect_union(&plane(WIDTH, HEIGHT, |x, y| {
-        (51..58).contains(&x) && (24..34).contains(&y)
-    }))
-    .unwrap();
-    let series = |name: &str, unit: &str, channels: u32, action: &str| {
-        let values = vec![2.0; channels as usize * HEIGHT];
-        Series::new(
-            binding.clone(),
-            name,
-            unit,
-            channels,
-            values,
-            made_by(action),
-        )
-        .unwrap()
-    };
-    let windows = Windows {
-        gap: 1,
-        step_columns: 3,
-        texture_columns: 8,
-    };
-    let band = BandProfile::new(
-        binding.clone(),
-        line.id(),
-        48,
-        2.0,
-        vec![2.0; HEIGHT],
-        windows,
-        "fan-v1",
-        made_by("fan"),
-    )
-    .unwrap();
-    mask.set_profile(band, series("sigma_px", "px", 1, "feather"))
-        .unwrap();
-    mask.push_tone_ramp(series("tone_ramp.step", "levels", 3, "ramp"), 0.5)
-        .unwrap();
-    mask
-}
-
 struct Example {
     name: &'static str,
     px: f64,
@@ -259,8 +167,8 @@ fn examples() -> [Example; 2] {
         before,
     };
     [
-        example("blob", blob(), 6.5, Some(12.0)),
-        example("band", band(), 3.0, None),
+        example("blob", grow_blob(), 6.5, Some(12.0)),
+        example("band", grow_band(), 3.0, None),
     ]
 }
 
