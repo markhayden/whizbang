@@ -22,16 +22,32 @@
 //! frozen is not run under it. Each judge of the matrix is one comparison of the gate's two
 //! arms, decided alone ([`Gate::score`]); the gate is admitted when every judge's is, and
 //! rejected when any judge's is.
+//!
+//! **A gate frozen in its matrix** (plan mE, task M1, items 3 and 4; version 3 of the file).
+//! The binding runs one way: the gate names its matrix by file alone, and the matrix names
+//! the gate by the SHA-256 of its bytes (`[gates]`), so the matrix's identity, which every
+//! run holds, covers the gate. Version 3 refuses `matrix_identity`. Its `[baseline]` names
+//! two arms of the matrix, which may hold more, or two versions of a set under one arm
+//! (`arm`, `control_set`, `treatment_set`). Its `[confidence] hypotheses` is the count over
+//! every gate the matrix names. Version 2 files read and score as before.
 
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::{Paired, Resampling, Row};
 
-/// The version of the gate file this build reads: 2 names the matrix (`[run]`).
-pub const GATE_VERSION: u64 = 2;
+/// The newest version of the gate file this build reads: 2 names the matrix and its
+/// identity (`[run]`); 3 is frozen in its matrix, which names it by its digest.
+pub const GATE_VERSION: u64 = 3;
 
-/// The version of the receipt a gate's run writes.
+/// The versions of the gate file this build reads.
+pub const GATE_VERSIONS: [u64; 2] = [2, 3];
+
+/// The version of the receipt a version 2 gate writes.
 pub const RECEIPT_VERSION: u64 = 1;
+
+/// The version of the receipt a version 3 gate writes: it may name the arm two versions of
+/// a set were compared under, and the items whose label differs between them.
+pub const RECEIPT_VERSION_FROZEN: u64 = 2;
 
 /// A gate file.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -40,8 +56,9 @@ pub struct Gate {
     pub gate_version: u64,
     /// The matrix the gate is run over.
     pub run: Run,
-    /// The arm compared against, and the arm on trial.
-    pub baseline: Arms,
+    /// The arm compared against, and the arm on trial; or, in version 3, two versions of a
+    /// set under one arm.
+    pub baseline: Baseline,
     pub measure: Measure,
     pub confidence: Confidence,
     pub families: Families,
@@ -52,20 +69,56 @@ pub struct Gate {
     pub too_little_data: TooLittleData,
 }
 
-/// The matrix a gate is run over: its file, relative to the gate file's folder, and its
-/// identity (`Matrix::identity`, 64 hex digits).
+/// The matrix a gate is run over: its file, relative to the gate file's folder, and, in
+/// version 2 alone, its identity (`Matrix::identity`, 64 hex digits).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
     pub matrix: String,
-    pub matrix_identity: String,
+    #[serde(default)]
+    pub matrix_identity: Option<String>,
 }
 
+/// What a gate compares, as its file states it: `control` and `treatment`, two arms; or, in
+/// version 3, `arm`, `control_set` and `treatment_set`, two versions of a set under one arm.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Arms {
-    pub control: String,
-    pub treatment: String,
+pub struct Baseline {
+    #[serde(default)]
+    pub control: Option<String>,
+    #[serde(default)]
+    pub treatment: Option<String>,
+    #[serde(default)]
+    pub arm: Option<String>,
+    #[serde(default)]
+    pub control_set: Option<String>,
+    #[serde(default)]
+    pub treatment_set: Option<String>,
+}
+
+/// What a gate compares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Compared {
+    /// Two arms of the matrix, each by its name.
+    Arms { control: String, treatment: String },
+    /// Two versions of a set of one use case, by their ids, under one arm.
+    Sets {
+        arm: String,
+        control: String,
+        treatment: String,
+    },
+}
+
+impl Compared {
+    /// The control and the treatment, as a receipt names them: arms, or set ids.
+    pub fn sides(&self) -> (&str, &str) {
+        match self {
+            Compared::Arms { control, treatment }
+            | Compared::Sets {
+                control, treatment, ..
+            } => (control, treatment),
+        }
+    }
 }
 
 /// The primary measure and how each outcome counts toward it.
@@ -203,9 +256,9 @@ impl Gate {
     /// anything else, or states what the spec does not allow.
     pub fn parse(text: &str) -> Result<Gate, String> {
         let gate: Gate = toml::from_str(text).map_err(|e| format!("the gate file: {e}"))?;
-        if gate.gate_version != GATE_VERSION {
+        if !GATE_VERSIONS.contains(&gate.gate_version) {
             return Err(format!(
-                "the gate file is version {}; this build reads {GATE_VERSION}",
+                "the gate file is version {}; this build reads 2 and {GATE_VERSION}",
                 gate.gate_version
             ));
         }
@@ -238,8 +291,19 @@ impl Gate {
         }
         let r = &gate.run;
         let hex = |c: char| c.is_ascii_digit() || ('a'..='f').contains(&c);
-        if r.matrix_identity.len() != 64 || !r.matrix_identity.chars().all(hex) {
-            return Err("the gate file: matrix_identity is 64 lowercase hex digits".into());
+        match (gate.gate_version, &r.matrix_identity) {
+            (2, Some(identity)) if identity.len() == 64 && identity.chars().all(hex) => {}
+            (2, _) => {
+                return Err("the gate file: matrix_identity is 64 lowercase hex digits".into());
+            }
+            (_, Some(_)) => {
+                return Err(
+                    "the gate file: version 3 names its matrix by file alone, and the matrix \
+                     names the gate by its digest; matrix_identity is version 2's"
+                        .into(),
+                );
+            }
+            (_, None) => {}
         }
         let plain = |part: &str| {
             !part.is_empty()
@@ -250,9 +314,7 @@ impl Gate {
         if !r.matrix.split('/').all(plain) {
             return Err("the gate file: matrix is a plain path beside the gate".into());
         }
-        if gate.baseline.control == gate.baseline.treatment {
-            return Err("the gate file: the control and the treatment are two arms".into());
-        }
+        gate.compared()?;
         let f = &gate.families;
         if f.minimum == 0 || f.resamples == 0 || gate.repetitions.count == 0 {
             return Err("the gate file: families, resamples and repetitions are positive".into());
@@ -270,6 +332,62 @@ impl Gate {
             return Err("the gate file: every margin is a finite number".into());
         }
         Ok(gate)
+    }
+
+    /// What the gate compares, refused when `[baseline]` states neither two arms nor, in
+    /// version 3, two versions of one use case's set under one arm, or states both.
+    pub fn compared(&self) -> Result<Compared, String> {
+        let b = &self.baseline;
+        let set_id = |id: &str| {
+            let parts: Vec<&str> = id.split('/').collect();
+            parts.len() == 2
+                && (parts.iter()).all(|p| {
+                    !p.is_empty()
+                        && (p.chars())
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                })
+        };
+        match (
+            &b.control,
+            &b.treatment,
+            &b.arm,
+            &b.control_set,
+            &b.treatment_set,
+        ) {
+            (Some(control), Some(treatment), None, None, None) => {
+                if control == treatment {
+                    return Err("the gate file: the control and the treatment are two arms".into());
+                }
+                Ok(Compared::Arms {
+                    control: control.clone(),
+                    treatment: treatment.clone(),
+                })
+            }
+            (None, None, Some(arm), Some(control), Some(treatment)) if self.gate_version >= 3 => {
+                let use_case = |id: &str| id.split('/').next().unwrap_or_default().to_owned();
+                if !set_id(control)
+                    || !set_id(treatment)
+                    || control == treatment
+                    || use_case(control) != use_case(treatment)
+                {
+                    return Err(
+                        "the gate file: control_set and treatment_set are two sets of one use \
+                         case, by their ids"
+                            .into(),
+                    );
+                }
+                Ok(Compared::Sets {
+                    arm: arm.clone(),
+                    control: control.clone(),
+                    treatment: treatment.clone(),
+                })
+            }
+            _ => Err(
+                "the gate file: [baseline] names control and treatment, two arms; or, in \
+                 version 3, arm, control_set and treatment_set"
+                    .into(),
+            ),
+        }
     }
 
     /// How the gate's comparison is resampled.
@@ -455,10 +573,18 @@ pub struct Receipt {
     pub sets: Vec<String>,
     /// Each set's labels file as it was read, by its SHA-256.
     pub labels_sha256: std::collections::BTreeMap<String, String>,
-    /// Cells of the gate's two arms that were scored.
+    /// Cells of the gate's two arms, or of its two sets, that were scored.
     pub cells: usize,
+    /// The two arms, or the two sets' ids.
     pub control: String,
     pub treatment: String,
+    /// The arm two versions of a set were compared under (version 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arm: Option<String>,
+    /// Of two versions of a set, the items whose label differs between them: counted here,
+    /// scored under neither version's truth (version 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relabelled: Option<usize>,
     #[serde(flatten)]
     pub scored: Scored,
 }
