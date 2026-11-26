@@ -418,3 +418,23 @@ fn measure_as_an_action_hands_back_a_series_for_each_measure_that_measured() {
         .input("mask", mask_id);
     assert!(invalid(&engine, &wrong).contains("of one size"));
 }
+
+#[test]
+fn continuity_is_a_ratio_from_zero_to_one_less_than_the_width() {
+    // `measure`'s continuity, its unit and range (plan mE, task P1, item 7): the mean
+    // step across the line over the row's mean step between neighbouring columns, so a
+    // ratio with no unit. 0 where the line has no step; 1 where it steps as the row does
+    // on average; at most the width less one, where all of the row's change is at the
+    // line. One row of five pixels each, the line at column 3.
+    let rows: [[u8; 5]; 3] = [[0, 0, 0, 90, 90], [0, 10, 20, 30, 40], [0, 30, 30, 30, 30]];
+    let mut rgba = Vec::new();
+    for row in rows {
+        for level in row {
+            rgba.extend_from_slice(&[level, level, level, 255]);
+        }
+    }
+    let pixels = CanonicalPixels::from_rgba(5, 3, rgba).unwrap();
+    let measured = continuity(&pixels, 3);
+    assert_eq!(measured.rows, [0, 1, 2]);
+    assert_eq!(measured.values, [4.0, 1.0, 0.0]);
+}

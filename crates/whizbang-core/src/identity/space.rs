@@ -87,6 +87,10 @@ impl From<Space> for SpaceRecord {
     }
 }
 
+/// The slack a point a mapping computed is given past an edge, in pixels, where the
+/// mapping does not magnify (ADR 0001).
+pub(super) const SLACK: f64 = 1e-9;
+
 impl Space {
     /// A space of these dimensions. Both are at least 1, and a flat space does not wrap.
     pub fn new(
@@ -178,14 +182,15 @@ impl Space {
     }
 
     /// Like [`Space::place`], for a point a mapping computed: rounding may have carried it
-    /// a hair past an edge, so it is given `SLACK` pixels and brought back onto the edge.
-    pub(super) fn land(&self, point: Point) -> Result<Point> {
-        const SLACK: f64 = 1e-9;
+    /// a hair past an edge, so it is given `slack` pixels and brought back onto the edge.
+    /// The slack is [`SLACK`] scaled by how much the mapping magnifies (plan mE, task P1,
+    /// item 5): rounding in the space a point comes from is that much larger here.
+    pub(super) fn land(&self, point: Point, slack: f64) -> Result<Point> {
         let (width, height) = (f64::from(self.width), f64::from(self.height));
         let snap = |value: f64, limit: f64| {
-            if (-SLACK..0.0).contains(&value) {
+            if (-slack..0.0).contains(&value) {
                 0.0
-            } else if value > limit && value <= limit + SLACK {
+            } else if value > limit && value <= limit + slack {
                 limit
             } else {
                 value

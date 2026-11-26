@@ -25,18 +25,24 @@
 //! whose sine, cosine and arc functions are `libm`'s, so a carried location has the same
 //! identity on every machine. A polygon, a line's path and a stroke's path are carried
 //! vertex by vertex; a box through a homography is the polygon of its four corners; the
-//! whole image through a rotation is the whole image. Nothing is clipped or split there: a
-//! vertex that lands outside is refused, and so is a shape that would cross a panorama's
-//! seam once rotated, and every shape whose width or edges have no one image there (a box
-//! or a column through a rotation, a line or a stroke through either).
+//! whole image through a rotation is the whole image. Nothing is clipped there: a vertex
+//! that lands outside is refused, and so is every shape whose width has no one image there
+//! (a column, a line or a stroke through a rotation, a line or a stroke through a
+//! homography).
 //!
-//! **A perspective view** (ADR 0051) carries nothing yet: it is refused, naming the mapping.
+//! **Through a perspective view** (ADR 0051) a box, a polygon or the whole view lands on
+//! the panorama as the polygon of its boundary, cut at the seam into a part for each side,
+//! or as a band the full width of the panorama when it holds a pole; and a box or a polygon
+//! on the panorama lands in the view as the box or the polygon of what the view sees of
+//! it, clipped to the view and said to be partial when anything was left out. A rotation
+//! carries a polygon or a box onto a panorama the same way (`footprint.rs`). Lines,
+//! strokes and views are refused through either.
 //!
 //! An absent thing is absent on the other image too.
 
 use crate::identity::{Binding, Destination, Direction, Mapping, Point, Space, Topology};
 
-use super::{ArtifactError, ArtifactType, Line, Location, Result, Shape, Step};
+use super::{ArtifactError, ArtifactType, Line, Location, Result, Shape, Step, footprint};
 
 /// The action and version a carried location's origin names.
 const STEP: (&str, &str) = ("carry", "1");
@@ -93,12 +99,6 @@ pub fn carry(location: &Location, binding: &Binding, toward: Toward) -> Result<C
             on.source_space()
         ));
     }
-    // The footprint of a shape in a perspective view is no shape of the same kind on the
-    // panorama, and may cross its seam or hold a pole: plan mE, task P1, carries one
-    // (ADR 0051). Until then it is refused, before anything is mapped.
-    if matches!(binding.mapping(), Mapping::Perspective { .. }) {
-        return refuse("a location is not carried through a perspective view yet");
-    }
     // Whether the mapping's parameters run the way the location is carried.
     let forward = matches!(
         (binding.direction(), toward),
@@ -108,10 +108,10 @@ pub fn carry(location: &Location, binding: &Binding, toward: Toward) -> Result<C
     let (shapes, partial) = match regions(binding.mapping(), binding, forward) {
         Some(regions) => by_regions(location.shape(), &regions, &into)?,
         None if *binding.mapping() == Mapping::Identity => (vec![location.shape().clone()], false),
-        None => (
-            vec![by_points(location.shape(), binding, toward, &into)?],
-            false,
-        ),
+        None if matches!(binding.mapping(), Mapping::Perspective { .. }) => {
+            footprint::through_view(location.shape(), binding, forward)?
+        }
+        None => (by_points(location.shape(), binding, toward, &into)?, false),
     };
     let step = Step::new(STEP.0, STEP.1)
         .input("location", location.id().0)
@@ -353,56 +353,44 @@ fn boxed(a: Point, b: Point) -> Shape {
     }
 }
 
-/// The shape carried vertex by vertex through a rotation or a homography.
-fn by_points(shape: &Shape, binding: &Binding, toward: Toward, into: &Space) -> Result<Shape> {
+/// The shape carried vertex by vertex through a homography, or through a rotation, where
+/// a polygon or a box is its footprint, cut at the seam or a band at a pole
+/// ([`footprint::through_rotation`]).
+fn by_points(shape: &Shape, binding: &Binding, toward: Toward, into: &Space) -> Result<Vec<Shape>> {
     let rotation = matches!(binding.mapping(), Mapping::Rotation { .. });
     let one = |p: Point| match toward {
         Toward::Destination => binding.to_destination(p),
         Toward::Source => binding.to_source(p),
     };
+    let back = |p: Point| match toward {
+        Toward::Destination => binding.to_source(p),
+        Toward::Source => binding.to_destination(p),
+    };
+    let from = match toward {
+        Toward::Destination => binding.source_space(),
+        Toward::Source => binding.destination_space(),
+    };
+    if rotation && matches!(shape, Shape::Polygon { .. } | Shape::Box { .. }) {
+        return footprint::through_rotation(shape, &from, into, &one, &back);
+    }
     let many = |points: &[Point]| -> Result<Vec<Point>> {
-        let carried = points
+        Ok(points
             .iter()
             .map(|p| one(*p))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        // Two neighbours more than half the panorama apart went round its seam.
-        let half = f64::from(into.width()) / 2.0;
-        if rotation && carried.windows(2).any(|w| (w[0].x - w[1].x).abs() > half) {
-            return refuse(
-                "the shape would cross the panorama's seam once rotated, and is not split \
-                 here",
-            );
-        }
-        Ok(carried)
+            .collect::<std::result::Result<Vec<_>, _>>()?)
     };
     let not = |what: &str| {
         refuse(format!(
             "{what} is not carried through a rotation or a homography"
         ))
     };
-    match shape {
-        Shape::Absent => Ok(Shape::Absent),
-        Shape::WholeImage if rotation => Ok(Shape::WholeImage),
-        Shape::Polygon { points } => {
-            let points = many(points)?;
-            if rotation
-                && points
-                    .first()
-                    .zip(points.last())
-                    .is_some_and(|(a, b)| (a.x - b.x).abs() > f64::from(into.width()) / 2.0)
-            {
-                return refuse(
-                    "the shape would cross the panorama's seam once rotated, and is not split \
-                     here",
-                );
-            }
-            Ok(Shape::Polygon { points })
-        }
+    let shape = match shape {
+        Shape::Absent => Shape::Absent,
+        Shape::WholeImage if rotation => Shape::WholeImage,
+        Shape::Polygon { points } => Shape::Polygon {
+            points: many(points)?,
+        },
         Shape::WholeImage | Shape::Box { .. } if !rotation => {
-            let from = match toward {
-                Toward::Destination => binding.source_space(),
-                Toward::Source => binding.destination_space(),
-            };
             let (left, top, right, bottom) = match shape {
                 Shape::Box {
                     left,
@@ -418,15 +406,39 @@ fn by_points(shape: &Shape, binding: &Binding, toward: Toward, into: &Space) -> 
                 Point::new(right, bottom),
                 Point::new(left, bottom),
             ];
-            Ok(Shape::Polygon {
+            Shape::Polygon {
                 points: many(&corners)?,
-            })
+            }
         }
-        Shape::Box { .. } | Shape::WholeImage => not("a box"),
-        Shape::View { .. } => not("a view"),
-        Shape::Line { .. } => not("a line"),
-        Shape::Stroke { .. } => not("a stroke"),
-    }
+        Shape::Box { .. } | Shape::WholeImage => return not("a box"),
+        Shape::View { .. } => return not("a view"),
+        Shape::Line { .. } => return not("a line"),
+        Shape::Stroke { .. } => return not("a stroke"),
+    };
+    Ok(vec![shape])
+}
+
+/// A rectangle to clip a polygon to, in pixels.
+pub(super) struct Window {
+    pub lo: f64,
+    pub hi: f64,
+    pub ylo: f64,
+    pub yhi: f64,
+}
+
+/// A polygon clipped to a rectangle, by [`clip_polygon`].
+pub(super) fn clip_to(points: &[Point], window: &Window) -> Vec<Point> {
+    let region = Region {
+        lo: window.lo,
+        hi: window.hi,
+        ylo: window.ylo,
+        yhi: window.yhi,
+        ax: 1.0,
+        bx: 0.0,
+        ay: 1.0,
+        by: 0.0,
+    };
+    clip_polygon(points, &region)
 }
 
 /// Sutherland and Hodgman, against the region's four edges.

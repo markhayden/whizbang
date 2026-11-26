@@ -13,6 +13,7 @@
 mod band;
 mod carry;
 mod derivation;
+mod footprint;
 mod location;
 mod mask;
 mod picture;

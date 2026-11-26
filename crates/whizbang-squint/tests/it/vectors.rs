@@ -3,9 +3,14 @@
 //! The pixel digests were computed apart from this crate, by a separate statement of the
 //! record's method (`docs/reference/tools/view.md`) in whole-number arithmetic: the box
 //! snapped outward, the size, and for each output sample the area-weighted sum over the
-//! source pixels its rectangle touches, divided once and rounded half up; then ADR 0001's
-//! `pixels/1` over the result. The pictures are `support::noisy`, which that statement
-//! repeats.
+//! source pixels its rectangle touches, divided once and rounded half up, each colour
+//! weighted by alpha as well where any alpha is over 0; then ADR 0001's `pixels/1` over
+//! the result. The pictures are `support::noisy`, which that statement repeats.
+//!
+//! Weighting by alpha (plan mE, task P1, item 6) changed the two reduced vectors with
+//! alpha, `tall` and `inner`. Their pixel digests were worked out again by that separate
+//! statement, a short program outside the repository that first gave all five of the
+//! digests before the change, and only then the two new ones; the test agreed with them.
 //!
 //! The file digests are what the pinned PNG encoder writes for those pixels: the core's
 //! one encoder (`whizbang_core::identity::encode`), whose pins its own test holds
@@ -56,8 +61,8 @@ pub const VECTORS: &[Vector] = &[
         bbox: [0.0, 0.0, 1.0, 1.0],
         cut: [0.0, 0.0, 9.0, 3000.0],
         shown: (3, 1024),
-        pixels: "sha256:a36af55b50d0e73d98ea70e7ff5c4060dc0e30cca892b7b88b8027f148244ed0",
-        file: "sha256:5be78c8d2a252b35c5d8158944662d1007980a1741faa4b5510b72b4f5513eb6",
+        pixels: "sha256:a485fc9f2a3f791afbc13c238e68bd21de1fbde6edfe75dcf3fdfe6111fb6deb",
+        file: "sha256:1d2501dc1c7853f26b211db67c8209850820fa1bb5d88bd548a8600d8a8788e8",
     },
     // A box inside the image, snapped outward on all four sides, then scaled.
     Vector {
@@ -68,8 +73,8 @@ pub const VECTORS: &[Vector] = &[
         bbox: [0.013, 0.02, 0.991, 0.987],
         cut: [19.0, 2.0, 1487.0, 109.0],
         shown: (1024, 75),
-        pixels: "sha256:0c94e5c22ca385b105b1c9ef87aae2f795f23a13c91a5e2228cc44684ab55880",
-        file: "sha256:24e3ad4ef2392de811366842f9468c6e856cb6cafc11d92f74868cbc6f662d1d",
+        pixels: "sha256:0907d1e380ee24b9a4280dc0190df66e17833f2a5cfe68e496527781cd18119e",
+        file: "sha256:4cf5e1120988d0fd9fea9c6c63b482f32fea2c549a9f3ac2a42e55bc4b9e4679",
     },
     // One pixel over the bound: every output pixel but the ends straddles two.
     Vector {

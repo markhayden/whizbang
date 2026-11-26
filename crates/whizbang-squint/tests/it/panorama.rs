@@ -64,8 +64,9 @@ fn refused(request: &Request<'_>) -> String {
 /// vectors, each a Gaussian of the angle from its centre. Its functions are `libm`'s, so
 /// the measurements made against it are the same on every machine.
 pub struct SphereScene {
-    /// The centre, the angular sigma in radians, and the amplitude of each channel.
-    blobs: Vec<([f64; 3], f64, [f64; 3])>,
+    /// The centre, the angular sigma in radians, the amplitude of each channel, and the
+    /// cosine of 5.3 sigmas (or -2 when that passes the far side of the sphere).
+    blobs: Vec<([f64; 3], f64, [f64; 3], f64)>,
     base: [f64; 3],
 }
 
@@ -91,7 +92,12 @@ impl SphereScene {
                     amp * rng.range(0.5, 1.0),
                     amp * rng.range(0.5, 1.0),
                 ];
-                (centre, sigma, rgb)
+                let near = if 5.3 * sigma < PI {
+                    libm::cos(5.3 * sigma)
+                } else {
+                    -2.0
+                };
+                (centre, sigma, rgb, near)
             })
             .collect();
         SphereScene { blobs, base }
@@ -102,9 +108,9 @@ impl SphereScene {
     /// is passed over before its angle is worked out, since it is under that there.
     pub fn at(&self, p: [f64; 3]) -> [u8; 3] {
         let mut c = self.base;
-        for (centre, sigma, rgb) in &self.blobs {
+        for (centre, sigma, rgb, near) in &self.blobs {
             let dot = (p[0] * centre[0] + p[1] * centre[1] + p[2] * centre[2]).clamp(-1.0, 1.0);
-            if 5.3 * sigma < PI && dot < libm::cos(5.3 * sigma) {
+            if dot < *near {
                 continue;
             }
             let angle = libm::acos(dot);
@@ -188,12 +194,23 @@ pub fn compared() -> Vec<Compared> {
             let crop = seen(&panorama, yaw, pitch, fov);
             let side = crop.image.space().width();
             let shown = rgba_of(&crop.image);
+            // Where the binding puts each pixel's centre: the mapping's own arithmetic, the
+            // view worked out once, the column taken round as the panorama's space takes it.
+            let basis = Perspective { yaw, pitch, fov }.basis();
+            let span = f64::from(side);
             let mut analytic = Vec::with_capacity(side as usize * side as usize);
             for v in 0..side {
                 for u in 0..side {
-                    let centre = Point::new(f64::from(u) + 0.5, f64::from(v) + 0.5);
-                    let there = crop.binding.to_destination(centre).unwrap();
-                    analytic.push(scene.at(direction(there, 512, 256)));
+                    let (x, y) = basis.to_panorama(
+                        span,
+                        512.0,
+                        256.0,
+                        f64::from(u) + 0.5,
+                        f64::from(v) + 0.5,
+                    );
+                    let x = x.rem_euclid(512.0);
+                    let x = if x >= 512.0 { 0.0 } else { x };
+                    analytic.push(scene.at(direction(Point::new(x, y), 512, 256)));
                 }
             }
             let (largest, mean, _) = differences(&shown, &analytic);
@@ -289,11 +306,11 @@ fn a_perspective_view_has_the_same_pixels_on_every_machine() {
 fn a_perspective_view_is_bound_onto_its_panorama_and_says_what_made_it() {
     // Red counts columns six at a time and green rows three at a time, so a pixel tells
     // where it was sampled.
-    let pano = panorama(1440, 720, |x, y| [(x / 6) as u8, (y / 3) as u8, 0, 255]);
+    let pano = panorama(1200, 600, |x, y| [(x / 6) as u8, (y / 3) as u8, 0, 255]);
     let crop = seen(&pano, -90.0, 20.0, 90.0);
-    // A quarter of 1440 is 360 pixels across, shown pixel for pixel.
-    assert_eq!(side(1440, 90.0), 360);
-    assert_eq!(crop.image.space(), Space::flat(360, 360).unwrap());
+    // A quarter of 1200 is 300 pixels across.
+    assert_eq!(side(1200, 90.0), 300);
+    assert_eq!(crop.image.space(), Space::flat(300, 300).unwrap());
     let binding = &crop.binding;
     assert_eq!(binding.source(), crop.image.identity().pixels);
     assert_eq!(
@@ -312,17 +329,17 @@ fn a_perspective_view_is_bound_onto_its_panorama_and_says_what_made_it() {
     );
     // The middle of the view is where it looks: 90 degrees left of the middle column,
     // 20 above the horizon.
-    let middle = binding.to_destination(Point::new(180.0, 180.0)).unwrap();
-    assert!((middle.x - 360.0).abs() < 1e-9 && (middle.y - 280.0).abs() < 1e-9);
+    let middle = binding.to_destination(Point::new(150.0, 150.0)).unwrap();
+    assert!((middle.x - 300.0).abs() < 1e-9 && (middle.y - 700.0 / 3.0).abs() < 1e-9);
     // Each pixel shows the panorama where its binding puts the pixel's centre, to
     // within the blend of two neighbours.
     let shown = rgba_of(&crop.image);
-    for v in (0..360u32).step_by(7) {
-        for u in (0..360u32).step_by(11) {
+    for v in (0..300u32).step_by(7) {
+        for u in (0..300u32).step_by(11) {
             let at = binding
                 .to_destination(Point::new(f64::from(u) + 0.5, f64::from(v) + 0.5))
                 .unwrap();
-            let i = ((v * 360 + u) * 4) as usize;
+            let i = ((v * 300 + u) * 4) as usize;
             let (red, green) = (f64::from(shown[i]), f64::from(shown[i + 1]));
             assert!(
                 (red - (at.x - 0.5) / 6.0).abs() <= 1.0
@@ -332,7 +349,10 @@ fn a_perspective_view_is_bound_onto_its_panorama_and_says_what_made_it() {
         }
     }
     let step = &crop.image.origin().steps()[0];
-    assert_eq!((step.action.as_str(), step.version.as_str()), ("view", "1"));
+    assert_eq!(
+        (step.action.as_str(), step.version.as_str()),
+        ("view", whizbang_squint::view::VERSION)
+    );
     let arguments: Vec<(&str, &str)> = step
         .arguments
         .iter()
@@ -345,13 +365,13 @@ fn a_perspective_view_is_bound_onto_its_panorama_and_says_what_made_it() {
 fn a_perspective_view_wraps_across_the_seam_and_is_held_to_its_least_and_greatest_side() {
     // The left half of this panorama is dark and the right half light; the seam is
     // between its last column and its first.
-    let pano = panorama(2048, 1024, |x, _| {
-        let level = if x < 1024 { 40 } else { 220 };
+    let pano = panorama(1024, 512, |x, _| {
+        let level = if x < 512 { 40 } else { 220 };
         [level, level, level, 255]
     });
     // At yaw -180 the view looks at the seam: its left half shows the panorama's right
     // edge, light, and its right half the left edge, dark, with no gap between.
-    let crop = seen(&pano, -180.0, 0.0, 60.0);
+    let crop = seen(&pano, -180.0, 0.0, 120.0);
     let across = crop.image.space().width() as usize;
     assert_eq!(across, 341);
     let shown = rgba_of(&crop.image);
@@ -456,7 +476,7 @@ fn a_second_image_of_another_projection_is_refused() {
 fn angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake() {
     // Squint's `view_refuses_bad_arguments_as_the_models_mistake`, its cases of angles.
     let flat = picture(256, 192, noisy(25, false));
-    let pano = panorama(256, 128, noisy(26, false));
+    let pano = panorama(256, 128, |x, y| [x as u8, (2 * y) as u8, 90, 255]);
     let part = image_in(
         png(256, 128, &paint(256, 128, noisy(27, false))),
         Projection::Equirectangular,
@@ -504,4 +524,137 @@ fn angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake() {
             fov: 60.0
         }
     );
+}
+
+#[test]
+fn a_perspective_view_shows_no_colour_hidden_under_transparency() {
+    // The left half of this panorama is opaque white, the right half black at alpha 0.
+    // A view across the edge between them blends white with nothing: every pixel that
+    // shows anything is white, at the alpha of the blend (plan mE, task P1, item 6).
+    let pano = panorama(512, 256, |x, _| {
+        if x < 256 {
+            [255, 255, 255, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
+    let crop = seen(&pano, 0.0, 0.0, 30.0);
+    let shown = rgba_of(&crop.image);
+    let pixels = shown.as_chunks::<4>().0;
+    assert!(pixels.iter().any(|p| p[3] > 0 && p[3] < 255), "a blend");
+    assert!(pixels.iter().any(|p| p[3] == 0));
+    for p in pixels {
+        if p[3] > 0 {
+            assert_eq!(p[..3], [255, 255, 255], "{p:?}");
+        }
+    }
+}
+
+#[test]
+fn a_box_on_a_view_or_on_a_crop_of_one_lands_on_the_panorama() {
+    let pano = panorama(720, 360, |x, y| [(x / 3) as u8, (y / 2) as u8, 0, 255]);
+    // A view of 256 pixels at yaw -90 and pitch 0: column 180, row 180 of the panorama
+    // is its middle. At the middle of a 90 degree view a pixel is 2 tan(45) / 256
+    // radians, 0.448 degrees, so a box 20 pixels square around it is about 9 degrees,
+    // 17.9 pixels of a panorama of two a degree.
+    let look = seen(&pano, -90.0, 0.0, 90.0);
+    let middle = whizbang_squint::view::box_onto_panorama(
+        [118.0, 118.0, 138.0, 138.0],
+        std::slice::from_ref(&look.binding),
+    )
+    .unwrap();
+    assert!(!middle.partial);
+    let [whizbang_core::artifact::Shape::Polygon { points }] = &middle.parts[..] else {
+        panic!("{:?}", middle.parts);
+    };
+    assert!(
+        points
+            .iter()
+            .all(|p| (p.x - 180.0).abs() < 9.5 && (p.y - 180.0).abs() < 9.5),
+        "{points:?}"
+    );
+    // The same box on a crop of the right half of the view lands where it would on the
+    // view itself, shifted by the crop.
+    let half = look_into(&look.image, [0.5, 0.0, 1.0, 1.0]);
+    let chain = [half.binding.clone(), look.binding.clone()];
+    let through =
+        whizbang_squint::view::box_onto_panorama([0.0, 118.0, 10.0, 138.0], &chain).unwrap();
+    let direct = whizbang_squint::view::box_onto_panorama(
+        [128.0, 118.0, 138.0, 138.0],
+        std::slice::from_ref(&look.binding),
+    )
+    .unwrap();
+    assert_eq!(through, direct);
+    // `box_to_root` takes crops alone, and names the mapping it will not take.
+    assert!(whizbang_squint::view::box_to_root([0.0, 0.0, 10.0, 10.0], &chain).is_err());
+}
+
+fn look_into(image: &Image, bbox: [f64; 4]) -> Crop {
+    look(image, bbox)
+}
+
+/// Squint's `raster::sample` with its wrap, on four channels: the blend across, then down,
+/// each channel apart. Version 1 of `view` sampled so.
+fn sampled_as_before(rgba: &[u8], width: u32, height: u32, x: f64, y: f64) -> [u8; 4] {
+    let (w, h) = (f64::from(width), f64::from(height));
+    let mut fx = (x - 0.5).rem_euclid(w);
+    if fx >= w {
+        fx = 0.0;
+    }
+    let fy = (y - 0.5).clamp(0.0, h - 1.0);
+    let x0 = (fx.floor() as u32).min(width - 1);
+    let y0 = (fy.floor() as u32).min(height - 1);
+    let (x1, y1) = ((x0 + 1) % width, (y0 + 1).min(height - 1));
+    let (ax, ay) = (fx - fx.floor(), fy - fy.floor());
+    let at = |x: u32, y: u32, k: usize| {
+        f64::from(rgba[(y as usize * width as usize + x as usize) * 4 + k])
+    };
+    let mut out = [0u8; 4];
+    for (k, o) in out.iter_mut().enumerate() {
+        let top = at(x0, y0, k) * (1.0 - ax) + at(x1, y0, k) * ax;
+        let bottom = at(x0, y1, k) * (1.0 - ax) + at(x1, y1, k) * ax;
+        *o = (top * (1.0 - ay) + bottom * ay).round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+#[test]
+fn an_opaque_view_has_the_pixels_of_the_first_version_to_the_bit() {
+    // Weighting by alpha changes nothing where the four alphas are equal: an opaque view
+    // is sampled as before, every pixel, noise and all.
+    let pano = panorama(256, 128, noisy(41, false));
+    let crop = seen(&pano, -120.0, 25.0, 60.0);
+    let source = rgba_of(&pano);
+    let basis = Perspective {
+        yaw: -120.0,
+        pitch: 25.0,
+        fov: 60.0,
+    }
+    .basis();
+    let shown = rgba_of(&crop.image);
+    for (i, pixel) in shown.as_chunks::<4>().0.iter().enumerate() {
+        let (u, v) = ((i % 256) as f64, (i / 256) as f64);
+        let (x, y) = basis.to_panorama(256.0, 256.0, 128.0, u + 0.5, v + 0.5);
+        assert_eq!(
+            *pixel,
+            sampled_as_before(&source, 256, 128, x, y),
+            "pixel {i}"
+        );
+    }
+}
+
+#[test]
+fn a_box_on_a_crop_that_is_not_of_the_view_is_refused() {
+    let pano = panorama(720, 360, |x, y| [(x / 3) as u8, (y / 2) as u8, 0, 255]);
+    let one = seen(&pano, -90.0, 0.0, 90.0);
+    let other = seen(&pano, 90.0, 0.0, 90.0);
+    // A crop of the first view, then the second view's binding: the chain is broken.
+    let half = look_into(&one.image, [0.5, 0.0, 1.0, 1.0]);
+    let chain = [half.binding.clone(), other.binding.clone()];
+    let refused = whizbang_squint::view::box_onto_panorama([0.0, 118.0, 10.0, 138.0], &chain);
+    assert!(
+        matches!(&refused, Err(ViewError::Artifact(_))),
+        "{refused:?}"
+    );
+    assert!(format!("{}", refused.unwrap_err()).contains("do not end on the perspective view"));
 }
