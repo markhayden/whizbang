@@ -120,6 +120,7 @@ fn instance(kind: Kind, matters: bool, hidden_ok: bool) -> Instance {
         hidden_ok,
         text: String::new(),
         evidence: Vec::new(),
+        evidence_kinds: Vec::new(),
         provenance: "rules",
     }
 }
@@ -239,8 +240,10 @@ fn the_ported_rules_are_squints_rules_byte_for_byte_less_the_fields_dropped() {
         SQUINTS_TEMPLATE
     );
     // Nothing of the files is lost in reading: no base file holds a field that was
-    // dropped (a profile, `extends`, `[hints]`, `[screen]`), and a file that holds one
-    // is not read.
+    // dropped (a profile, `extends`, `[screen]`; plan mE, task T1, item 4, with a line in
+    // the carry-over list), and a file that holds one is not read. `[hints]` is read
+    // (`checklist::hints_are_read_from_a_rule_file_and_given_to_their_tools_as_arguments`),
+    // and no base file holds one.
     for (name, text) in TABLE {
         assert!(use_case::rules(name).is_some(), "{name}");
         for dropped in ["profile", "extends", "[hints", "[screen"] {
@@ -249,6 +252,15 @@ fn the_ported_rules_are_squints_rules_byte_for_byte_less_the_fields_dropped() {
     }
     let screened = format!("{}\n[screen]\ntools = []\n", TABLE[0].1);
     assert!(toml::from_str::<use_case::Rules>(&screened).is_err());
+    for key in [
+        "profile = \"architecture\"",
+        "extends = \"source-fidelity\"",
+    ] {
+        let text = TABLE[0]
+            .1
+            .replace("[rules]\n", &format!("[rules]\n{key}\n"));
+        assert!(toml::from_str::<use_case::Rules>(&text).is_err(), "{key}");
+    }
 }
 
 #[test]

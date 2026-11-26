@@ -11,6 +11,7 @@
 # readings_most = 16
 # max_regions = 6
 # max_region_label_bytes = 120
+# region_kind = "change_region"
 # time_limit_s = 300
 # segments_most = 32
 # [[measurements]]
@@ -93,6 +94,7 @@ import json
 import math
 import re
 
+from whizbang_pack.masks import Grid, components, mask_of, one_grid, printable
 from whizbang_pack.subjects import subjects_of
 
 # Squint's constants, each as it was (its `outline.py`).
@@ -138,146 +140,7 @@ ASPECT = 0.01
 # The side, in working pixels, of the cells boundary points are sorted into.
 CELL = 32
 
-_BITS = bytes([0x30]) + bytes([0x31]) * 255
-_RUNS = re.compile("1+")
 _ONE = re.compile("1")
-
-
-class Grid:
-    """The working grid: `w` by `h` pixels, a mask on it a Python integer of `w * h` bits,
-    the first pixel (top left) its highest bit, row by row."""
-
-    def __init__(self, width, height):
-        self.w, self.h = width, height
-        self.n = n = width * height
-        self.full = (1 << n) - 1
-        self.col0 = int(("1" + "0" * (width - 1)) * height, 2)
-        self.coll = int(("0" * (width - 1) + "1") * height, 2)
-        self.row0 = int("1" * width + "0" * (n - width), 2)
-        self.rowl = int("0" * (n - width) + "1" * width, 2)
-        if width > 4 and height > 4:
-            row = "00" + "1" * (width - 4) + "00"
-            self.inner = int("0" * (2 * width) + row * (height - 4) + "0" * (2 * width), 2)
-        else:
-            self.inner = 0
-
-    def text(self, m):
-        return format(m, "0%db" % self.n)
-
-    def mask(self, value, width, height):
-        """A mask of `width` by `height` bits brought to the grid by its nearest pixel."""
-        if (width, height) == (self.w, self.h):
-            return value
-        text = format(value, "0%db" % (width * height))
-        xs = [min(width - 1, (x * width) // self.w) for x in range(self.w)]
-        made, rows = {}, []
-        for y in range(self.h):
-            sy = min(height - 1, (y * height) // self.h)
-            row = made.get(sy)
-            if row is None:
-                line = text[sy * width : (sy + 1) * width]
-                row = "".join([line[x] for x in xs]) if "1" in line else "0" * self.w
-                made[sy] = row
-            rows.append(row)
-        return int("".join(rows), 2)
-
-    # What is at the neighbour on each side, brought to each pixel; past the frame's edge
-    # the edge itself.
-    def _left(self, m):
-        return ((m >> 1) & ~self.col0) | (m & self.col0)
-
-    def _right(self, m):
-        return ((m << 1) & self.full & ~self.coll) | (m & self.coll)
-
-    def _up(self, m):
-        return (m >> self.w) | (m & self.row0)
-
-    def _down(self, m):
-        return ((m << self.w) & self.full) | (m & self.rowl)
-
-    def eroded(self, m):
-        """The mask's minimum over a square of three."""
-        across = m & self._left(m) & self._right(m)
-        return across & self._up(across) & self._down(across)
-
-    def dilated(self, m):
-        """The mask's maximum over a square of three."""
-        across = m | self._left(m) | self._right(m)
-        return across | self._up(across) | self._down(across)
-
-    def opened(self, m, side):
-        """Eroded, then dilated, by a square of `side` (odd)."""
-        for _ in range(side // 2):
-            m = self.eroded(m)
-        for _ in range(side // 2):
-            m = self.dilated(m)
-        return m
-
-    def boundary(self, m):
-        """The mask's own edge pixels, without those within two of the frame's edge: a shape
-        running off the picture has no outline there."""
-        return m & ~self.eroded(m) & self.inner
-
-    def of_runs(self, runs):
-        """The mask of these runs, each (y, x0, x1)."""
-        if not runs:
-            return 0
-        made = bytearray(b"0") * self.n
-        for y, x0, x1 in runs:
-            made[y * self.w + x0 : y * self.w + x1] = b"1" * (x1 - x0)
-        return int(made, 2)
-
-
-def components(grid, m):
-    """The 4-connected pieces of a mask, by the runs of each row and a union of them: each
-    piece `[pixels, x0, y0, x1, y1, runs]`, its box's right and bottom out; and for each row
-    its runs, each `(x0, x1, piece)`."""
-    text, w = grid.text(m), grid.w
-    parent = []
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    rows, previous = [], []
-    for y in range(grid.h):
-        row = text[y * w : (y + 1) * w]
-        current = []
-        if "1" in row:
-            j = 0
-            for found in _RUNS.finditer(row):
-                x0, x1 = found.span()
-                label = len(parent)
-                parent.append(label)
-                while j < len(previous) and previous[j][1] <= x0:
-                    j += 1
-                k = j
-                while k < len(previous) and previous[k][0] < x1:
-                    a, b = find(label), find(previous[k][2])
-                    if a != b:
-                        parent[max(a, b)] = min(a, b)
-                    k += 1
-                current.append((x0, x1, label))
-        rows.append(current)
-        previous = current
-    pieces, index = [], {}
-    for y, current in enumerate(rows):
-        named = []
-        for x0, x1, label in current:
-            root = find(label)
-            if root not in index:
-                index[root] = len(pieces)
-                pieces.append([0, x0, y, x1, y + 1, []])
-            piece = pieces[index[root]]
-            piece[0] += x1 - x0
-            piece[1], piece[3], piece[4] = min(piece[1], x0), max(piece[3], x1), y + 1
-            piece[5].append((y, x0, x1))
-            named.append((x0, x1, index[root]))
-        rows[y] = named
-    return pieces, rows
-
 
 def despeckled_pair(grid, before, after):
     """Both masks without the fragments under one bar, set by the largest fragment of
@@ -476,20 +339,6 @@ def working(width, height):
     return max(1, round(WORK * width / longer)), max(1, round(WORK * height / longer))
 
 
-def _mask(context, image, phrase):
-    """The union of what the segmenter finds for a phrase in the named picture: a mask of
-    its own size."""
-    shown = context.image(image)
-    value = 0
-    for instance in context.segment(image, phrase=phrase, most=MOST):
-        value |= int(instance.mask.translate(_BITS), 2)
-    return value, shown.width, shown.height
-
-
-def _printable(text, most):
-    return "".join(c if " " <= c <= "~" else " " for c in text)[:most]
-
-
 def values_of(found):
     """A subject's reading, each value rounded as squint's were."""
     values = {
@@ -516,7 +365,7 @@ def region_of(subject, piece, candidate):
     return {
         "frame": "candidate",
         "box": [round(x0 * candidate.width, 2), round(y0 * candidate.height, 2), round(x1 * candidate.width, 2), round(y1 * candidate.height, 2)],
-        "label": _printable(said, LABEL_MOST),
+        "label": printable(said, LABEL_MOST),
         "score": piece["score"],
     }
 
@@ -524,17 +373,16 @@ def region_of(subject, piece, candidate):
 def run(context):
     arguments = context.arguments
     source, candidate = context.image("source"), context.image("candidate")
-    if abs((candidate.width * source.height) / (candidate.height * source.width) - 1.0) > ASPECT:
-        raise ValueError("the source and the candidate are not one grid: register the candidate onto the source first")
+    one_grid(source, candidate, ASPECT)
     named, not_applicable = subjects_of(json.loads(arguments["job"])) if arguments.get("job") else ([], [])
     named += [p.strip() for p in (arguments.get("phrases") or "").split(";") if p.strip()]
     grid = Grid(*working(source.width, source.height))
     scale = max(source.width, source.height) / max(grid.w, grid.h)
     readings, found_pieces = [], []
     for phrase in named[:SUBJECTS_MOST]:
-        subject = _printable(phrase, 200)
-        before = grid.mask(*_mask(context, "source", phrase))
-        after = grid.mask(*_mask(context, "candidate", phrase))
+        subject = printable(phrase, 200)
+        before = grid.mask(*mask_of(context, "source", phrase, MOST))
+        after = grid.mask(*mask_of(context, "candidate", phrase, MOST))
         before, after = despeckled_pair(grid, before, after)
         if max(before.bit_count(), after.bit_count()) / grid.n < PRESENT_NAMED:
             not_applicable.append(subject)

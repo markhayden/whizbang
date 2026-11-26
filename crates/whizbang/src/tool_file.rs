@@ -80,6 +80,8 @@ pub const TIME_MOST_S: u64 = 600;
 /// The most regions a declaration may allow, and the longest label of one, in bytes.
 pub const REGIONS_MOST: usize = 64;
 pub const REGION_LABEL_MOST: usize = 200;
+/// The longest name of the kind a tool's regions are.
+pub const REGION_KIND_MOST: usize = 32;
 /// The most vertices of a region's polygon (as a location's, ADR 0002).
 pub const POLYGON_MOST: usize = 64;
 /// The kinds of evidence a tool file may return: `measurements` always, `regions` beside.
@@ -111,6 +113,11 @@ pub struct Declaration {
     pub max_regions: Option<usize>,
     #[serde(default)]
     pub max_region_label_bytes: Option<usize>,
+    /// The kind of evidence its regions are, as the rules' `evidence_kinds` name kinds
+    /// (`change_region`): which obligations a region of it bears on (plan mE, task T1,
+    /// item 4). Given when, and only when, `evidence` names `regions`.
+    #[serde(default)]
+    pub region_kind: Option<String>,
     pub measurements: Vec<Measure>,
     #[serde(default)]
     pub arguments: Vec<Arg>,
@@ -207,6 +214,12 @@ impl Declaration {
             self.max_region_label_bytes,
         ) {
             (true, Some(most), Some(label)) => {
+                let kind = self.region_kind.as_deref().unwrap_or_default();
+                rule(
+                    (1..=REGION_KIND_MOST).contains(&kind.len())
+                        && kind.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                    "a tool that returns regions declares region_kind, 1 to 32 lower-case letters or _",
+                )?;
                 rule(
                     (1..=REGIONS_MOST).contains(&most),
                     "max_regions is from 1 to 64",
@@ -222,10 +235,10 @@ impl Declaration {
                         .to_owned(),
                 );
             }
-            (false, None, None) => {}
+            (false, None, None) if self.region_kind.is_none() => {}
             (false, _, _) => {
                 return Err(
-                    "max_regions and max_region_label_bytes are for a tool whose evidence names regions"
+                    "max_regions, max_region_label_bytes and region_kind are for a tool whose evidence names regions"
                         .to_owned(),
                 );
             }
@@ -584,8 +597,8 @@ pub fn checked(
 
 /// One region held to its rules: an object of `frame`, the binding of an image the run
 /// handed the tool; exactly one of `box`, `[left, top, right, bottom]` with area inside
-/// that image, and `polygon`, 3 to 64 points `[x, y]` inside it; `label`, printable ASCII
-/// of at most `label_most` bytes; and `score`, from 0 to 1. Nothing else.
+/// that image, and `polygon`, 3 to 64 points `[x, y]` inside it, with area; `label`,
+/// printable ASCII of 1 to `label_most` bytes; and `score`, from 0 to 1. Nothing else.
 pub fn region(item: &Json, frames: &[Frame], label_most: usize) -> Result<Region, String> {
     let Some(item) = item.as_object() else {
         return Err("a region is not an object".to_owned());
@@ -644,19 +657,31 @@ pub fn region(item: &Json, frames: &[Frame], label_most: usize) -> Result<Region
                 }
                 points.push([x, y]);
             }
+            // Twice its signed area, by the shoelace: a polygon with none is no region.
+            let twice: f64 = (0..points.len())
+                .map(|i| {
+                    let ([x0, y0], [x1, y1]) = (points[i], points[(i + 1) % points.len()]);
+                    x0 * y1 - x1 * y0
+                })
+                .sum();
+            if twice == 0.0 {
+                return Err("a region's polygon has no area".to_owned());
+            }
             RegionShape::Polygon(points)
         }
         _ => return Err("a region has a box or a polygon, one of the two".to_owned()),
     };
     let label = match item.get("label").and_then(Json::as_str) {
         Some(text)
-            if text.len() <= label_most && text.chars().all(|c| (' '..='~').contains(&c)) =>
+            if !text.is_empty()
+                && text.len() <= label_most
+                && text.chars().all(|c| (' '..='~').contains(&c)) =>
         {
             text.to_owned()
         }
         _ => {
             return Err(format!(
-                "a region's label is printable text of at most the {label_most} bytes declared"
+                "a region's label is printable text of 1 to the {label_most} bytes declared"
             ));
         }
     };
