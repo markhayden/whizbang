@@ -1279,10 +1279,10 @@ How each kind is reached, as the code stands (`crates/whizbang/src/main.rs`, `ra
 | A rascal recipe | `whizbang rascal <name>` (`remove-prompt`, `repair-area`, `mask-rect`, ...); any recipe file by `whizbang rascal run <file>` | Its task form |
 | The loop | `whizbang rascal remove-checked` | The task `remove_checked` |
 | A use case of `check` | `whizbang squint check <use-case>` | Its task form: pictures, brief and judge only (`use_case_fields`); no setting of `check` can be given there |
-| `check` itself | No command of its own: `squint check` calls it | Its tool form, from its descriptor: `tools`, `details`, `detail`, `second_look`, `submission`, a job and its images |
+| `check` itself | No command of its own. `squint check <use-case>` calls it under one of the five use cases; its own default, the use case `general` (`check.rs`), where the job brings no checklist and the second look does not apply, is reached only by a one-step recipe file run by `whizbang rascal run <file>` | Its tool form, from its descriptor: `use_case` (`general` by default), `tools`, `details`, `detail`, `second_look`, `submission`, `projection`, a job and its images |
 | `align`, `view`, `details`, `resize` | No command of their own: a one-step recipe file of the walkthrough's, run by `whizbang rascal run <file>`, spends nothing; inside `squint check` they are the judge's calls or `--details first` | Their tool forms |
 | `change_map`, `edge_similarity` | `whizbang try <name> --source <id> --candidate <id>`; `whizbang eval tool <name> --set <set>` | Their tool forms |
-| A tool file | Listed under `[tools] paths` in the session's config, then: `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config and does not list it | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
+| A tool file | Listed under `[tools] paths` in the session's config, then: `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config: it is not among the actions, and its mark is among the marks (`wiring.rs`, `describe_text`) | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
 | A setting of `check` | `squint check`'s flags: `--details first --detail <tools>`, `--details first --detail tiles`, `--second-look off\|on\|strict`, `--submission v1\|v2`, and `v3` once F1 adds it (F1, item 3) | `check`'s tool form; not the use cases' forms |
 | The set builder | `uv run whizbang-sets build\|rebuild\|promote` in `tools/sets/`; it writes set folders, not runs of a store | None: it is not an action |
 
@@ -1321,15 +1321,20 @@ file, a bundle file, a set built `--fake`) are kept in the system temp folder an
 after it.
 
 **Each row's cases.** Before its session, each row lists in the record the cases it walks:
-every mode the tool takes (`segment`'s phrase, point and box, on each backend; each method of
+for `check`, the use case `general` with a job of the caller's and each of the five use cases,
+each named in the form's `use_case` with its job, images in the job's order, tools and
+projection; for a setting, the run's record shows the setting in effect (the submission's
+format, the second look's turn taken or not, the details measured first); every mode the tool
+takes (`segment`'s phrase, point and box, on each backend; each method of
 a tool file; `second_look`'s three values; each submission format; `tiles` on a job of one
 image and its refusal on a pair), each worked example of its record, the case it handles badly
 if the record names one, and one refusal. A row is done only when every case has its outcome.
 
 **The command line, for each case.**
 1. `whizbang describe`: the tool is listed with its kind and the mark its record states. A
-   tool file, a setting or the set builder is not in it: its record states its mark, and the
-   row says so.
+   tool file, `tiles` or the second look is not among its actions, and its mark, where its
+   record states one, is among the marks: the row checks it against the record. The set
+   builder and the submission format are in neither, and the row says so.
 2. Its command's `--help`: every argument its record names, and no other. Where it has no
    command of its own (the table above), the row records that as a finding and walks the route
    the table gives.
@@ -2186,3 +2191,19 @@ against the code; all were right and taken.
 10. **Minor: two sentences contradicted the code.** Right (O1.9 waits for R4; `runs.rs` writes
     no bundle inside the store). Taken: the exception named; bundle files and screenshots live
     in the system temp folder for the session only.
+
+### Review round O1-3
+
+Review round O1-3, on draft 3 of task O1. Verdict: revise. Round O1-2's fixes held but for the
+wording of its finding 1, corrected here. Two findings: 1 major, 1 minor. Each was checked
+against the code; both were right and taken.
+
+1. **Major: `check` has a general use case that no command reaches.** Right (`check.rs`: the
+   argument `use_case` defaults to `general`, whose job brings no checklist and where the
+   second look does not apply; `squint.rs` takes the five use cases only). Taken: `general`
+   walked by a one-step recipe file and `check`'s form; each checklist case names its use
+   case, job, images, tools and projection, and the run's record must show the setting in
+   effect.
+2. **Minor: a tool file's mark is in `describe`.** Right (`wiring.rs`, `describe_text`, prints
+   the marks of tools that are no action). Taken: not among the actions, its mark among the
+   marks, checked against its record.
