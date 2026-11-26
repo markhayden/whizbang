@@ -789,8 +789,10 @@ until `check.rs` holds `labels` among a run's calls, which task F1 adds; until t
 `C+regions@eomt` cannot run its `eomt` method under a judge. The model tier's test on the
 Mac is the orchestrator's, and the box is ticked once it has passed there.
 
-- [ ] Done when: conformance passes with fakes; the model tier passes on the Mac; `classes`
-  and both methods run under `eval tool --method` against the fakes. **Reviewer reads hardest:** that
+- [x] Done when: conformance passes with fakes; the model tier passes on the Mac; `classes`
+  and both methods run under `eval tool --method` against the fakes. The model tier passed on
+  the Mac on 2026-11-26 at 0fc3376f, `model_tier::eomt_labels_every_pixel_of_the_fixture_on_the_mac`
+  among its ten, with the record retaken (`docs/results/m1c-local-pack.md`). **Reviewer reads hardest:** that
   adding the entry edited no existing tool's logic (section 18, criterion 4).
 
 ## F1. Submission v3 (medium)
