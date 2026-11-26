@@ -24,7 +24,7 @@ fn a_pictures_bytes_tell_only_its_dimensions() {
     // length told what the file had lacked (plan mE, task P0, item 1). Now every picture
     // is written uncompressed: its size and each chunk's length follow from its width and
     // height alone, so any two pictures of one size are files of one shape.
-    use whizbang::pairs_page::{stored_png, stored_png_size};
+    use whizbang::pairs_page::{opaque, stored_png, stored_png_size};
     use whizbang_core::identity::encode::{Channels, png_of};
     let lab = ThreeImages::new("pairs-sizes", FILLED_WITH_AND_SOURCE);
     let over = lab.over(0);
@@ -58,15 +58,22 @@ fn a_pictures_bytes_tell_only_its_dimensions() {
             }
             focused += usize::from(kind == "-focus");
             assert_eq!(files.len(), 3, "pair {n}{kind}");
+            // The pair's one choice: RGB (colour type 2) when every picture is opaque.
+            let colour = files[0][25];
+            let opaque = colour == 2;
             for file in &files {
+                assert_eq!(
+                    file[25], colour,
+                    "pair {n}{kind}: the sides share a colour type"
+                );
                 let pixels = pixels_of(file);
                 let (width, height) = (pixels.width(), pixels.height());
                 // The file is what its dimensions give, to the byte, and holds no chunk
-                // but the picture's own: the encoder's own file of an empty picture of
+                // but the picture's own: the encoder's own file of a blank picture of
                 // that size has the same chunks of the same lengths.
-                assert_eq!(file.len() as u64, stored_png_size(width, height));
-                let blank = vec![0; pixels.rgba().len()];
-                let blank = stored_png(&blank, width, height).unwrap();
+                assert_eq!(file.len() as u64, stored_png_size(width, height, opaque));
+                let blank = vec![u8::MAX; pixels.rgba().len()];
+                let blank = stored_png(&blank, width, height, opaque).unwrap();
                 assert_eq!(lengths(file), lengths(&blank), "pair {n}{kind}");
                 let names: Vec<String> = lengths(file).into_iter().map(|(n, _)| n).collect();
                 assert_eq!(names, ["IHDR", "IDAT", "IEND"]);
@@ -87,21 +94,43 @@ fn a_pictures_bytes_tell_only_its_dimensions() {
         "the pairs of this round would have told their arms by size"
     );
     assert!(focused > 0, "a pair of this round has a focus");
-    // Past one stored block of deflate, as a real picture is: two pictures of one size
-    // and different pixels are files of one length and one shape, which a reader decodes.
+    // Past one stored block of deflate, as a real picture is: the two sides of a pair,
+    // one with a transparent pixel and one opaque, are written RGBA both, files of one
+    // length and one shape; two opaque sides are RGB both, as alike. A reader decodes
+    // each to its pixels.
     let (width, height) = (300, 120);
     let noise: Vec<u8> = (0..width * height * 4)
-        .map(|i| (i * 7919 % 251) as u8)
+        .map(|i| {
+            if i % 4 == 3 {
+                255
+            } else {
+                (i * 7919 % 251) as u8
+            }
+        })
         .collect();
-    let flat = vec![200; noise.len()];
-    let (a, b) = (
-        stored_png(&noise, width, height).unwrap(),
-        stored_png(&flat, width, height).unwrap(),
-    );
-    assert_eq!(a.len() as u64, stored_png_size(width, height));
-    assert_eq!(lengths(&a), lengths(&b));
-    assert_eq!(pixels_of(&a).rgba(), noise.as_slice());
-    assert_eq!(pixels_of(&b).rgba(), flat.as_slice());
+    let flat = vec![200_u8; noise.len()]
+        .chunks_exact(4)
+        .flat_map(|_| [200, 120, 40, 255])
+        .collect::<Vec<u8>>();
+    let mut clear = flat.clone();
+    clear[3] = 0;
+    for (left, right) in [(&noise, &clear), (&noise, &flat)] {
+        let shared = opaque(&[left, right]);
+        assert_eq!(shared, right == &flat);
+        let (a, b) = (
+            stored_png(left, width, height, shared).unwrap(),
+            stored_png(right, width, height, shared).unwrap(),
+        );
+        assert_eq!(a.len() as u64, stored_png_size(width, height, shared));
+        assert_eq!(b.len(), a.len());
+        assert_eq!(lengths(&a), lengths(&b));
+        assert_eq!(pixels_of(&a).rgba(), left.as_slice());
+        assert_eq!(pixels_of(&b).rgba(), right.as_slice());
+    }
+    // An opaque pair is three bytes a pixel; a picture with any transparency is refused
+    // as opaque, so a side never loses its alpha.
+    assert!(stored_png_size(width, height, true) < stored_png_size(width, height, false));
+    assert!(stored_png(&clear, width, height, true).is_err());
 }
 
 #[test]
@@ -123,7 +152,7 @@ fn pairs_drawn_from_runs_are_pictures_whose_bytes_tell_only_their_dimensions() {
         let pixels = pixels_of(&file);
         assert_eq!(
             file.len() as u64,
-            stored_png_size(pixels.width(), pixels.height()),
+            stored_png_size(pixels.width(), pixels.height(), file[25] == 2),
             "{name}"
         );
         let found: Vec<String> = lengths(&file).into_iter().map(|(n, _)| n).collect();

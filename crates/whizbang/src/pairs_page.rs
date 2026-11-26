@@ -17,8 +17,9 @@
 //!   region both changed, with context, at full size, through the edge of a picture that
 //!   wraps (`whizbang_eval::lab::focus`). Names say the pair's place on the page and the
 //!   side, never an arm; each pair's left is written before its right. Each is a PNG whose
-//!   pixels are not compressed ([`stored_png`]; plan mE, task P0, item 1), so its size and
-//!   every length inside it follow from its dimensions alone. A compressing encoder gave a
+//!   pixels are not compressed ([`stored_png`]; plan mE, task P0, item 1), RGB when every
+//!   picture of the pair is opaque and RGBA otherwise, so its size and every length inside
+//!   it follow from its dimensions and that one choice of the pair alone. A compressing encoder gave a
 //!   reference arm's picture, made from the source's own pixels, the source's size to the
 //!   byte; plan m4's chunk of padding hid that from the size but not from the chunk's own
 //!   length.
@@ -33,10 +34,13 @@
 //!   resume.
 //!
 //! What an inspecting picker could still find: the pair ids (corpus ids) and the pictures'
-//! files, which name places and sides only; a side whose pixels are the source's own, when
-//! an arm hands the source back, which the page shows as well (hold `s`); and
-//! `assignment.json` beside the page, which names every arm. A file's bytes, its size and
-//! its chunks' lengths, say nothing beyond the picture's width and height.
+//! files, which name places and sides only; `assignment.json` beside the page, which names
+//! every arm; and, when an arm hands the source back (a reference whose picture is the one
+//! given, as `--from-runs` without `--reference` draws), a side whose file is byte for byte
+//! the source's file beside it, since one encoder writes both from the same pixels. The
+//! page shows that as well (hold `s`): there the blinding is the drawn order of the sides
+//! alone, by the plan's design. A file's size and its chunks' lengths say nothing beyond
+//! the picture's width and height and whether every picture of its pair is opaque.
 //!
 //! The same page is drawn from runs already in the store (`--from-runs`, plan mE, task M2;
 //! [`pairs_from_runs`]): each case's finished run against the picture it was given or
@@ -388,25 +392,37 @@ const STORED_BLOCK: usize = 65_535;
 
 /// The size on disk of [`stored_png`]'s file of a picture of these dimensions: the
 /// signature, `IHDR`, one `IDAT` of a zlib stream of stored blocks over the rows (each a
-/// filter byte and four bytes a pixel), and `IEND`. It follows from the dimensions alone.
-pub fn stored_png_size(width: u32, height: u32) -> u64 {
-    let raw = u64::from(height) * (1 + 4 * u64::from(width));
+/// filter byte and three bytes a pixel when `opaque`, else four), and `IEND`. It follows
+/// from the dimensions and the pair's one choice of `opaque` alone.
+pub fn stored_png_size(width: u32, height: u32, opaque: bool) -> u64 {
+    let channels = if opaque { 3 } else { 4 };
+    let raw = u64::from(height) * (1 + channels * u64::from(width));
     let blocks = raw.div_ceil(STORED_BLOCK as u64).max(1);
     let idat = 2 + 5 * blocks + raw + 4;
     8 + (12 + 13) + (12 + idat) + 12
 }
 
+/// Whether every pixel of every one of these RGBA pictures is opaque: the one choice of a
+/// pair's pictures, whole and of the focus, between RGB and RGBA, so the sides share it.
+pub fn opaque(pictures: &[&[u8]]) -> bool {
+    (pictures.iter()).all(|rgba| rgba.chunks_exact(4).all(|px| px[3] == u8::MAX))
+}
+
 /// A picture of a pair written as a PNG whose pixel data is not compressed (plan mE, task
-/// P0, item 1): eight-bit RGBA, no filter, one `IDAT` holding a zlib stream of stored
-/// deflate blocks of the largest size and the rest, and no other chunk. So its size and
-/// every chunk's length follow from its width and height ([`stored_png_size`]), and two
-/// pictures of one size are files of one length, whichever arm made them.
-pub fn stored_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+/// P0, item 1): eight bits a sample, RGB when the pair is `opaque` ([`opaque`]) and RGBA
+/// otherwise, no filter, one `IDAT` holding a zlib stream of stored deflate blocks of the
+/// largest size and the rest, and no other chunk. So its size and every chunk's length
+/// follow from its width and height and the pair's choice ([`stored_png_size`]), and two
+/// pictures of one size in a pair are files of one length, whichever arm made them.
+pub fn stored_png(pixels: &[u8], width: u32, height: u32, opaque: bool) -> Result<Vec<u8>, String> {
     let row = 4 * width as usize;
     if width == 0 || height == 0 || pixels.len() != row * height as usize {
         return Err("a picture of a pair is not RGBA of its size; no page was finished".into());
     }
-    let size = stored_png_size(width, height);
+    if opaque && !self::opaque(&[pixels]) {
+        return Err("a picture of a pair said to be opaque is not; no page was finished".into());
+    }
+    let size = stored_png_size(width, height, opaque);
     let idat = size - 8 - 25 - 12 - 12;
     if idat > u64::from(i32::MAX as u32) {
         return Err(
@@ -424,7 +440,11 @@ pub fn stored_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Str
     let mut raw = Vec::with_capacity((row + 1) * height as usize);
     for line in pixels.chunks_exact(row) {
         raw.push(0);
-        raw.extend(line);
+        if opaque {
+            raw.extend(line.chunks_exact(4).flat_map(|px| &px[..3]));
+        } else {
+            raw.extend(line);
+        }
     }
     let (mut a, mut b) = (1_u32, 0_u32);
     for byte in &raw {
@@ -445,8 +465,8 @@ pub fn stored_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Str
     let mut header = Vec::with_capacity(13);
     header.extend(width.to_be_bytes());
     header.extend(height.to_be_bytes());
-    // Eight bits a sample, RGBA, deflate, adaptive filtering, no interlace.
-    header.extend([8, 6, 0, 0, 0]);
+    // Eight bits a sample, RGB or RGBA, deflate, adaptive filtering, no interlace.
+    header.extend([8, if opaque { 2 } else { 6 }, 0, 0, 0]);
     let mut out = Vec::with_capacity(size as usize);
     out.extend(b"\x89PNG\r\n\x1a\n");
     chunk(&mut out, b"IHDR", &header);
@@ -622,14 +642,15 @@ fn write_drawn(drawn: &Drawn<'_>, root: &Path, out: &Path) -> Result<Written, St
             out.join("pictures")
                 .join(format!("{file}-{side}{kind}.png"))
         };
-        // Each picture is written uncompressed, so its size follows from its dimensions
-        // alone ([`stored_png`]), left first.
+        // Each picture is written uncompressed, so its size follows from its dimensions and
+        // the pair's one choice of RGB or RGBA alone ([`stored_png`]), left first.
+        let opaque = opaque(&[left.rgba(), right.rgba(), source.rgba()]);
         for (side, pixels) in [("left", &left), ("right", &right), ("source", &source)] {
-            let whole = stored_png(pixels.rgba(), pixels.width(), pixels.height())?;
+            let whole = stored_png(pixels.rgba(), pixels.width(), pixels.height(), opaque)?;
             bytes += write_new(&named(side, ""), &whole)?;
             if let Some(f) = focus.filter(|_| (pixels.width(), pixels.height()) == (width, height))
             {
-                let crop = stored_png(&f.crop(width, pixels.rgba()), f.width, f.height)?;
+                let crop = stored_png(&f.crop(width, pixels.rgba()), f.width, f.height, opaque)?;
                 bytes += write_new(&named(side, "-focus"), &crop)?;
             }
         }
