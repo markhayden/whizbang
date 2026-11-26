@@ -1,4 +1,4 @@
-"""The adapter `eomt-ade20k` (plan mE, task T2; docs/adr/0052-the-fixed-class-segmenter.md):
+"""The adapter `eomt-ade20k` (plan mE, task T2; docs/adr/0053-the-fixed-class-segmenter.md):
 EoMT large, trained on ADE20K at 512, through PyTorch and the `transformers` library. A
 fixed-class segmenter: it labels every pixel of a picture with one of the 150 classes of
 ADE20K, and so answers a phrase only when the phrase is one of them.
@@ -8,7 +8,7 @@ It is the model squint's `classes` and `regions` used (squint, `tools/python/MOD
 upstream safetensors through the library rather than from squint's ONNX export, with
 squint's preprocessing and its reading of the two heads.
 
-**Its features** are `phrase` and `labels`. `labels` (ADR 0052) says what its phrases are:
+**Its features** are `phrase` and `labels`. `labels` (ADR 0053) says what its phrases are:
 its class names are the closed list `CLASSES`, every pixel of a picture is labelled with
 exactly one of them, and a phrase that is one of them is answered with at most one
 instance, the pixels so labelled. So the planes of every class of one picture are disjoint
@@ -254,8 +254,9 @@ class Torch:
         sums = np.bincount(flat, weights=confidence.ravel().astype(np.float64), minlength=len(CLASSES))
         found = []
         for index in np.nonzero(counts)[0]:
-            rows = np.nonzero((labels == index).any(1))[0]
-            columns = np.nonzero((labels == index).any(0))[0]
+            on = labels == index
+            rows = np.nonzero(on.any(1))[0]
+            columns = np.nonzero(on.any(0))[0]
             box = [int(columns[0]), int(rows[0]), int(columns[-1]) + 1, int(rows[-1]) + 1]
             found.append((int(index), float(sums[index] / counts[index]), box))
         return found

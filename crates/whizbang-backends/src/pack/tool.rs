@@ -40,7 +40,7 @@
 //! **A capability a tool asks for** comes as an `ask` and is answered by the caller's
 //! `answer`, which makes it a nested call of the tool's run (ADR 0008), under the run's
 //! allowance and policy. Two capabilities: `segment`, one query of a picture, answered
-//! with masks; and `labels` (plan mE, task T2; ADR 0052), the classes a fixed-class
+//! with masks; and `labels` (plan mE, task T2; ADR 0053), the classes a fixed-class
 //! segmenter labels a picture's pixels with, answered with one plane of each pixel's class
 //! and each class's confidence. Either may name a model of the catalogue, which the caller
 //! routes to. One is open at a time: an `ask` heard while another is being
@@ -79,7 +79,9 @@ pub const MOST_LIMIT: u64 = 64;
 /// The most characters of a phrase a tool asks for, and of a class.
 pub const PHRASE_LIMIT: usize = 512;
 /// The most classes a tool asks labels of: what one byte of a pixel tells apart, beside
-/// none.
+/// none. An ask is one header, held to [`HEADER_LIMIT`]: 255 classes of [`PHRASE_LIMIT`]
+/// characters do not fit in one, so an ask holds as many as its header has room for, and
+/// a worker's header over the bound is refused as any frame's is.
 pub const CLASSES_LIMIT: usize = 255;
 /// The most characters of a model's name an ask gives.
 pub const MODEL_LIMIT: usize = 64;

@@ -30,7 +30,7 @@ pub mod feature {
     pub const BOX: &str = "box";
     /// Segment: a fixed-class segmenter, which labels every pixel with one of a closed
     /// list of classes and answers a phrase only when it is one of them (plan mE, task
-    /// T2; ADR 0052). No request needs it by what it holds: an action that asks for
+    /// T2; ADR 0053). No request needs it by what it holds: an action that asks for
     /// every class of a picture names it as its need, so only such a model answers.
     pub const LABELS: &str = "labels";
     /// Fill: a request with a prompt.

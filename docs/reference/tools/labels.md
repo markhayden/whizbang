@@ -1,7 +1,7 @@
 # labels
 
 The tool record of `labels` (`SPEC.md` sections 4 and 8; plan
-`docs/plans/mE-evidence-and-edit-quality.md`, task T2; ADR 0052). It asks a fixed-class
+`docs/plans/mE-evidence-and-edit-quality.md`, task T2; ADR 0053). It asks a fixed-class
 segmenter, the catalogue's `eomt-ade20k`, which classes it labels each pixel of a picture
 with. Its examples here are answered by the test kit's fake segmenter, declaring what a
 fixed-class segmenter declares, and run as tests
@@ -84,6 +84,9 @@ each pixel asks `labels`.
 | The classes are the model's: a thing outside ADE20K's 150 is labelled as the nearest of them | No example here: the model tier's fixture is a grey ground, a red disc and a blue square |
 | A phrase that is not one of the model's classes is refused | `eomt-ade20k` refuses `a red thing` (`test_eomt.Phrases`) |
 | 255 classes a call at most | ADE20K's 150 is one call |
+| A request's planes are held to 1 GiB (ADR 0020): at one plane of the picture's size a class present, a batch of 64 classes is refused near 50 megapixels once more than about 21 of them are in the picture | No example here: the fixture is 0.3 megapixels |
+| The action holds every present class's plane until it commits them, and the tool's answer holds one more plane, a byte a pixel | 150 classes present on a 12-megapixel picture would be about 1.8 GB held |
+| A `labels` ask's header is held to 64 KiB like every frame of `tool/1`: 255 classes of 512 characters do not fit, and the ask is refused | ADE20K's 150 names are under 2 KiB |
 | The first call of the model loads it into the worker | About 1.3 GB of weights |
 
 ## Mark and history

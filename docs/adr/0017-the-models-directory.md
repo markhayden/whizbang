@@ -926,7 +926,7 @@ the features `phrase`, `point` and `box`, on `macos-arm64` alone.
   it. `owlv2.merges.txt` is byte for byte `sam3`'s `merges.txt`: an install links it from
   an installation that holds it (above, "A file shared between installations").
 
-**A third model, `eomt-ade20k`** (plan mE, task T2, 2026-11-25; ADR 0052): EoMT large
+**A third model, `eomt-ade20k`** (plan mE, task T2, 2026-11-25; ADR 0053): EoMT large
 trained on ADE20K at 512, a fixed-class segmenter, through the adapter `eomt-ade20k` at
 revision `1` (`pack/src/whizbang_pack/eomt_ade20k.py`), on the same runtime and lock, with
 the features `phrase` and `labels`, on `macos-arm64` alone. Its files are those of the

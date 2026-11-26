@@ -1,4 +1,4 @@
-# 0052. The fixed-class segmenter: EoMT on ADE20K as a catalogue entry, the feature `labels`, and a model named by a tool
+# 0053. The fixed-class segmenter: EoMT on ADE20K as a catalogue entry, the feature `labels`, and a model named by a tool
 
 Status: accepted. Changes ADR 0006: a segment backend may declare `labels`, which no request
 needs by what it holds. Changes ADR 0032: a tool's ask may name a model and may ask for

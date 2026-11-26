@@ -33,7 +33,7 @@
 //! **Its capabilities are nested calls** (ADR 0008): a tool's `segment` is a call of the
 //! action `segment` through the executor of the run's context, under its allowance and
 //! policy, cancelled with it. A mask in the store holds no score, so the answer gives
-//! none. A tool's `labels` (plan mE, task T2; ADR 0052) is a call of the action `labels`
+//! none. A tool's `labels` (plan mE, task T2; ADR 0053) is a call of the action `labels`
 //! the same way, and its answer is one plane of each pixel's class, made from the masks
 //! it committed, with each class's confidence, which the run handed back.
 //!

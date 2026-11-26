@@ -1177,8 +1177,10 @@ fn ade20k_classes() -> Vec<String> {
 fn eomt_labels_every_pixel_of_the_fixture_on_the_mac() {
     // Plan mE, task T2, item 3: one labels request of every class on the fixture, through
     // the binary's wiring and the action `labels`, on the GPU. Every pixel has exactly one
-    // class, each class's confidence is from 0 to 1, and a second call answers the same
-    // masks: the model computes the picture once, and its answer repeats exactly.
+    // class, and each class's confidence is from 0 to 1. A second call answers the same
+    // masks: it is answered from the labels the adapter kept of the picture, not by the
+    // model again, so it shows the action's and the kept answer's agreement, not the
+    // model's repeatability.
     use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
     use whizbang_core::contract::{Outcome, Value};
     use whizbang_core::identity::{Projection, Topology};

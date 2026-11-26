@@ -247,7 +247,7 @@ pub fn kinds(worker: &Arc<OneWorker>) -> Kinds {
 /// downloads. The large files' downloads are moved to `us.aws.cdn.hf.co`, the host the
 /// owner approved for the Hub's storage.
 ///
-/// A third model, `eomt-ade20k` (plan mE, task T2; ADR 0052): EoMT large trained on
+/// A third model, `eomt-ade20k` (plan mE, task T2; ADR 0053): EoMT large trained on
 /// ADE20K at 512, the fixed-class segmenter squint used, which labels every pixel with
 /// one of 150 classes (the features `phrase` and `labels`). Its files are those of the
 /// public repository `tue-mps/ade20k_semantic_eomt_large_512` at the commit

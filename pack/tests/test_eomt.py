@@ -1,4 +1,4 @@
-"""The adapter `eomt-ade20k` (plan mE, task T2; ADR 0052), against a stand-in for its runtime
+"""The adapter `eomt-ade20k` (plan mE, task T2; ADR 0053), against a stand-in for its runtime
 that the tests give it: no runtime is imported here (D10).
 
 `StandIn` takes the place of `eomt_ade20k.Torch`: it labels each pixel `sky` where its red

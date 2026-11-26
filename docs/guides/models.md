@@ -9,7 +9,7 @@ the page (`docs/guides/playground.md`, "Models and keys").
 **Today the catalogue holds three models, SAM 3** (`sam3`), **Tiny** (`tiny`: OWLv2
 finds boxes for a phrase and SAM 2.1 Hiera-Tiny draws each mask) **and a fixed-class
 segmenter** (`eomt-ade20k`: EoMT large trained on ADE20K, which labels every pixel with
-one of 150 classes; plan mE, task T2, ADR 0052). The catalogue is the
+one of 150 classes; plan mE, task T2, ADR 0053). The catalogue is the
 list of models a build can install, and it is built into the binary
 (`crates/whizbang/src/catalogue.json`; task N5 of checkpoint 1C,
 `docs/plans/m1c-local-pack.md`, and task T1 of checkpoint 1D,

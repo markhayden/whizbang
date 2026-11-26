@@ -1,4 +1,4 @@
-//! `labels` as an action (plan mE, task T2, item 2; ADR 0052), run through the executor
+//! `labels` as an action (plan mE, task T2, item 2; ADR 0053), run through the executor
 //! against a store, over the test kit's fake segmenter declaring the features of a
 //! fixed-class segmenter: one mask for each class some pixel has, its confidence and its
 //! pixels handed back; an answer that labels a pixel twice fails the run; and a segmenter

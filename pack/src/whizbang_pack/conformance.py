@@ -10,7 +10,7 @@ files of the folder, as an installation's files, by their names; and asks it, th
 worker's own handling of a call, each feature it declares alone and then all of them
 together, about a picture of eight by six pixels. Each answer is held to the contract of
 `pack/1` (ADR 0020) and of the core's answer ([`check`]). An adapter that declares `labels`
-(ADR 0052) is asked a phrase that is its first class, and then every class of its list, in
+(ADR 0053) is asked a phrase that is its first class, and then every class of its list, in
 batches of 64 at one instance each: the planes must be disjoint and cover the picture, a
 class per pixel ([`check_labels`]). It prints a line for each run and
 ends 0 when every run conforms, 1 when one does not, and 2 for a command line it does not
@@ -151,7 +151,7 @@ def labels_requests(classes):
 
 def check_labels(answered):
     """Holds the answers to every class of a fixed-class segmenter's list (`labels_requests`)
-    to `labels` (ADR 0052): each answer as `check` holds it, at most one instance a class, and
+    to `labels` (ADR 0053): each answer as `check` holds it, at most one instance a class, and
     the planes of all of them disjoint and together the whole picture."""
     covered = None
     for request, result in answered:

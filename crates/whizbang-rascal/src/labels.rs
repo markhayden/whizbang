@@ -1,5 +1,5 @@
 //! `labels`: an image and a list of classes in, the pixels a fixed-class segmenter labels
-//! with each class, out (plan mE, task T2, item 2; ADR 0052).
+//! with each class, out (plan mE, task T2, item 2; ADR 0053).
 //!
 //! **A fixed-class segmenter** declares the feature `labels` beside `phrase`: it labels
 //! every pixel of a picture with exactly one class of a closed list, and answers a phrase

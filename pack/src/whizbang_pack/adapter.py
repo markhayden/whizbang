@@ -15,7 +15,7 @@ holds it while the model is resident, and drops it after `unload`. An adapter:
 - names its `device` once loaded, as its runtime names it.
 
 An adapter of a fixed-class segmenter declares `labels` beside `phrase` (plan mE, task T2;
-ADR 0052), and `classes`, its closed list of class names: it labels every pixel of a
+ADR 0053), and `classes`, its closed list of class names: it labels every pixel of a
 picture with exactly one of them, answers a phrase only when it is one of them, with at
 most one instance, the pixels so labelled, its score the class's confidence there, and
 refuses any other phrase. So the planes of every class of one picture are disjoint and
@@ -32,7 +32,7 @@ import re
 import sys
 
 FEATURES = ("phrase", "point", "box")
-# The feature of a fixed-class segmenter, which is no kind of query (ADR 0052).
+# The feature of a fixed-class segmenter, which is no kind of query (ADR 0053).
 LABELS = "labels"
 # Where a model's adapter places it, by the setting `device` (plan 1D, task V1): `auto`, the
 # GPU where its runtime has one and the CPU otherwise, which is the default; or `cpu`.

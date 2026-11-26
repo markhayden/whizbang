@@ -20,7 +20,7 @@ environment), but it is not kept from the network or the disk.
 **What a tool reaches.** Its `run(context)` is given a `Context`: the run's arguments,
 the images it declared, `segment`, which asks whizbang for the capability and waits for
 its answer, and `labels`, which asks a fixed-class segmenter for the classes of every pixel
-(plan mE, task T2; ADR 0052). Either may name a model of the catalogue, `model=`, which
+(plan mE, task T2; ADR 0053). Either may name a model of the catalogue, `model=`, which
 whizbang routes to the segment backend of its config that is that model. Whizbang answers
 each as a nested call of the tool's run.
 

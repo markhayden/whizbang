@@ -13,8 +13,8 @@ identity of the binding its picture is under, an instance names the binding its 
 belongs to, and the handle refuses an answer whose planes name another.
 Changed by ADR 0025 ("What a response says"): each response may say the device that
 answered it and whether a cache did, and the handle keeps both for the run's record.
-Changed by ADR 0052: a segment backend may declare `labels`, which no request needs by
-what it holds
+Changed by ADR 0053: a segment backend may declare `labels`, which no request needs by
+what it holds.
 Date: 2026-11-12
 Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
 a fault's cleaning guarantees and what it does not find, with a rule for adapters; a
@@ -272,7 +272,7 @@ A request needs a feature when it holds what the feature is for:
 | segment | `phrase` | it holds a request by a phrase |
 | segment | `point` | it holds a request by a point |
 | segment | `box` | it holds a request by a box |
-| segment | `labels` | never: a fixed-class segmenter declares it, and an action that asks for every class of a picture needs it (ADR 0052) |
+| segment | `labels` | never: a fixed-class segmenter declares it, and an action that asks for every class of a picture needs it (ADR 0053) |
 | fill | `prompt` | it has a prompt |
 | judge | `image` | its conversation holds an image |
 | judge | `tool` | it defines a tool |
