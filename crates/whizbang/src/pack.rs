@@ -787,9 +787,25 @@ impl Segmenter for Local {
         };
         match supervisor.call_checked(queued, &limits, &verify) {
             Ok(called) => answered(request, called),
-            Err(failed) => Err(failed.fault),
+            Err(failed) => Err(saying(failed.fault, failed.said.as_deref())),
         }
     }
+}
+
+/// A fault the worker's own `error` ended a request in, with the worker's sentence after
+/// its words (plan mE, task T2): `the pack's worker ended the request with the fault
+/// rejected; the worker said: no adapter answers for this model`, so that a run's error
+/// names the cause. Only an answered fault is so ended; its stage and its charge are
+/// kept, and the handle redacts and cleans the whole sentence as it does every fault's.
+fn saying(fault: Fault, said: Option<&str>) -> Fault {
+    let Some(said) = said.filter(|said| !said.trim().is_empty()) else {
+        return fault;
+    };
+    if fault.stage() != whizbang_core::capability::Stage::Answered {
+        return fault;
+    }
+    let words = format!("{}; the worker said: {said}", fault.sentence());
+    Fault::new(fault.kind(), &words).answered(fault.charge())
 }
 
 /// The core's response to a request, from what the worker answered: each instance
@@ -846,8 +862,29 @@ fn answered(request: &SegmentRequest, called: Called) -> Result<SegmentResponse,
 
 #[cfg(test)]
 mod tests {
-    use super::{BAD_CALL_LIMIT, BAD_LIFETIME, LIFETIME_DEFAULT_S, Taken, fraction};
+    use super::{BAD_CALL_LIMIT, BAD_LIFETIME, LIFETIME_DEFAULT_S, Taken, fraction, saying};
+    use whizbang_core::capability::{Fault, FaultKind, Stage};
     use whizbang_core::config::{KindRefused, Setting};
+
+    #[test]
+    fn the_workers_sentence_follows_the_words_of_a_fault_it_ended_a_request_in() {
+        let words = "the pack's worker ended the request with the fault rejected";
+        let answered = Fault::new(FaultKind::Rejected, words).answered(None);
+        let said = saying(answered.clone(), Some("no adapter answers for this model"));
+        assert_eq!(
+            (said.kind(), said.stage(), said.sentence()),
+            (
+                FaultKind::Rejected,
+                Stage::Answered,
+                "the pack's worker ended the request with the fault rejected; the worker said: no adapter answers for this model"
+            )
+        );
+        // Nothing said, or a fault the worker did not answer with, is left as it was.
+        assert_eq!(saying(answered.clone(), None), answered);
+        assert_eq!(saying(answered.clone(), Some(" ")), answered);
+        let not_sent = Fault::new(FaultKind::Unavailable, "not sent").not_sent();
+        assert_eq!(saying(not_sent.clone(), Some("x")), not_sent);
+    }
 
     #[test]
     fn a_fraction_is_digits_and_one_point_from_0_to_1() {
