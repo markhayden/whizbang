@@ -1,0 +1,32 @@
+# The seasonal cover pair (plan mE, task B1, item 9; the carry-over row on it): one family
+# whose restyle lays snow over a protected subject, and two jobs on the same pictures, one
+# whose brief permits a seasonal cover (a pass) and one whose brief does not (a fail). D1
+# builds it from fresh images, live, as a fixture of `check`'s use-case tests; the dry run
+# builds it with the fake generator (scripts/tests/test-sets.sh).
+[set]
+id = "source-fidelity/seasonal-cover-v1"
+use_case = "source-fidelity"
+split = "dev"
+licence = "CC-BY-4.0"
+rules = { base = "source-fidelity", version = 1 }
+
+[[family]]
+id = "garden-bench"
+generator = "fal"
+description = "a small garden with a green wooden bench under an apple tree, beside a brick path"
+brief = "Restyle the scene; keep the structure and every named subject unchanged."
+source = { prompt = "A photograph of a small garden in late summer: a green wooden bench under an apple tree, a brick path beside it, soft daylight.", seed = 4101 }
+protected = [
+  { subject = "the green wooden bench", colour = "green", count = "one" },
+  "the brick path",
+]
+
+[[family.item]]
+id = "garden-bench-snow-permitted"
+brief = "Restyle the scene for winter; a seasonal cover such as snow may lie over the subjects. Keep the structure and every named subject."
+op = { kind = "cover", prompt = "Make it a winter day with fresh snow lying over the garden, the bench and the path. Keep every structure and object exactly where it is.", covers = "green wooden bench", permitted = true }
+
+[[family.item]]
+id = "garden-bench-snow-not-permitted"
+same_as = "garden-bench-snow-permitted"
+op = { kind = "cover", prompt = "Make it a winter day with fresh snow lying over the garden, the bench and the path. Keep every structure and object exactly where it is.", covers = "green wooden bench", permitted = false }
