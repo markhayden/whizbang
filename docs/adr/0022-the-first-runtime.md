@@ -1,6 +1,6 @@
 # 0022. The first runtime: PyTorch through the `transformers` library, on the Apple GPU
 
-Status: accepted.
+Status: accepted. Amended 2026-11-26 (plan mE, task T2): `scipy` joins the extra.
 Date: 2026-11-17
 Spec: section 17, "Models run through ONNX on CPU only"; section 4, "The Python pack"
 
@@ -39,6 +39,7 @@ and the lock.
 |---|---|---|
 | `torch` | 2.15.0 | Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND ISC AND MIT AND Zlib |
 | `torchvision` | 0.29.2 | BSD |
+| `scipy` | 1.18.1 | The BSD 3-clause licence, whose text its `License` field holds (added by plan mE, task T2: the library's EoMT builds its loss with the model, and the loss asks for `scipy`) |
 | `transformers` | 5.23.0 | Apache 2.0 License |
 
 What they bring on the Mac, 37 packages more, with their licences from the same metadata:

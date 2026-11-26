@@ -58,7 +58,10 @@ resumed matrix kept a failed cell failed without a rule written down for it.
    method = "eomt" }` in a table), in the arm's identity. `check` is given it as `methods`,
    gives it to every call of that tool, and refuses a judge's call that names another. A
    tool file must declare a `method` argument for an arm to name one: `regions` gains its
-   methods with plan mE's task T2, and `C+regions@eomt` runs only after it.
+   methods with plan mE's task T2, and `C+regions@eomt` runs only after it. (Noted with T2's
+   second pull request: `regions` and `outline` declare `method`, `sam3` or `eomt`; under
+   `eomt` the tool asks `labels`, which `check` holds among a run's calls with plan mE's
+   task F1.)
 9. **A matrix may run past its forecast** (`eval matrix --past-forecast`): the forecast is
    printed and the matrix runs, each run admitted against the allowance; the first run the
    allowance refuses ends the matrix, the cells left named by count, and a run after a new

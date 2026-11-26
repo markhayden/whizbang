@@ -93,7 +93,8 @@ calls its run is held to.
 ## Consequences
 
 - `classes`, and the methods `eomt` of `regions` and `outline`, can be written as tool files
-  on this entry (task T2's second pull request).
+  on this entry (task T2's second pull request): they are, reading the classes' groups and
+  squint's words for structures from `whizbang_pack.class_groups`.
 - The model tier gains one test (`model_tier::eomt_labels_every_pixel_of_the_fixture_on_the_mac`),
   so `just test-models`, the candidate's copy of the models and a release's local leg need
   `eomt-ade20k` installed in the models directory: about 1.3 GB more.

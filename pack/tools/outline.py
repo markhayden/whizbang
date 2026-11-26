@@ -1,7 +1,7 @@
 # /// whizbang-tool
 # format = "tool-file/1"
 # name = "outline"
-# version = "0.1.0"
+# version = "0.2.0"
 # purpose = "Compares each protected subject's shape in the source and the candidate: overlap, areas, how far its boundary moved, and the pieces added or removed, as regions on the candidate."
 # evidence = ["measurements", "regions"]
 # bindings = ["source", "candidate"]
@@ -62,6 +62,10 @@
 # name = "phrases"
 # type = "text"
 # purpose = "Subjects by name, each a phrase, separated by semicolons."
+# [[arguments]]
+# name = "method"
+# type = "text"
+# purpose = "sam3, the default: each subject's mask by its phrase; or eomt: by the fixed-class segmenter's class the phrase names."
 # ///
 """`outline` (plan mE, task T1, item 1; `SPEC.md` section 16, row E): an experimental tool
 file. Ported from squint's `tools/python/src/squint_tools/outline.py` at the commit
@@ -80,6 +84,15 @@ rule (`whizbang_pack.subjects`), and from `phrases`. The item's value is the lar
 subjects' one minus IoU (the declaration's rule, `worst`). A subject on neither picture
 (under `PRESENT_NAMED` of both) is not applicable.
 
+**The method** (plan mE, task T2, item 5), the argument `method`: `sam3`, the default, as
+above; or `eomt`, squint's own, where a subject's mask is the pixels the catalogue's
+fixed-class segmenter `eomt-ade20k` labels with the class its phrase names (the class
+itself, or a word squint mapped to one, "pool" to "swimming pool":
+`whizbang_pack.class_groups.class_of`), asked through the context by that class's name. A
+subject whose phrase names no class of ADE20K is not applicable. Squint thresholded the
+class's score against the best other class after a bilinear upsampling; here the mask is
+where the class is each pixel's, at the picture's own size, which is that score above zero.
+
 What changed from squint. A mask is SAM 3's for the phrase, at the picture's own size, the
 union of at most four instances, brought to the working grid by its nearest pixel; squint
 thresholded its segmenter's per-class scores, upsampled bilinearly, and could compare every
@@ -94,6 +107,7 @@ import json
 import math
 import re
 
+from whizbang_pack import class_groups
 from whizbang_pack.masks import Grid, components, mask_of, one_grid, printable
 from whizbang_pack.subjects import subjects_of
 
@@ -372,6 +386,9 @@ def region_of(subject, piece, candidate):
 
 def run(context):
     arguments = context.arguments
+    method = arguments.get("method") or "sam3"
+    if method not in ("sam3", "eomt"):
+        raise ValueError("method is sam3 or eomt")
     source, candidate = context.image("source"), context.image("candidate")
     one_grid(source, candidate, ASPECT)
     named, not_applicable = subjects_of(json.loads(arguments["job"])) if arguments.get("job") else ([], [])
@@ -379,10 +396,30 @@ def run(context):
     grid = Grid(*working(source.width, source.height))
     scale = max(source.width, source.height) / max(grid.w, grid.h)
     readings, found_pieces = [], []
+    # Under `eomt`, every subject's class is asked of the source first, then of the
+    # candidate: the adapter keeps the last picture's labels, so the model labels each
+    # picture once.
+    by_class = {}
+    if method == "eomt":
+        wanted = []
+        for phrase in named[:SUBJECTS_MOST]:
+            named_class = class_groups.class_of(phrase)
+            if named_class is not None and named_class not in wanted:
+                wanted.append(named_class)
+        for side in ("source", "candidate"):
+            for named_class in wanted:
+                by_class.setdefault(named_class, {})[side] = grid.mask(*mask_of(context, side, named_class, 1, class_groups.MODEL))
     for phrase in named[:SUBJECTS_MOST]:
         subject = printable(phrase, 200)
-        before = grid.mask(*mask_of(context, "source", phrase, MOST))
-        after = grid.mask(*mask_of(context, "candidate", phrase, MOST))
+        if method == "eomt":
+            named_class = class_groups.class_of(phrase)
+            if named_class is None:
+                not_applicable.append(subject)
+                continue
+            before, after = by_class[named_class]["source"], by_class[named_class]["candidate"]
+        else:
+            before = grid.mask(*mask_of(context, "source", phrase, MOST))
+            after = grid.mask(*mask_of(context, "candidate", phrase, MOST))
         before, after = despeckled_pair(grid, before, after)
         if max(before.bit_count(), after.bit_count()) / grid.n < PRESENT_NAMED:
             not_applicable.append(subject)
