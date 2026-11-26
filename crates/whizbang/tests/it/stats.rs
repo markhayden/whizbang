@@ -215,7 +215,8 @@ fn runs_stats_counts_a_loops_attempts_and_retries() {
         ]
     );
     // By the record's word (plan mE, task L1, item 1); a record of a version before the
-    // word, by its sentence, as before: the same run, written as `run/6`.
+    // word, by the word its sentence reads as, so the two count together: the same run,
+    // written as `run/6`. A sentence that reads as no word is counted as itself.
     let record = world.record(retried.run().as_str());
     let written = String::from_utf8(record.to_bytes()).unwrap();
     let older =
@@ -224,10 +225,20 @@ fn runs_stats_counts_a_loops_attempts_and_retries() {
             .replacen(",\"reason\":\"passed\"", "", 1);
     let older = whizbang_core::contract::RunRecord::from_bytes(older.as_bytes()).unwrap();
     let id = retried.run().to_string();
-    let counted = whizbang::stats::loops(&[(id.clone(), record), (id, older)]).unwrap();
+    let odd = String::from_utf8(older.to_bytes()).unwrap().replacen(
+        "attempt 2 passed",
+        "attempt 2 went 3 ways",
+        1,
+    );
+    let odd = whizbang_core::contract::RunRecord::from_bytes(odd.as_bytes()).unwrap();
+    let all = [(id.clone(), record), (id.clone(), older), (id, odd)];
+    let counted = whizbang::stats::loops(&all).unwrap();
     assert_eq!(
         counted.ended,
-        [("attempt N passed".to_owned(), 1), ("passed".to_owned(), 1)]
+        [
+            ("passed".to_owned(), 2),
+            ("attempt N went N ways".to_owned(), 1)
+        ]
     );
     // `runs show` prints a loop's attempts, after the run's calls.
     let shown = crate::wired::shown(&world.root, retried.run().as_str());
