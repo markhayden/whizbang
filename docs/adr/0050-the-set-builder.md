@@ -1,6 +1,6 @@
 # 0050. The set builder
 
-Status: accepted.
+Status: accepted. Amended 2026-11-25 by B1's second pull request: decisions 5 to 7.
 Date: 2026-11-25
 Spec: section 8, "Evaluation data" (fresh sets, new set versions, sealed sets never edited);
 section 10, "Egress"; section 15 (approved recipients, the spend allowance); plan mE, task B1
@@ -48,18 +48,26 @@ and used any proxy the environment named.
    family's, an item's) is lower-case letters, digits and hyphens, so none leads out of its
    folder; a blind set's item ids, which are public, are `<family>-<n>` and say nothing of
    how an item was made.
-5. **Nothing is generated live before the spend guard.** Until B1's second pull request
-   builds the cumulative guard (plan mE, B1, item 7), the program refuses any build that is
-   not `--fake`.
+5. **A cumulative spend guard** (B1's second pull request). One ledger file in owner
+   storage, its allowance set once; a dated bound price per picture for each generator in
+   `tools/sets/prices.toml`, none written before the orchestrator reads it from the
+   provider's page; every attempt charged at its bound and synced to the ledger before it is
+   sent; a request past the allowance not sent.
+6. **Output that tells nothing of a blind set** (the same pull request): counts and the
+   set's id alone are printed, failures by their kind, and their text kept in owner
+   storage. A provider's answer is never printed for any set.
+7. **The pictures' repository by its current name.** New sets name
+   `github.com/markhayden/whizbang-evalsets`; `SETS_REPOSITORY` names it and reads the old
+   name, which sealed sets and the loop's lab manifest (bound by digest in its records)
+   keep, as an alias of it. No sealed file changes.
 
 ## Consequences
 
 - `scripts/tests/test-sets.sh` runs the program's tests and the dry run; it builds the
   binary, so it is one of the script tests a change to the crates runs, and it needs the
   pinned Python, which CI's `scripts` jobs now install as `check` does.
-- `scripts/sets-publish.sh` (images into the pictures' repository, the revision pinned) is
-  not ported here: it names the pictures' repository, whose name B1's second pull request
-  settles (gap 6).
+- `scripts/sets-publish.sh` is ported in the second pull request, beside the drawer of a
+  blind plan (`draw`), which squint kept in owner storage as a script of its own.
 - To reverse: remove `tools/sets/` and its test; no set and no crate changes.
 
 ## Alternatives

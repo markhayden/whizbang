@@ -1,0 +1,19 @@
+# The bound of one request for each generator the set builder uses (plan mE, task B1, item
+# 7): what the spend guard charges each request, each retry included, before it is sent.
+#
+# A row is the most that one request, as the builder builds it, can cost: at the largest
+# side of any picture it sends or asks for (`largest_side`, in pixels; the largest source
+# size in use), with as many pictures sent as `pictures_sent` (a subject family sends up to
+# 4 references), the input tokens of the prompt and of every picture sent included. A
+# request larger than its row was priced for, in either, is refused before it is sent. The
+# orchestrator reads each from the provider's own price page before the first live build and
+# writes it here with the date it was read, as
+#
+#   [generator.fal]
+#   usd_per_request = 0.05
+#   largest_side = 1024
+#   pictures_sent = 4
+#   checked_on = 2026-12-01
+#
+# A generator with no row here cannot be used live: its requests are refused before anything
+# is sent. None is written yet; no price here is a guess.

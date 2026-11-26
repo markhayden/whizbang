@@ -43,9 +43,14 @@ def _png(im: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-def apply(op: dict[str, Any], source: bytes, generator, seed: int) -> tuple[bytes, DraftLabel]:
+def apply(
+    op: dict[str, Any], source: bytes, generator, seed: int, candidate: bytes | None = None
+) -> tuple[bytes, DraftLabel]:
     """The op's candidate and draft label, then any delivery damage the op names (`jpeg`,
-    `resample`), which changes no label: a pass saved again or rescaled is still a pass."""
+    `resample`), which changes no label: a pass saved again or rescaled is still a pass.
+    `candidate`, for a `cover` op, is an earlier item's picture judged again: nothing is made."""
+    if op.get("kind") == "cover":
+        return _cover(op, source, generator, seed, candidate)
     out, label = _apply(op, source, generator, seed)
     if "jpeg" in op or "resample" in op:
         out, said = deliver(out, op.get("jpeg"), op.get("resample"))
@@ -224,6 +229,42 @@ def _edit(op: dict[str, Any], source: bytes, generator, seed: int) -> tuple[byte
     )
     _place(label, changes)
     return out, label
+
+
+def _cover(op: dict[str, Any], source: bytes, generator, seed: int, candidate) -> tuple[bytes, DraftLabel]:
+    """A seasonal cover, such as snow, laid over a protected subject: a pass when the job's
+    brief permits it, a fail of that subject's identity when it does not. Two items on the
+    same pictures make the pair (plan mE, task B1, item 9)."""
+    prompt, covers = op["prompt"], op["covers"]
+    if candidate is None:
+        _needs(generator, "cover")
+        candidate = generator.edit(source, prompt, seed)
+    changes = regions.difference_regions(source, candidate)
+    what = prompt.split(".")[0].strip().lower()
+    if op["permitted"]:
+        label = DraftLabel(
+            expected="pass",
+            failure_type=None,
+            obligation_ids=[],
+            words=(
+                f"a seasonal cover the brief permits ({what}) lies over the {covers}; confirm "
+                "that the structure and everything else are unchanged"
+            ),
+            notes={"prompt": prompt},
+        )
+        label.notes["changed_area"] = (
+            "whole_image" if changes.whole or changes.primary is None else changes.primary
+        )
+        return candidate, label
+    label = DraftLabel(
+        expected="fail",
+        failure_type=f"{covers}-covered",
+        obligation_ids=["SF1"],
+        words=f"the {covers} is covered ({what}), and the brief does not permit a seasonal cover",
+        notes={"prompt": prompt},
+    )
+    _place(label, changes)
+    return candidate, label
 
 
 def _place(label: DraftLabel, changes: regions.Changes) -> None:

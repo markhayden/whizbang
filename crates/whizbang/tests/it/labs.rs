@@ -11,7 +11,12 @@ fn the_segment_01_manifest_has_twenty_in_four_groups() {
     let (manifest, _) = Manifest::read(&file).unwrap();
     assert_eq!(manifest.kind, "segment-01");
     assert_eq!(manifest.set, "segmentation/segment-01");
-    assert_eq!(manifest.images_repo, whizbang::evaluation::SETS_REPOSITORY);
+    // Its digest is bound by the loop round's records, so it keeps the old name, read as
+    // the current one.
+    assert_eq!(
+        whizbang::evaluation::sets_repository(&manifest.images_repo),
+        Some(whizbang::evaluation::SETS_REPOSITORY)
+    );
     assert_eq!(
         manifest.images_rev,
         "d5413a4f0806c0c8d4e0376eb71bffe3d541b98e"
@@ -93,4 +98,26 @@ fn the_e_loop_config_is_a_template_of_the_five_priced_judges() {
             "{line}"
         );
     }
+}
+
+/// Every committed set names the one repository the pictures are in, by its current name or
+/// an old one (plan mE, task B1, item 6), and none is edited for it.
+#[test]
+fn every_committed_set_resolves_to_the_one_repository() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evalsets");
+    let found = whizbang_eval::sets::discover(&root).unwrap();
+    assert!(found.len() > 10, "{}", found.len());
+    for dir in found {
+        let set = whizbang_eval::sets::Set::load(&dir).unwrap();
+        assert_eq!(
+            whizbang::evaluation::sets_repository(&set.manifest.set.images_repo),
+            Some(whizbang::evaluation::SETS_REPOSITORY),
+            "{}",
+            set.id()
+        );
+    }
+    assert_eq!(
+        whizbang::evaluation::sets_repository("github.com/someone/else"),
+        None
+    );
 }
