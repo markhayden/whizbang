@@ -73,7 +73,8 @@ From the round's scores (`docs/results/e-judges.toml`; the record, `docs/results
   `gemini-3.8-flash`'s (0.880), with the highest false-reject rate of the five (0.311).
   The record says so.
 - The tool records' "Another judge" tables, this ADR's figures and the guides' are copied
-  from the TOML by hand, and no test holds them to it yet (a carry-over row).
+  from the TOML by hand; `evidence::the_judges_figures_outside_their_record_are_its_own`
+  holds them to it (plan mE, task M1, item 10).
 - No code changed: no code picks a judge, and `judges.rs`'s fallback for a no pick still
   names `claude-haiku-5-5`. A revert of the pull request names `claude-haiku-5-5` in the
   guides again.

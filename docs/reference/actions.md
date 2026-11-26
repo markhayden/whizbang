@@ -13,7 +13,7 @@ Check by a job: a task of the kit `squint`.
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
 
-Arguments: `tools` (text), `judge` (text), `use_case` (text), `job` (text), `details` (choice), `detail` (text), `projection` (choice), `second_look` (choice), `submission` (choice), `measured` (text), `recipe_digest` (text), `cell` (text), `max_output_tokens` (integer).
+Arguments: `tools` (text), `judge` (text), `use_case` (text), `job` (text), `details` (choice), `detail` (text), `projection` (choice), `second_look` (choice), `submission` (choice), `methods` (text), `measured` (text), `recipe_digest` (text), `cell` (text), `max_output_tokens` (integer).
 
 Takes: `images` (image, 1 to 10), `measured_images` (image, 0 to 32).
 
@@ -324,6 +324,18 @@ Takes: `image` (image, 1 to 1).
 Gives: `mask` (mask, 0 to 64).
 
 Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`.
+
+## `labels`
+
+Asks a fixed-class segmenter which pixels of an image it labels with each class named, as one mask for each.
+
+Arguments: `classes` (text, required), `backend` (text).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `mask` (mask, 0 to 255).
+
+Needs, each a capability a backend must be configured for: `segment`, up to 4 requests, chosen by `backend`.
 
 ## `select`
 

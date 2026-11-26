@@ -458,7 +458,7 @@ class Revision(unittest.TestCase):
         self.assertEqual(owlv2_sam2.Owlv2Sam2.revision, "1")
         # The worker answers for the model `tiny` with it, and for `sam3` with its own.
         self.assertIs(worker.ADAPTERS["tiny"], owlv2_sam2.Owlv2Sam2)
-        self.assertEqual(worker.SHIPPED, {"sam3": "sam3", "tiny": "owlv2-sam2"})
+        self.assertEqual(worker.SHIPPED, {"sam3": "sam3", "tiny": "owlv2-sam2", "eomt-ade20k": "eomt-ade20k"})
 
 
 if __name__ == "__main__":

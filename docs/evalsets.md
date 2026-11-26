@@ -53,16 +53,20 @@ items are judged under.
   the pictures matched their pins.
 - `whizbang eval sets fetch --set <id> --store <dir> --config <file>` brings each picture of
   the set that the store does not hold into it, as a picture, from
-  `https://raw.githubusercontent.com/markhayden/wafflery-evalsets/<images_rev>/<set id>/<path>`;
-  a set that names another repository is not fetched. The config
+  `https://raw.githubusercontent.com/markhayden/whizbang-evalsets/<images_rev>/<set id>/<path>`;
+  a set that names another repository is not fetched. The repository was renamed: a set
+  sealed before names it `github.com/markhayden/wafflery-evalsets`, which is read as the
+  current name (`SETS_REPOSITORY_ALIASES`), and a new set names the current one. The config
   must approve that origin as a recipient (`[egress.recipients]`), or nothing is fetched; the
   request carries nothing but its address. What arrives is imported only when its SHA-256 is
   the job's pin. With `--from <dir>`, the pictures are read from a folder laid out as that
   repository is (`<dir>/<set id>/<path>`), by the same pins, and nothing is fetched.
 - `whizbang eval matrix --matrix <file> --store <dir> --config <file>` runs a matrix (below).
 - `whizbang eval judges --matrix <file> [--matrix <file> ...] --store <dir> --labels <dir>
-  --mode judges|arms [--arm <arm>] [--rule judge-pick/1|submission/1] --out <file>` scores
-  the runs matrices made ("Scoring judges", below).
+  --mode judges|arms [--arm <arm>] [--rule judge-pick/1|judge-pick/2|submission/1|submission/2]
+  [--set <id> ...] --out <file>` scores the runs matrices made ("Scoring judges", below).
+- `whizbang eval admitted [--receipts gates]` lists what the receipts of the gates admitted
+  ("Several gates on one matrix", below).
 
 ## Building a set
 
@@ -131,15 +135,67 @@ the manifest; a blind set is refused without it.
 **The generators reach only approved recipients.** `--config <file>` names the whizbang config
 whose `[egress.recipients]` decide where a generator may send: a request goes only to an
 origin approved for every class it carries (`prompts`; with a picture to edit or compose
-from, `source_images` too), a downloaded picture only from an approved origin or an upstream
-of the recipient asked, and a redirect only where the same rule allows; a key never follows a
-redirect, and no proxy is used. The keys are read from `FAL_KEY`, `OPENAI_API_KEY` and
-`GEMINI_API_KEY`. Until the spend guard of B1's second pull request is built, only `--fake`
-builds.
+from, `source_images` too), a downloaded picture only from the recipient asked or one of its
+upstreams, and a redirect only where the same rule allows; a key never follows a redirect, and
+no proxy is used. Addresses are read as whizbang reads them (`Origin::of`: plain ASCII,
+`scheme://host[:port]`), and a recipient's `account` is read and named in the ledger. The keys
+are read from `FAL_KEY`, `OPENAI_API_KEY` and `GEMINI_API_KEY`.
+
+**The spend guard.** A live build or rebuild names a ledger in owner storage, `--ledger`, one
+for all of a milestone's generation, and sets its allowance once, at its first use
+(`--cap-usd 8`); every later build shares it, across interruptions. `tools/sets/prices.toml`
+holds, for each generator, the most that one request as the builder builds it can cost
+(`usd_per_request`): at the largest side of any picture it sends or asks for (`largest_side`,
+the largest source size in use) and with as many pictures sent as `pictures_sent` (up to 4
+references), input tokens included, dated (`checked_on`), read from the provider's page by
+the orchestrator before the first build. A generator with no row is never used live, and a
+request larger than its row in either is refused. OpenAI's edits are asked for at the size of
+the picture sent, so the answer is of the shape priced. Each request, each retry included, is
+charged at its bound and written to the ledger, synced, before it is sent, and one that would
+pass the allowance is not sent; a request with no charge is never sent. The build prints what
+the ledger holds. This spend is outside every store's ledger. Where the config approves
+several accounts at one origin, `--account` names the one to send as.
+
+**Full requirements.** A protected subject of a scene family may be a table that states its
+`colour`, `count` and `lettering`: `{ subject = "the red door", colour = "red", count =
+"two", lettering = "OAK & ASH" }`. Each is a clause of the subject's requirement, after
+" keeps ", where `per_subject` reads the subject: "The red door keeps its identity, shape,
+position and extent relative to the source, and its colour (red), its count (two) and its
+lettering (OAK & ASH)." `requirements = "plain"` in `[set]` writes today's wording instead, so
+one plan builds both twins from the same pictures.
+
+**Two jobs on one picture.** A scene item may give its job its own `brief`, and a `cover` op
+(`prompt`, `covers`, `permitted`) lays a seasonal cover over a protected subject: a pass when
+`permitted`, else a fail of that subject's identity. An item with `same_as` an earlier cover
+item judges that item's picture again, under its own brief. `tools/sets/plans/
+seasonal-cover-v1.plan.toml` is the pair D1 builds.
+
+**What is printed of a blind set.** Counts and the set's id; never an item's id, a path, a
+prompt, a label, a plan's text or a provider's answer. A failure is printed by its kind, a
+provider's by its status, and its text is kept in `messages.log` in owner storage. A
+provider's answer is never printed for any set.
+
+**A blind plan is drawn.** The owner writes a pool in owner storage (the set, and each scene
+family with its source, protected subjects, `edits` and `restyles`); `draw --pool <pool>
+--seed N --out <plan>` chooses each item's construction, structural op, strength, generator
+and order from the seed, writes the plan beside the pool and prints counts alone. Each family
+gets a pass, an identity edit and a structural op at least; the ids are `<family>-<n>`.
+
+**Publishing.** `WHIZBANG_OWNER_DIR=<owner storage> WHIZBANG_EVALSETS_DIR=<clone>
+scripts/sets-publish.sh <set id> "<attestation>"` promotes the set built at `<owner
+storage>/build/evalsets/<set id>`, commits its pictures in the clone of the pictures'
+repository (whose `origin` must be the current name), pins that commit (`pin`), places the
+set without its pictures under `evalsets/` and checks it. It never writes over a published
+set or pictures the clone holds, and refuses a clone inside this repository or with changes
+staged. Pushing the clone, the row of `evalsets/README.md` and the commit here follow. A publish
+that failed part-way is run again from the start once what it did is taken back: the clone's
+commit of the set (`git reset --hard HEAD~1` there, if it was made), `evalsets/<set id>`
+removed, and for a blind set its `labels/` in owner storage moved aside.
 
 `scripts/tests/test-sets.sh` runs the builder's tests and the offline dry run: a set of each
-use case and a blind one from `tools/sets/tests/plans/`, built with the fake generator,
-confirmed, promoted, and read by `whizbang eval sets check`.
+use case, a blind one and the seasonal cover pair, built with the fake generator, confirmed,
+promoted, and read by `whizbang eval sets check`; then the refusals, and a publish into a
+throwaway clone.
 
 ## Labels and corrections
 
@@ -209,6 +265,25 @@ arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]
 Arm `C` may take the second look (`C;second_look=on`), which is one more turn after a
 submission that left an item tentative, forecast at three times arm C; details stay arm F's.
 
+An arm may freeze a tool file's method: `C+regions@eomt`, or `{ arm = "C", tools = [{ tool =
+"regions", method = "eomt" }] }`, in its identity; `check` gives every call of that tool the
+method, and refuses a judge's call that names another. The tool file must declare a `method`
+argument: `regions` gains its methods with plan mE's task T2, and `C+regions@eomt` runs only
+after it.
+
+`eval matrix --past-forecast` prints the forecast of the cells still to run and runs anyway:
+each run is admitted against the store's allowance as any run is, the first the allowance
+refuses ends the matrix with the cells left named by count, and the matrix run again after a
+new allowance resumes. A resumed matrix or gate never runs a failed cell again (ADR 0052): a
+failure counts as an error.
+
+**Held-out sets.** `--held-out` on `eval sets check`, `eval sets fetch`, `eval matrix`, `eval
+run --gate` and `eval judges` makes every refusal name only the set's id, an item's place in
+the set (from 1, never its id) and the kind of problem: no path, no parser's text, no job's
+text. Any other refusal is withheld unless it is of a form known to tell nothing: one line
+about the allowance, the forecast or cells not ended or left to run, with no item or family
+id and none of `/`, `\`, a quote, a backquote or a bar.
+
 `matrices/` holds squint's study matrices, ported, with the models of the Google and OpenAI
 judges named, the matrix of E1's evidence, and the matrix of plan e1's format round
 (`e-submission.toml`: v1 against v2 under arm C, each arm naming its format).
@@ -239,8 +314,24 @@ file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix inst
   label differs between them is counted in the receipt (`relabelled`) and scored under
   neither version's truth.
 - **Hypotheses.** Each gate's `[confidence] hypotheses` is the count over every gate the
-  matrix names, one for each judge a gate compares. Its `[repetitions] count` is the most of
-  any cell it reads.
+  matrix names, one for each judge a gate compares. A matrix may state the round's whole
+  count at its top, `hypotheses = 27`, in its identity, stated once before the first cell: at least its gates' comparisons, with
+  room for the judge's rule beside them; every gate then corrects for that count and
+  resamples as it needs, the larger of 20,000 and 20 × 2 × H ÷ 0.05 rounded up to a thousand
+  (each tail at least 20 draws). Its `[repetitions] count` is the most of any cell it reads.
+- **A catch-rate gate.** `[measure] primary = "catch_rate"` gates on the gain in the share of
+  expected failures caught, resampled over the families with at least one; with
+  `[repetitions] combine = "mean"` each item's catch is its mean over the repetitions. The
+  guardrails are read as the file states them, on repetition 1.
+- **What it admits.** A gate may state `[admits]`: `rung` (3 or 4), `kind` (`tool`,
+  `use_case`, `format`, `wording` or `judge`) and `name`. Its receipt holds it, the split of
+  each set it read and the day its last cell ended. `whizbang eval admitted [--receipts
+  gates]` lists each thing a receipt admitted: an admitted outcome of a rung 4 gate whose sets
+  are all `blind` or `heldout` and none exposed, with the receipt's digest and date. The
+  exposed sets are a committed list (`whizbang_eval::gate::EXPOSED`, ADR 0052): `blind-v3`,
+  whose split is `blind`, and `blind-v1` and `blind-v2`, both used before; a held-out set
+  joins it after its one round. A rung 4 gate on an exposed set is refused when its matrix is
+  read. A rung 3 gate, or one on a dev set, admits nothing.
 - **Running and scoring.** `whizbang eval matrix` runs the cells, and refuses before anything
   runs when a gate file the matrix names is missing, is not the bytes its digest names, does
   not name the matrix back, or does not hold (its arms, its count, its repetitions).
@@ -304,6 +395,17 @@ in code. It reads the store only, and never runs or sends anything.
   judge's balanced accuracy falls, nor its false-reject or false-accept rate rises, by more
   than 2 points. The treatment is adopted when (a), (b) and (c) hold; the record names the
   clause that settled it.
+- **`judge-pick/2`** (plan mE, task M1, item 6): `judge-pick/1`'s clauses at the level the
+  matrix's correction gives (the matrix states `hypotheses`, at least its gates' comparisons
+  and one for each judge of the arm in each scope the rule picks over: one scope when every
+  set scored is source fidelity's, two otherwise), at the resamples that count needs; inconclusive below
+  20 families, or with a tail the resamples cannot resolve.
+- **`submission/2`** (task M1, item 5): `submission/1`'s clauses over the items each judge
+  scored under both arms; (a) pooled over the judges, (b) and (c) for each, (c) read on the
+  family-resampled 95% interval of each change at its bound toward harm (balanced
+  accuracy's lower, the rates' upper).
+- **`--set <id>`**, repeatable: only those sets are scored, and completeness is over the cells
+  the matrices name for them.
 - **What it writes** (`judges/1`, TOML): per judge, arm and scope the measures with counts
   beside each rate and intervals for balanced accuracy and decided correctly; the comparisons;
   the rule's outcome; the matrices' names and identities; each set's split and the SHA-256 of

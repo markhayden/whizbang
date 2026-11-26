@@ -73,7 +73,7 @@ fn every_record_that_states_a_mark_is_shown_by_describe() {
         );
     }
     assert_eq!(stating.len(), shown.len());
-    assert_eq!(shown.len(), 20);
+    assert_eq!(shown.len(), 21);
 }
 
 #[test]

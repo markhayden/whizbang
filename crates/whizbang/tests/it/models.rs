@@ -496,10 +496,12 @@ fn under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_as
             String::from_utf8(out.stderr).unwrap(),
         );
         if code == 0 {
-            // And `tiny` (plan 1D, task T1), which needs no token.
+            // And `tiny` (plan 1D, task T1), which needs no token, and `eomt-ade20k`
+            // (plan mE, task T2), which needs none either.
             let listed = format!(
-                "models: 2\n\
+                "models: 3\n\
                  directory: {said}, not made yet\n\
+                 eomt-ade20k\tEoMT large, ADE20K (fixed-class)\tMIT\t1.3 GB\tmacos-arm64\t{0}\n\
                  sam3\tSAM 3\tSAM License\t3.4 GB\tmacos-arm64\t{0}\n\
                  tiny\tTiny (OWLv2 and SAM 2.1 Hiera-Tiny)\tApache-2.0\t777.5 MB\tmacos-arm64\t{0}\n",
                 sam3_not_installed()
@@ -749,6 +751,85 @@ fn the_catalogues_tiny_is_pinned_licensed_and_needs_no_token() {
     .unwrap();
     assert!(module.contains(&format!("REVISION = \"{}\"", adapter.revision.as_str())));
     assert!(module.contains(r#"features = frozenset(("phrase", "point", "box"))"#));
+}
+
+#[test]
+fn the_catalogues_eomt_ade20k_is_pinned_licensed_and_needs_no_token() {
+    // Plan mE, task T2: the fixed-class segmenter squint used, EoMT large trained on
+    // ADE20K at 512, run by `eomt-ade20k`, on the Mac alone, from one public repository
+    // at the commit squint pinned, from the origins already approved for the Hub.
+    let catalogue = wiring::catalogue().unwrap();
+    let eomt = catalogue.entry("eomt-ade20k").unwrap();
+    assert_eq!(
+        (
+            eomt.title().as_str(),
+            eomt.revision().as_str(),
+            eomt.adapter().as_str(),
+            eomt.licence().as_str()
+        ),
+        (
+            "EoMT large, ADE20K (fixed-class)",
+            "2026-11.1",
+            "eomt-ade20k",
+            "MIT"
+        )
+    );
+    assert_eq!(eomt.platforms(), [Platform::MacosArm64]);
+    assert_eq!(eomt.features().collect::<Vec<_>>(), ["labels", "phrase"]);
+    assert_eq!(eomt.needs_token(), None);
+    let origins: Vec<String> = eomt.origins().iter().map(ToString::to_string).collect();
+    assert_eq!(
+        origins,
+        ["https://huggingface.co", "https://us.aws.cdn.hf.co"]
+    );
+    // The card, which states the licence, the config the library and the adapter read,
+    // and the weights as safetensors; each at the repository's own path at one commit.
+    let at =
+        "/tue-mps/ade20k_semantic_eomt_large_512/resolve/aeb262f5a0bc609236d27f1277c3173ce57aeb27/";
+    let files: Vec<(&str, u64, String)> = (eomt.files().iter())
+        .map(|file| {
+            let from = file.from().expect("downloaded");
+            assert_eq!(from.origin().to_string(), "https://huggingface.co");
+            assert_eq!(from.rest(), format!("{at}{}", file.name().as_str()));
+            (file.name().as_str(), file.size(), file.sha256().to_string())
+        })
+        .collect();
+    assert_eq!(
+        files,
+        [
+            (
+                "README.md",
+                2716,
+                "sha256:956a0496b774be96186e8355fcec5d41ca45659c7719b5937338e9310c115cd5"
+                    .to_owned()
+            ),
+            (
+                "config.json",
+                6778,
+                "sha256:5b11b6c2cc74bfbe1c31871e107d90cf161015818a1bc96dc4db5f1f003e55af"
+                    .to_owned()
+            ),
+            (
+                "model.safetensors",
+                1_264_130_192,
+                "sha256:715f374b2bc9f2329caa99c9c3d425dcb072f2d0751a960534b4bfd35fe5930c"
+                    .to_owned()
+            ),
+        ]
+    );
+    // The adapter is shipped, at the revision its module states, and the module of the
+    // pack declares the same two features.
+    let table = wiring::adapters();
+    let adapter = (table.iter())
+        .find(|adapter| adapter.name.as_str() == "eomt-ade20k")
+        .unwrap();
+    assert!(adapter.shipped);
+    let module = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pack/src/whizbang_pack/eomt_ade20k.py"),
+    )
+    .unwrap();
+    assert!(module.contains(&format!("REVISION = \"{}\"", adapter.revision.as_str())));
+    assert!(module.contains(r#"features = frozenset(("phrase", "labels"))"#));
 }
 
 /// An entry of this name that holds `alpha`'s files, byte for byte, at addresses of its
@@ -1293,9 +1374,10 @@ mod inventory {
         assert_eq!(identity_in(&again.unwrap(), "alpha"), identity);
         assert_eq!(fake.requests().len(), asked);
         // The binary's own table names `sam3` at the revision of the adapter that takes
-        // points and boxes (task Q1), shipped; and `owlv2-sam2` beside it (task T1).
+        // points and boxes (task Q1), shipped; `owlv2-sam2` beside it (task T1); and
+        // `eomt-ade20k` (plan mE, task T2).
         let table = wiring::adapters();
-        assert_eq!(table.len(), 2);
+        assert_eq!(table.len(), 3);
         assert_eq!(
             (
                 table[1].name.as_str(),

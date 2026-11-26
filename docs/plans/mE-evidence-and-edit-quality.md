@@ -303,7 +303,7 @@ theirs; builders make no live call.
 | K1 | The segmenters compared on segment-01's truth masks; `segment`'s rung 2; the rule for milestone 8 (the orchestrator's) | T2 | Small: about 400, a record |
 | R6 | Rung 4 of the edit recipes on fresh cases (the orchestrator's, with the owner); `segment` and `fill` credited | R5, K1 | Small: about 400, records |
 | W1 | What milestone 8 builds: K1's outcome; the protocols for local fill and judge | K1, R4, R6 | Medium: about 600, an ADR and protocol files |
-| O1 | The walkthroughs with the owner: every tool, one at a time, through the playground and the command line, before any round measures it (the orchestrator's, with the owner) | Each session after the tasks that build what it walks (O1's table) | Small: the inputs' writer (about 300), a record of 57 rows and more as tools are added, and the fixes its findings need |
+| O1 | The walkthroughs with the owner: every tool, one at a time, through the playground and the command line, before any round measures it (the orchestrator's, with the owner) | Each session after the tasks that build what it walks (O1's table) | Small: the inputs' writer (about 300), a record of 58 rows and more as tools are added, and the fixes its findings need |
 | N1 | The note | all | Small: about 500, no code |
 
 **Waves.** Each from `main` once what it builds on has landed.
@@ -528,7 +528,7 @@ reported in its pull request. Every test that calls a provider or a real model i
     alone (`gate.rs`) and the paired scorer gives no interval of a catch-rate difference
     (`metrics.rs`). `gate::a_catch_rate_gate_resamples_the_families_with_a_failure`.
 
-- [ ] Done when: both pull requests are merged and their tests pass. **Reviewer reads
+- [x] Done when: both pull requests are merged and their tests pass. **Reviewer reads
   hardest:** that a version 2 gate and a matrix without lists score exactly as before; that a
   gate cannot read a cell outside its two arms or sets.
 
@@ -649,7 +649,7 @@ names the source path and commit.
    pictures: one whose brief permits a seasonal cover (a pass), one that does not (a fail).
    Built by D1 from fresh images, as a fixture of `check`'s use-case tests.
 
-- [ ] Done when: both pull requests are merged, the dry run passes in `just check`, and the
+- [x] Done when: both pull requests are merged, the dry run passes in `just check`, and the
   alias test and the blind-output tests pass. **Reviewer reads hardest:** that no plan, label or contact sheet of a
   blind set can be written inside the repo (`--owner` inside the work tree is refused).
 
@@ -741,6 +741,20 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    (`just test-models`): one labels request on a fixture, its classes held to a tolerance.
    An ADR, "The fixed-class segmenter", records the model, the feature and why it is a
    catalogue entry and not the default.
+
+As built (the first pull request): the model is run from the upstream safetensors through
+`transformers` (`EomtForUniversalSegmentation`), with squint's preprocessing and reading of
+the two heads, its labels resized to the picture's own size; the entry is `README.md`,
+`config.json` and `model.safetensors` from the Hub at squint's commit, no new origin.
+`labels` is no new kind of request in `pack/1`: a fixed-class segmenter answers each of its
+classes as a phrase with one instance, disjoint, and the new action `labels` asks every
+class named, in batches of 64, committing a mask a class with its confidence as the run's
+measurements (record `docs/reference/tools/labels.md`, marked experimental). A tool's ask
+may name `model` (routed to the config's segment backend whose `model` it is) and may be of
+`labels`, answered with one plane of each pixel's class. The model tier's test asks every
+class of the fixture; `just test-models` and the candidate's copy now need `eomt-ade20k`
+installed. Under `check`, `labels` is not yet frozen beside a run's tool files: the second
+pull request adds it with the tools that use it.
 
 **Second pull request: `classes` and the methods.**
 
@@ -1270,7 +1284,8 @@ because a test covers it. Where a tool has no command line or no playground side
 that is said in its row and recorded as a finding, never passed over. This task was added on
 the owner's word (2026-11-25).
 
-**The definitive list.** 57 rows when this plan starts, from `main` at 5a927af2: the 48
+**The definitive list.** 58 rows (57 when this plan started, from `main` at 5a927af2, with
+48 actions; T2 added the action `labels`): the 49
 actions of the build's description (`whizbang describe`, `docs/reference/description.json`);
 the four tool files, `per_subject` (from before E) and `outline`, `regions` and `classes` (T1,
 T2); four settings of `check` that are not actions, details first, `tiles`, the second look and
@@ -1294,9 +1309,10 @@ How each kind is reached, as the code stands (`crates/whizbang/src/main.rs`, `ra
 | `change_map`, `edge_similarity` | A record's example: a one-step recipe file with the example's inputs as given, run by `whizbang rascal run <file>`. Then, as cases of their own: `whizbang try <name> --source <id> --candidate <id>`, which registers the candidate by `align` before the tool runs (`trying.rs`); `whizbang eval tool <name> --set <set>` | Their tool forms; for `try`'s case, the frame `align` gave it as the input |
 | A tool file | Listed under `[tools] paths` in the session's config, then: a record's example by a one-step recipe file, as for `change_map`; as cases of their own, `whizbang try <name> --source <id> --candidate <id> [--arg NAME=VALUE]`; `whizbang eval tool <name> --set <set>` (`--method <m>` from T2, item 6); `whizbang squint check source-fidelity --tool <name>`. `whizbang describe` takes no config: it is not among the actions, and its mark is among the marks (`wiring.rs`, `describe_text`) | With the config, a tool form of its own and a palette entry (`tool_file.rs`, `descriptor`; `wiring.rs`); also as `check`'s `tools` setting |
 | A setting of `check` | `squint check`'s flags: `--details first --detail <tools>`, `--details first --detail tiles`, `--second-look off\|on\|strict`, `--submission v1\|v2`, and `v3` once F1 adds it (F1, item 3) | `check`'s tool form; not the use cases' forms |
+| `labels` (T2) | No command of its own, a finding: a one-step recipe file run by `whizbang rascal run <file>`, or a tool file's `context.labels` | Its tool form, from its descriptor |
 | The set builder | From `tools/sets/`: `uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets build\|rebuild\|promote` (`docs/evalsets.md`, "Building a set"); it writes set folders, not runs of a store | None: it is not an action |
 
-The 57 rows, by session. A session's config lists only the tool files that have landed.
+The 58 rows, by session. A session's config lists only the tool files that have landed.
 
 | Session | Rows, in this order | Waits for | Before |
 |---|---|---|---|
@@ -1304,7 +1320,7 @@ The 57 rows, by session. A session's config lists only the tool files that have 
 | O1.2 | 8 rows, paid. `segment` (SAM 3 and Tiny; a phrase, a point, a box), `fill` (Bria through fal), `remove_prompt`, `remove`, `repair_area`, `repair`, `seam`, `remove_checked` (under the cheap judge) | E's store ("I need", item 1) | C1's measurement (item 1), V1, K1, R5, R6 |
 | O1.3 | The set builder walked again: live generation, its spend guard, full requirements, one real picture under `--cap-usd` | B1's second pull request | D1's first paid build |
 | O1.4 | 9 rows, and P1's steps walked again. `check`; `source-fidelity`, `reference-consistency`, `reality-checks`, `brief-compliance`, `product-fidelity`, each under v1 and v2; details first (with `align`, `change_map`, `edge_similarity`), `tiles`, the second look (`off`, `on`, `strict`); again: `view`'s panorama side, `line`, `rect`, `stroke`, `rasterize` through every binding, `fan`, `ramp`, `measure` | P1 | R2, R3, F2, R4, R5 |
-| O1.5 | 4 rows. `per_subject`, `outline`, `regions`, `classes`, each method; again: `segment` on the fixed-class entry | T2 | R2, K1, R3, R4 |
+| O1.5 | 5 rows. `per_subject`, `outline`, `regions`, `classes`, each method; `labels` on the fixed-class entry (T2), beside it, again: `segment` on the fixed-class entry | T2 | R2, K1, R3, R4 |
 | O1.6 | 1 row. The submission format: v3 under `check` and each use case | F1 | F2, R4 |
 | O1.7 | Steps walked again. `remove_checked`, `select`, `carry` (L2); `seam` (P1's records) | L2 and P1 | R5 |
 | O1.8 | 1 row, if C1 builds it. The clicked removal | C1, item 3 | C1, item 4; R5 |

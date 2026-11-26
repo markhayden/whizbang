@@ -1,5 +1,5 @@
 //! Rascal's operations and tasks (`SPEC.md` section 3): the composite of a fill onto an
-//! image under a mask; the actions `segment`, `select`, `grow`, `close`, `plug`,
+//! image under a mask; the actions `segment`, `labels`, `select`, `grow`, `close`, `plug`,
 //! `subtract`, `feather`, `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`,
 //! `shrink`, `invert`, `tighten` and `inspect`; the canvases `cut`, `put`, `window`,
 //! `unwindow` and `apply`; the seam's `fan`, `profile` and `ramp`; `measure`;
@@ -23,6 +23,7 @@ pub mod fill;
 pub mod grow;
 pub mod inspect;
 pub mod invert;
+pub mod labels;
 pub mod line;
 pub mod operation;
 pub mod paste;
