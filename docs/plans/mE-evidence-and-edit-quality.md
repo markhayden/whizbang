@@ -1055,7 +1055,7 @@ pull request adds it with the tools that use it.
    `decode::no_decided_pair_is_never_preferred`;
    `decode::a_version_1_protocol_decodes_as_before`.
 
-- [ ] Done when: the tests pass. **Reviewer reads hardest:** that an old page's picks still
+- [x] Done when: the tests pass. **Reviewer reads hardest:** that an old page's picks still
   decode against its frozen assignment.
 
 ## V1. Visual quality (the orchestrator's, with the owner)
