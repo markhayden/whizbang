@@ -1040,8 +1040,8 @@ fn past_its_forecast_a_matrix_stops_at_the_allowance_and_resumes() {
         };
         evaluation::run_past_forecast(&matrix, &planned, &labels, &running)
     };
-    // One run is admitted, the next declined: the matrix ends, two cells left by count.
-    let (listener, log) = serving(&judged.pki, vec![submission("held", "Kept.")]);
+    // One judge on loopback for the three cells.
+    let (listener, log) = serving(&judged.pki, vec![submission("held", "Kept."); 3]);
     let origin = format!("https://127.0.0.1:{}", listener.port());
     let over = judged.over_with(
         &judged.address(listener.port()),
@@ -1050,6 +1050,8 @@ fn past_its_forecast_a_matrix_stops_at_the_allowance_and_resumes() {
         "",
     );
     let executor = judged.runner(&over);
+    // One run is admitted, the next declined: the matrix ends, two cells left by count, and
+    // the forecast it ran past said.
     let refused = past(&executor, 1).unwrap_err();
     assert!(
         refused.contains(
@@ -1057,32 +1059,22 @@ fn past_its_forecast_a_matrix_stops_at_the_allowance_and_resumes() {
         ),
         "{refused}"
     );
-    assert!(refused.contains("allowance"), "{refused}");
-    assert_eq!(log.lock().unwrap().len(), 1);
-    // Run again under a new allowance, it resumes: the two left, and the forecast said.
-    let (listener2, log2) = serving(&judged.pki, vec![submission("held", "Kept."); 2]);
-    drop(executor);
-    listener.finish();
-    let origin = format!("https://127.0.0.1:{}", listener2.port());
-    let over = judged.over_with(
-        &judged.address(listener2.port()),
-        Some(&origin),
-        &CHECK_CLASSES,
-        "",
+    assert!(
+        refused.contains(&format!("forecast {} millionths", 3 * 2 * 3_293)),
+        "{refused}"
     );
-    let executor = judged.runner(&over);
+    // Run again under a new allowance, it resumes: the two left, and the forecast said.
     let (forecast, report) = past(&executor, 10).unwrap();
     assert_eq!(forecast, 2 * 2 * 3_293);
     assert_eq!(
         (report.started, report.completed, report.not_run),
         (2, 3, 0)
     );
-    drop(executor);
-    listener2.finish();
-    assert_eq!(log2.lock().unwrap().len(), 2);
-    // Without the flag, the same matrix under the same allowance is refused before a run.
+    // Without the flag, a matrix whose forecast passes the allowance is refused before a run.
     let fresh = matrix_of("C", 2, 1);
-    let executor = judged.runner(&judged.over("https://127.0.0.1:9/v1/messages", None));
     let refused = ran(&executor, &judged, &tiny, &fresh, 1, &never).unwrap_err();
     assert!(refused.contains("nothing was run"), "{refused}");
+    drop(executor);
+    listener.finish();
+    assert_eq!(log.lock().unwrap().len(), 3);
 }

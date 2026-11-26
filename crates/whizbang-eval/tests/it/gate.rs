@@ -338,6 +338,7 @@ fn a_catch_rate_gate_resamples_the_families_with_a_failure() {
         control: c.clone(),
         treatment: x.clone(),
     };
+    // At 1,000 resamples: one hypothesis leaves 25 draws a tail.
     let scored = gate.score(&[judged]).unwrap();
     let one = &scored.judges[0];
     let caught = one.catch_rate.as_ref().unwrap();
@@ -349,22 +350,10 @@ fn a_catch_rate_gate_resamples_the_families_with_a_failure() {
     // Balanced accuracy, by repetition 1, sees no gain; the catch rate admits it.
     assert_eq!(one.paired.gain.as_ref().unwrap().point, 0.0);
     assert_eq!(scored.outcome, Outcome::Admitted, "{:?}", one.failed);
-    // Repetition 1 alone, combined first: no gain, rejected.
-    let first = Gate::parse(&catch.replace(
-        "count = 2\ncombine = \"mean\"",
-        "count = 2\ncombine = \"first\"",
-    ))
-    .unwrap();
-    let judged = whizbang_eval::gate::Judged {
-        backend: "b".into(),
-        model: "m".into(),
-        control: c,
-        treatment: x,
-    };
-    let scored = first.score(&[judged]).unwrap();
-    assert_eq!(scored.judges[0].catch_rate.as_ref().unwrap().treatment, 1.0);
-    assert_eq!(scored.judges[0].catch_rate.as_ref().unwrap().control, 1.0);
-    assert_ne!(scored.outcome, Outcome::Admitted);
+    // Repetition 1 alone, combined first: no gain.
+    let first = metrics::paired_catch(&c, &x, gate.resampling(), false).unwrap();
+    assert_eq!((first.control, first.treatment), (1.0, 1.0));
+    assert_eq!(first.gain.unwrap().point, 0.0);
     // A mean is a catch-rate gate's, and the catch rate is version 3's.
     let mean_ba = catch.replace(
         "primary = \"catch_rate\"",

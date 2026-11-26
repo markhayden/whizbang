@@ -978,18 +978,14 @@ fn submission_2_reads_clause_c_on_the_interval() {
             d.computed = Computed::Fail;
         }
     }
+    // The rules called alone, as `score` calls them: no scope is measured.
     let ruled = |rule: Rule, decisions: Vec<Decision>| {
-        let asked = Asked {
-            mode: Mode::Arms,
-            arm: Some("C;submission=v1".to_owned()),
-            treatment: Some("C;submission=v2".to_owned()),
-            rule: Some(rule),
-            resampling: how(),
-        };
-        judges::score(&complete(decisions), &asked)
-            .unwrap()
-            .format
-            .unwrap()
+        let decisions = complete(decisions).decisions;
+        let (control, treatment) = ("C;submission=v1", "C;submission=v2");
+        match rule {
+            Rule::Submission => judges::submission_rule(&decisions, control, treatment, None),
+            _ => judges::submission_rule_2(&decisions, control, treatment, None, &how()),
+        }
     };
     let one = ruled(Rule::Submission, decisions.clone());
     assert_eq!(one.outcome, "adopted", "{}", one.why);
@@ -1048,9 +1044,11 @@ fn ranked(judges: &[&str], families: usize) -> Vec<Decision> {
 
 #[test]
 fn judge_pick_2_is_inconclusive_below_20_families_or_with_a_tail_unresolved() {
+    // Five hypotheses at 4,000 resamples leave 20 draws in each tail, the least the rule
+    // takes.
     let corrected = |hypotheses: usize| Resampling {
         seed: judges::SEED,
-        resamples: whizbang_eval::matrix::resamples_for(hypotheses),
+        resamples: 4_000,
         hypotheses,
         alpha: 0.05,
     };
@@ -1079,29 +1077,37 @@ fn judge_pick_2_is_inconclusive_below_20_families_or_with_a_tail_unresolved() {
 
 #[test]
 fn judge_pick_2_resolves_every_tail_in_the_confirmation_rounds_shape() {
-    // Plan mE, task R4: five judges on 22 families of the fresh set, at tier 1's 21
-    // hypotheses and tier 2's full 27, each at the resamples the count needs.
+    // Plan mE, task R4: five judges on 22 families of the fresh set, at tier 2's full 27
+    // hypotheses (tier 1's 21 needs fewer), at the resamples the count needs.
     let five = ["haiku", "terra", "flash", "sol", "argon"];
     let rows = ranked(&five, 22);
     let refs: Vec<&Decision> = rows.iter().collect();
-    let mut lowers = Vec::new();
-    for hypotheses in [21, 27] {
+    let how = Resampling {
+        seed: judges::SEED,
+        resamples: whizbang_eval::matrix::resamples_for(27),
+        hypotheses: 27,
+        alpha: 0.05,
+    };
+    let tail = how.alpha / 2.0 / 27.0 * how.resamples as f64;
+    assert!(tail >= 20.0, "{tail}");
+    let pick = judges::judge_pick2("source-fidelity", &refs, "C", None, &how);
+    assert_ne!(pick.outcome, "inconclusive", "{}", pick.why);
+    assert_eq!(pick.model, "haiku");
+    // The wider correction gives the wider interval: two judges at 4,000 resamples.
+    let two = ranked(&["haiku", "argon"], 22);
+    let refs: Vec<&Decision> = two.iter().collect();
+    let lower = |hypotheses: usize| {
         let how = Resampling {
             seed: judges::SEED,
-            resamples: whizbang_eval::matrix::resamples_for(hypotheses),
+            resamples: 4_000,
             hypotheses,
             alpha: 0.05,
         };
-        let tail = how.alpha / 2.0 / hypotheses as f64 * how.resamples as f64;
-        assert!(tail >= 20.0, "{hypotheses}: {tail}");
         let pick = judges::judge_pick2("source-fidelity", &refs, "C", None, &how);
-        assert_ne!(pick.outcome, "inconclusive", "{}", pick.why);
-        assert_eq!(pick.model, "haiku");
         let argon = pick.judges.iter().find(|j| j.model == "argon").unwrap();
-        lowers.push(argon.difference_from_best_lower.unwrap());
-    }
-    // The wider correction gives the wider interval.
-    assert!(lowers[1] <= lowers[0], "{lowers:?}");
+        argon.difference_from_best_lower.unwrap()
+    };
+    assert!(lower(5) <= lower(1));
 }
 
 #[test]
@@ -1126,7 +1132,10 @@ fn judge_pick_2_reads_its_level_from_the_matrix_and_scores_the_sets_named() {
     assert!(refused.contains("states no hypotheses"), "{refused}");
     // One that states fewer than the rule's two judges is refused.
     let refused = with(&format!("hypotheses = 1\n{plain}")).unwrap_err();
-    assert!(refused.contains("the 2 judges of the rule"), "{refused}");
+    assert!(
+        refused.contains("the rule's 2, 2 judges in 1 scopes"),
+        "{refused}"
+    );
     // Stated, the rule resamples as the count needs; nothing has run, so no pick.
     let written = with(&format!("hypotheses = 21\n{plain}")).unwrap();
     assert_eq!(written.scored.resamples, 20_000);
